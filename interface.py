@@ -363,9 +363,12 @@ class FenetrePrincipale(QMainWindow):
         disposition.addWidget(self._groupe_parametres())
 
         boutons = QHBoxLayout()
-        bouton_exemple = QPushButton("Charger l'exemple")
+        bouton_exemple = QPushButton("Exemple : panneaux")
         bouton_exemple.clicked.connect(self._charger_exemple)
         boutons.addWidget(bouton_exemple)
+        bouton_volets = QPushButton("Exemple : volets (150×30)")
+        bouton_volets.clicked.connect(self._charger_exemple_volets)
+        boutons.addWidget(bouton_volets)
         boutons.addStretch()
         bouton_calculer = QPushButton("Calculer le débit")
         bouton_calculer.setDefault(True)
@@ -449,17 +452,12 @@ class FenetrePrincipale(QMainWindow):
 
         return panneau
 
-    # -- exemple ------------------------------------------------------
+    # -- exemples ---------------------------------------------------------
 
-    def _charger_exemple(self):
+    def _remplir_tables(self, pieces, stock):
         self.table_pieces.setRowCount(0)
         self.table_stock.setRowCount(0)
-        for p in [
-                opt.Piece("montant", 1750, 60, 18, "sapin", quantite=4),
-                opt.Piece("traverse", 560, 60, 18, "sapin", quantite=6),
-                opt.Piece("tablette", 560, 180, 18, "sapin", quantite=3),
-                opt.Piece("taquet", 120, 40, 18, "sapin", quantite=8,
-                          fil=opt.FIL_INDIFFERENT)]:
+        for p in pieces:
             self.table_pieces.ajouter_ligne(p.reference, p.longueur,
                                             p.largeur, p.epaisseur,
                                             p.matiere, p.quantite)
@@ -467,17 +465,60 @@ class FenetrePrincipale(QMainWindow):
                 self.table_pieces.rowCount() - 1, 6)
             combo.setCurrentIndex(
                 [cle for cle, _ in FILS_PIECE].index(p.fil))
-        for s in [
-                opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin",
-                            quantite=4),
-                opt.Planche("chute étagère", 800, 180, 18, "sapin",
-                            chute=True),
-                opt.Planche("chute courte", 400, 120, 18, "sapin",
-                            chute=True)]:
+        for s in stock:
             self.table_stock.ajouter_ligne(s.reference, s.longueur,
                                            s.largeur, s.epaisseur,
                                            s.matiere, s.quantite, s.chute,
                                            s.fil)
+
+    def _charger_exemple(self):
+        self._remplir_tables(
+            [opt.Piece("montant", 1750, 60, 18, "sapin", quantite=4),
+             opt.Piece("traverse", 560, 60, 18, "sapin", quantite=6),
+             opt.Piece("tablette", 560, 180, 18, "sapin", quantite=3),
+             opt.Piece("taquet", 120, 40, 18, "sapin", quantite=8,
+                       fil=opt.FIL_INDIFFERENT)],
+            [opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin",
+                        quantite=4),
+             opt.Planche("chute étagère", 800, 180, 18, "sapin", chute=True),
+             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)])
+        self.spin_trait.setValue(opt.Parametres().trait_de_scie)
+        self.spin_tolerance.setValue(opt.Parametres().tolerance_epaisseur)
+
+    def _charger_exemple_volets(self):
+        """Débit réel d'une paire de volets battants (projet Christophe,
+        29/08/2026) : cotes de débit en douglas 27 mm (finies + surcotes
+        de corroyage) sorties du modèle FreeCAD AtelierVolets. Le
+        couvre-joint (15 mm) vient d'une autre section, il n'est pas ici.
+        """
+        self._remplir_tables(
+            [opt.Piece("Lame 1 G", 1140, 119, 27, "douglas", 1),
+             opt.Piece("Lame 2 G", 1140, 119, 27, "douglas", 1),
+             opt.Piece("Lame 3 G", 1140, 119, 27, "douglas", 1),
+             opt.Piece("Lame 4 G", 1140, 119, 27, "douglas", 1),
+             opt.Piece("Lame 5 G", 1140, 105, 27, "douglas", 1),
+             opt.Piece("Traverse haute G", 550, 125, 27, "douglas", 1),
+             opt.Piece("Barre du Z G", 515, 105, 27, "douglas", 2),
+             opt.Piece("Echarpe G", 829.6857318589343, 105, 27, "douglas", 1),
+             opt.Piece("Lame 1 D", 1140, 117, 27, "douglas", 1),
+             opt.Piece("Lame 2 D", 1140, 117, 27, "douglas", 1),
+             opt.Piece("Lame 3 D", 1140, 117, 27, "douglas", 1),
+             opt.Piece("Lame 4 D", 1140, 117, 27, "douglas", 1),
+             opt.Piece("Lame 5 D", 1140, 103, 27, "douglas", 1),
+             opt.Piece("Traverse haute D", 540, 125, 27, "douglas", 1),
+             opt.Piece("Barre du Z D", 505, 105, 27, "douglas", 2),
+             opt.Piece("Echarpe D", 824.9482377125985, 105, 27, "douglas", 1)],
+            [opt.Planche("douglas 150x30 -- 3 m", 3000, 150, 30, "douglas",
+                        quantite=3),
+             opt.Planche("douglas 150x30 -- 4 m", 4000, 150, 30, "douglas",
+                        quantite=2)])
+        # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
+        # d'épaisseur : les planches sont du brut (30) à raboter à la cote
+        # finie (27), comme le prévoit SUREPAISSEUR côté volets — sans
+        # cet écart, le stock et les pièces ne se rangent pas dans le
+        # même lot (par matière + épaisseur À LA TOLÉRANCE PRÈS).
+        self.spin_trait.setValue(4.0)
+        self.spin_tolerance.setValue(5.0)
 
     # -- calcul ---------------------------------------------------------
 
