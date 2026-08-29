@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Interface Qt du chutier — saisie des pièces et du stock, calcul de la
 feuille de débit, dessin du plan planche par planche.
