@@ -15,14 +15,15 @@ import sys
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QBrush, QColor, QFont, QPen, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsItem,
-    QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+    QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem,
     QGraphicsView, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
     QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QWidget,
 )
 
+import csv_io
 import optimiseur as opt
 
 TITRE = "Chutier — feuille de débit"
@@ -352,8 +353,12 @@ class FenetrePrincipale(QMainWindow):
         disposition.addWidget(QLabel("<b>Pièces à débiter</b>"))
         self.table_pieces = TablePieces()
         disposition.addWidget(self.table_pieces, stretch=2)
-        disposition.addLayout(self._boutons_table(
-            self.table_pieces, lambda: self.table_pieces.ajouter_ligne()))
+        ligne_pieces = self._boutons_table(
+            self.table_pieces, lambda: self.table_pieces.ajouter_ligne())
+        bouton_importer = QPushButton("Importer un CSV…")
+        bouton_importer.clicked.connect(self._importer_csv)
+        ligne_pieces.addWidget(bouton_importer)
+        disposition.addLayout(ligne_pieces)
 
         disposition.addWidget(QLabel("<b>Stock (planches et chutes)</b>"))
         self.table_stock = TableStock()
@@ -453,11 +458,10 @@ class FenetrePrincipale(QMainWindow):
 
         return panneau
 
-    # -- exemples ---------------------------------------------------------
+    # -- exemples et import ------------------------------------------------
 
-    def _remplir_tables(self, pieces, stock):
+    def _remplir_pieces(self, pieces):
         self.table_pieces.setRowCount(0)
-        self.table_stock.setRowCount(0)
         for p in pieces:
             self.table_pieces.ajouter_ligne(p.reference, p.longueur,
                                             p.largeur, p.epaisseur,
@@ -466,11 +470,30 @@ class FenetrePrincipale(QMainWindow):
                 self.table_pieces.rowCount() - 1, 6)
             combo.setCurrentIndex(
                 [cle for cle, _ in FILS_PIECE].index(p.fil))
+
+    def _remplir_stock(self, stock):
+        self.table_stock.setRowCount(0)
         for s in stock:
             self.table_stock.ajouter_ligne(s.reference, s.longueur,
                                            s.largeur, s.epaisseur,
                                            s.matiere, s.quantite, s.chute,
                                            s.fil)
+
+    def _remplir_tables(self, pieces, stock):
+        self._remplir_pieces(pieces)
+        self._remplir_stock(stock)
+
+    def _importer_csv(self):
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Importer des pièces", "", "CSV (*.csv)")
+        if not chemin:
+            return
+        try:
+            pieces = csv_io.lire_pieces(chemin)
+        except (OSError, ValueError) as erreur:
+            QMessageBox.warning(self, "Import impossible", str(erreur))
+            return
+        self._remplir_pieces(pieces)
 
     def _charger_exemple(self):
         self._remplir_tables(
