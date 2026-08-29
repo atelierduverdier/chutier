@@ -217,19 +217,20 @@ class VuePlanche(QGraphicsView):
                                _couleur_piece(pose.piece.reference),
                                "%s\n%g × %g" % (pose.piece.reference,
                                                 round(pose.dim_x, 1),
-                                                round(pose.dim_y, 1)))
+                                                round(pose.dim_y, 1)),
+                               pose.piece.reference)
 
         for chute in debit.chutes:
             self._ajouter_rect(scene, chute.x, chute.y, chute.dim_x,
                                chute.dim_y, pl.largeur, COULEUR_CHUTE,
                                "chute\n%g × %g" % (round(chute.dim_x, 1),
                                                    round(chute.dim_y, 1)),
-                               hachure=True)
+                               "chute", hachure=True)
 
         self._ajuster()
 
     def _ajouter_rect(self, scene, x, y, dx, dy, largeur_planche, couleur,
-                      etiquette, hachure=False):
+                      etiquette, etiquette_courte, hachure=False):
         # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
         # place la sienne en haut-gauche — on retourne y ici, une fois,
         # plutôt que de retourner toute la vue (le texte resterait lisible).
@@ -245,23 +246,49 @@ class VuePlanche(QGraphicsView):
         rect.setToolTip(etiquette.replace("\n", " "))
         scene.addItem(rect)
 
-        texte = QGraphicsSimpleTextItem(etiquette)
+        # Une planche de menuiserie est souvent longue et étroite (un
+        # 150×3000) : la pièce posée peut être trop basse pour ses deux
+        # lignes complètes tout en étant bien assez large pour son seul
+        # nom. Les trois variantes sont préparées ; _ajuster choisit celle
+        # qui loge sous le zoom courant, ou aucune (l'info-bulle reste).
+        complet = self._texte_centre(scene, etiquette, x, y_qt, dx, dy, 8)
+        court = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, dy, 6)
+        hors = None
+        if y < 0.5:
+            # La pièce est au ras du bord bas de la planche (y=0) : rien
+            # n'occupe l'en-dessous. La vue en garde toujours une marge
+            # libre là (une planche de charpente est bien plus longue que
+            # large) — l'étiquette peut y déborder sans chevaucher un
+            # voisin, qu'il soit une pièce ou une chute.
+            hors = self._texte_centre(scene, etiquette_courte, x,
+                                      y_qt + dy, dx, 0, 6, cote="dessous")
+        elif y + dy > largeur_planche - 0.5:
+            hors = self._texte_centre(scene, etiquette_courte, x, y_qt,
+                                      dx, 0, 6, cote="dessus")
+        self._etiquettes.append((complet, court, hors, dx, dy))
+
+    def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
+                      cote="dedans"):
+        texte = QGraphicsSimpleTextItem(chaine)
         texte.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         police = QFont()
-        police.setPointSize(8)
+        police.setPointSize(taille_police)
         texte.setFont(police)
         # ItemIgnoresTransformations ancre pos() au point de la scène (donc
         # zoomé avec la vue) mais dessine ensuite en pixels non zoomés — le
         # centrage se fait par une transformation propre à l'item, en pixels.
         boite = texte.boundingRect()
         texte.setPos(x + dx / 2, y_qt + dy / 2)
+        if cote == "dessus":
+            decalage_y = -boite.height() - 3
+        elif cote == "dessous":
+            decalage_y = 3
+        else:
+            decalage_y = -boite.height() / 2
         texte.setTransform(
-            texte.transform().translate(-boite.width() / 2,
-                                        -boite.height() / 2))
+            texte.transform().translate(-boite.width() / 2, decalage_y))
         scene.addItem(texte)
-        # La visibilité de l'étiquette dépend du zoom, connu seulement une
-        # fois la vue ajustée (_ajuster) — remise à plus tard.
-        self._etiquettes.append((texte, boite, dx, dy))
+        return texte, boite
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -273,13 +300,27 @@ class VuePlanche(QGraphicsView):
         self.fitInView(self.scene().sceneRect(),
                        Qt.AspectRatioMode.KeepAspectRatio)
         echelle = self.transform().m11()
-        for texte, boite, dx, dy in getattr(self, "_etiquettes", []):
-            # Sous ce zoom la pièce/chute est trop petite pour loger son
-            # étiquette (deux lignes) sans déborder sur ses voisines —
-            # l'info reste accessible par l'info-bulle du rectangle.
-            tient = dx * echelle >= boite.width() + 4 and \
-                dy * echelle >= boite.height() + 4
-            texte.setVisible(tient)
+        for (texte_c, boite_c), (texte_k, boite_k), hors, dx, dy \
+                in getattr(self, "_etiquettes", []):
+            def tient(boite, hauteur=dy):
+                return (dx * echelle >= boite.width() + 4
+                        and hauteur * echelle >= boite.height() + 4)
+            if tient(boite_c):
+                texte_c.setVisible(True)
+                texte_k.setVisible(False)
+                if hors:
+                    hors[0].setVisible(False)
+            elif tient(boite_k):
+                texte_c.setVisible(False)
+                texte_k.setVisible(True)
+                if hors:
+                    hors[0].setVisible(False)
+            else:
+                texte_c.setVisible(False)
+                texte_k.setVisible(False)
+                if hors:
+                    texte_h, boite_h = hors
+                    texte_h.setVisible(dx * echelle >= boite_h.width() + 4)
 
 
 class FenetrePrincipale(QMainWindow):
