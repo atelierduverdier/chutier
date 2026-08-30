@@ -500,6 +500,24 @@ class ProfilsDeCatalogue(unittest.TestCase):
         r = optimiser(pieces, stock, RAPIDE)
         self.assertEqual({a.reference for a in r.achats}, {"200x30"})
 
+    def test_score_global_pese_le_volume_pas_la_seule_surface(self):
+        # meme piege que ci-dessus, mais au niveau du score qui choisit
+        # entre STRATEGIES completes (pas le seul _ouvrir local) : une
+        # piece composable a 11,5 d'epaisseur, decomposee en lames,
+        # partait a tort sur un brut a 65 (175 de large, donc moins de
+        # SURFACE neuve que 200x32) alors que 32 suffit largement et
+        # represente moins de BOIS (signale par Christophe, 30/08/2026,
+        # sur un vrai cadre de hublot)
+        pieces = [Piece("Cadre_Hublot_Ext", 241, 236, 11.5, "Douglas",
+                        composable=True),
+                 Piece("Cadre_Hublot_Int", 241, 236, 11.5, "Douglas",
+                      composable=True)]
+        stock = [Planche("Bastaing", 4000, 175, 65, "Douglas", illimite=True),
+                Planche("Planche", 4000, 200, 32, "Douglas", illimite=True)]
+        r = optimiser(pieces, stock)
+        self.assertEqual(len(r.non_placees), 0)
+        self.assertEqual({a.reference for a in r.achats}, {"Planche"})
+
     def test_sans_prix_la_surface_depatage_a_gaspillage_egal(self):
         # a gaspillage de rabotage identique (0 pour les deux : la piece
         # loge pile), la plus petite surface neuve tranche, comme avant

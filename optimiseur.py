@@ -662,13 +662,21 @@ def _score_solution(sol: _Solution):
 
     Le coût passe juste après les pièces non placées : entre deux
     stratégies qui placent tout, la moins chère gagne avant même de
-    regarder la surface neuve. Un prix à 0 partout (le défaut) rend ce
-    critère toujours nul — la surface neuve reste alors seule à
-    décider, comme avant que ``Planche.prix`` existe."""
+    regarder le volume neuf. Un prix à 0 partout (le défaut) rend ce
+    critère toujours nul — le volume neuf reste alors seul à décider.
+
+    « Neuve » et « perte » comptent un VOLUME (surface × épaisseur), pas
+    une simple surface : une planche deux fois plus épaisse représente
+    deux fois plus de bois pour la même surface de face, et l'ignorer
+    faisait gagner à tort le brut le plus épais dès qu'il était un peu
+    moins large qu'un brut plus mince pourtant suffisant (signalé par
+    Christophe : une pièce à 11,5 tirée d'un 65 alors qu'un 32 suffisait
+    largement, sans aucun prix pour trancher)."""
     nb_non = sum(n.exemplaires for n in sol.non_placees)
     cout = sum(d.planche.prix for d in sol.debits if not d.planche.chute)
-    neuve = sum(d.planche.aire for d in sol.debits if not d.planche.chute)
-    perte = sum(d.perte for d in sol.debits)
+    neuve = sum(d.planche.aire * d.planche.epaisseur for d in sol.debits
+               if not d.planche.chute)
+    perte = sum(d.perte * d.planche.epaisseur for d in sol.debits)
     subsistantes = [c.aire for d in sol.debits for c in d.chutes]
     subsistantes += [pl.aire for pl, _ex in sol.dispo_restant if pl.chute]
     plus_grande = max(subsistantes, default=0.0)
