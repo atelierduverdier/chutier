@@ -23,6 +23,7 @@ from optimiseur import (  # noqa: E402
     EPS, FIL_INDIFFERENT, FIL_LARGEUR, FIL_LONGUEUR,
     RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
     RAISON_TROP_GRANDE, Parametres, Piece, Planche, optimiser,
+    _nombre_de_lames, _plus_large_compatible,
 )
 
 RAPIDE = Parametres(essais_melanges=0)
@@ -273,6 +274,70 @@ class MatiereEtEpaisseur(unittest.TestCase):
                       [Planche("b1", 500, 200, 18, "sapin"),
                        Planche("b2", 500, 200, 30, "sapin")], RAPIDE)
         self.assertEqual(r.non_placees[0].raison, RAISON_TROP_EPAISSE)
+
+
+class PiecesComposables(unittest.TestCase):
+
+    def test_nombre_de_lames_arithmetique(self):
+        # 422 de large, brut a 200 max, 3 mm par joint -> 3 lames de
+        # 142,667 (verifie : 3 lames - 2 joints = la largeur d'origine)
+        n = _nombre_de_lames(422, 200, 3)
+        self.assertEqual(n, 3)
+        largeur_lame = (422 + (n - 1) * 3) / n
+        self.assertAlmostEqual(n * largeur_lame - (n - 1) * 3, 422)
+        self.assertLessEqual(largeur_lame, 200)
+
+    def test_nombre_de_lames_une_seule_si_ca_loge(self):
+        self.assertEqual(_nombre_de_lames(180, 200, 3), 1)
+
+    def test_nombre_de_lames_garde_fou(self):
+        # aucune largeur utile : ne boucle pas indefiniment
+        self.assertGreater(_nombre_de_lames(1000, 0, 3), 50)
+
+    def test_plus_large_compatible_ignore_matiere_et_epaisseur(self):
+        piece = Piece("p", 100, 50, 18, "sapin")
+        stock = [Planche("b1", 500, 300, 18, "chêne"),   # mauvaise matière
+                Planche("b2", 500, 120, 12, "sapin"),    # trop mince
+                Planche("b3", 500, 180, 18, "sapin")]
+        self.assertEqual(_plus_large_compatible(piece, stock, RAPIDE), 180)
+
+    def test_pas_decompose_si_ca_loge_deja(self):
+        # composable mais tient dans une seule planche : aucun joint
+        r = optimiser(
+            [Piece("panneau", 650, 180, 18, "sapin", composable=True)],
+            [Planche("b", 4000, 200, 18, "sapin")], RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 1)
+        self.assertNotIn("lame", r.debits[0].poses[0].piece.reference)
+
+    def test_decompose_en_plusieurs_lames(self):
+        # 422 de large sur un brut de 200 -> 3 lames collees, comme le
+        # Panneau_Haut d'un vrai projet (porte-hammam, 29/08/2026)
+        r = optimiser(
+            [Piece("Panneau_Haut", 650, 422, 18, "sapin", composable=True)],
+            [Planche("b", 4000, 200, 18, "sapin")], RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        self.assertEqual(r.bilan.nb_posees, 3)
+        references = {p.piece.reference for d in r.debits for p in d.poses}
+        self.assertEqual(references, {"Panneau_Haut (lame 1/3)",
+                                      "Panneau_Haut (lame 2/3)",
+                                      "Panneau_Haut (lame 3/3)"})
+
+    def test_fil_largeur_non_decompose(self):
+        # sur FIL_LARGEUR c'est la longueur de la piece qui court le long
+        # de la largeur de la planche (pivotee) : 800 > 200, trop grande,
+        # et la largeur n'est pas l'axe a elargir par collage ici
+        r = optimiser(
+            [Piece("p", 800, 100, 18, "sapin", fil=FIL_LARGEUR,
+                  composable=True)],
+            [Planche("b", 4000, 200, 18, "sapin")], RAPIDE)
+        self.assertEqual(r.non_placees[0].raison, RAISON_TROP_GRANDE)
+
+    def test_non_composable_reste_non_placee(self):
+        # meme piece, meme stock, sans l'indicateur : comportement inchange
+        r = optimiser(
+            [Piece("Panneau_Haut", 650, 422, 18, "sapin")],
+            [Planche("b", 4000, 200, 18, "sapin")], RAPIDE)
+        self.assertEqual(r.non_placees[0].raison, RAISON_TROP_GRANDE)
 
     def test_matiere_normalisee_et_tolerance(self):
         r = optimiser([Piece("c", 100, 50, 18.05, "  Sapin ")],

@@ -37,6 +37,31 @@ class LecturePieces(unittest.TestCase):
             Piece("taquet", 120.0, 40.0, 18.0, "sapin", 8, FIL_INDIFFERENT),
         ])
 
+    def test_composable(self):
+        chemin = _fichier(
+            "reference,longueur,largeur,epaisseur,matiere,quantite,fil,"
+            "composable\n"
+            "panneau,650,422,18,sapin,1,longueur,1\n"
+            "montant,1750,60,18,sapin,4,longueur,0\n")
+        pieces = csv_io.lire_pieces(chemin)
+        self.assertTrue(pieces[0].composable)
+        self.assertFalse(pieces[1].composable)
+
+    def test_composable_absent_vaut_faux(self):
+        chemin = _fichier(
+            "reference,longueur,largeur,epaisseur,matiere,quantite\n"
+            "montant,1750,60,18,sapin,4\n")
+        pieces = csv_io.lire_pieces(chemin)
+        self.assertFalse(pieces[0].composable)
+
+    def test_composable_inconnu(self):
+        chemin = _fichier(
+            "reference,longueur,largeur,epaisseur,matiere,quantite,fil,"
+            "composable\n"
+            "panneau,650,422,18,sapin,1,longueur,peut-etre\n")
+        with self.assertRaises(ValueError):
+            csv_io.lire_pieces(chemin)
+
     def test_fil_absent_vaut_longueur(self):
         chemin = _fichier(
             "reference,longueur,largeur,epaisseur,matiere,quantite\n"

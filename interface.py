@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import QBrush, QColor, QFont, QPen, QPainter
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
@@ -29,7 +29,7 @@ import optimiseur as opt
 TITRE = "Chutier — feuille de débit"
 
 COLONNES_PIECES = ["Référence", "Longueur", "Largeur", "Épaisseur",
-                    "Matière", "Qté", "Fil"]
+                    "Matière", "Qté", "Fil", "Composable"]
 COLONNES_STOCK = ["Référence", "Longueur", "Largeur", "Épaisseur",
                    "Matière", "Qté", "Chute", "A un fil"]
 
@@ -118,7 +118,8 @@ class TablePieces(TableEditable):
         self._table_stock = table_stock
 
     def ajouter_ligne(self, reference="", longueur="", largeur="",
-                      epaisseur="18", matiere="", quantite="1"):
+                      epaisseur="18", matiere="", quantite="1",
+                      composable=False):
         ligne = self.rowCount()
         self.insertRow(ligne)
         for col, valeur in enumerate(
@@ -132,6 +133,13 @@ class TablePieces(TableEditable):
         for cle, libelle in FILS_PIECE:
             combo_fil.addItem(libelle, cle)
         self.setCellWidget(ligne, 6, combo_fil)
+        case_composable = QCheckBox()
+        case_composable.setChecked(bool(composable))
+        case_composable.setToolTip(
+            "Trop large pour tout brut, cette pièce peut se reconstituer"
+            " en collant plusieurs lames côte à côte (ou en tenon-rainure)"
+            " plutôt que de rester non placée.")
+        self.setCellWidget(ligne, 7, case_composable)
 
     def pieces(self) -> list:
         resultat = []
@@ -147,8 +155,10 @@ class TablePieces(TableEditable):
             quantite = _entier(self.ligne_texte(ligne, 5, "1") or "1",
                                reference)
             fil = self.widget_ligne(ligne, 6).currentData()
+            composable = self.widget_ligne(ligne, 7).isChecked()
             resultat.append(opt.Piece(reference, longueur, largeur,
-                                      epaisseur, matiere, quantite, fil))
+                                      epaisseur, matiere, quantite, fil,
+                                      composable))
         return resultat
 
 
@@ -357,11 +367,34 @@ class FenetrePrincipale(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(TITRE)
-        self.resize(1280, 800)
+        self.resize(1600, 850)
         self._resultat = None
+        self._tailles_appliquees = False
 
         self._construire()
         self._charger_exemple()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._tailles_appliquees:
+            return
+        self._tailles_appliquees = True
+        # QSplitter.setSizes() avant que la fenêtre ait une géométrie
+        # réelle est redistribué au premier affichage réel (aux seuls
+        # facteurs d'étirement) — et showEvent lui-même est encore trop
+        # tôt, un resize venant de la fenêtre le réécrase juste après.
+        # Un timer à délai nul le réapplique une fois ce cycle passé.
+        QTimer.singleShot(0, self._appliquer_tailles)
+
+    def _appliquer_tailles(self):
+        # Un chiffre fixe se périme dès que le panneau de saisie
+        # s'élargit (un bouton, un paramètre de plus) — son propre
+        # minimum réel est le seul repère qui ne ment pas ; le reste
+        # de la largeur va aux résultats (le plan est ce qu'on regarde).
+        gauche = self._splitter_central.widget(0).minimumSizeHint().width()
+        droite = max(500, self._splitter_central.width() - gauche)
+        self._splitter_central.setSizes([gauche, droite])
+        self._splitter_resultats.setSizes([220, 780])
 
     # -- construction -----------------------------------------------
 
@@ -372,6 +405,7 @@ class FenetrePrincipale(QMainWindow):
         central.setStretchFactor(0, 2)
         central.setStretchFactor(1, 3)
         central.setSizes([520, 760])
+        self._splitter_central = central
         self.setCentralWidget(central)
 
     def _panneau_saisie(self) -> QWidget:
@@ -438,12 +472,14 @@ class FenetrePrincipale(QMainWindow):
         self.spin_chute_largeur = self._spin(defauts.chute_mini_largeur,
                                              0, 2000)
         self.spin_tolerance = self._spin(defauts.tolerance_epaisseur, 0, 10)
+        self.spin_surcote_joint = self._spin(defauts.surcote_joint, 0, 20)
 
         for libelle, widget in [
                 ("Trait de scie (mm)", self.spin_trait),
                 ("Chute mini — longueur (mm)", self.spin_chute_longueur),
                 ("Chute mini — largeur (mm)", self.spin_chute_largeur),
-                ("Tolérance épaisseur (mm)", self.spin_tolerance)]:
+                ("Tolérance épaisseur (mm)", self.spin_tolerance),
+                ("Surcote de joint collé (mm)", self.spin_surcote_joint)]:
             colonne = QVBoxLayout()
             colonne.addWidget(QLabel(libelle))
             colonne.addWidget(widget)
@@ -481,6 +517,7 @@ class FenetrePrincipale(QMainWindow):
         # redimensionnement ; sans setSizes, la taille initiale suit le
         # sizeHint (minuscule pour un QGraphicsView vide).
         scission.setSizes([220, 780])
+        self._splitter_resultats = scission
         disposition.addWidget(scission, stretch=3)
 
         disposition.addWidget(QLabel("<b>Pièces non placées</b>"))
@@ -496,7 +533,8 @@ class FenetrePrincipale(QMainWindow):
         for p in pieces:
             self.table_pieces.ajouter_ligne(p.reference, p.longueur,
                                             p.largeur, p.epaisseur,
-                                            p.matiere, p.quantite)
+                                            p.matiere, p.quantite,
+                                            p.composable)
             combo = self.table_pieces.widget_ligne(
                 self.table_pieces.rowCount() - 1, 6)
             combo.setCurrentIndex(
@@ -585,7 +623,8 @@ class FenetrePrincipale(QMainWindow):
                 trait_de_scie=self.spin_trait.value(),
                 chute_mini_longueur=self.spin_chute_longueur.value(),
                 chute_mini_largeur=self.spin_chute_largeur.value(),
-                tolerance_epaisseur=self.spin_tolerance.value())
+                tolerance_epaisseur=self.spin_tolerance.value(),
+                surcote_joint=self.spin_surcote_joint.value())
             if not pieces:
                 raise ErreurSaisie("aucune pièce à débiter")
             resultat = opt.optimiser(pieces, stock, parametres)

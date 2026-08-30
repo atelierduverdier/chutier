@@ -8,12 +8,14 @@ n'importe quel dépôt, peut produire ce CSV sans dépendre du chutier — un
 ``csv.writer`` de la bibliothèque standard suffit.
 
 En-tête attendu :
-    reference,longueur,largeur,epaisseur,matiere,quantite,fil
+    reference,longueur,largeur,epaisseur,matiere,quantite,fil,composable
 
 Les six premières colonnes sont obligatoires ; ``fil`` est optionnel, vide
-ou absent valant :data:`optimiseur.FIL_LONGUEUR`. Les cotes sont en
-millimètres, point décimal. Aucune de ces colonnes n'est Qt ni FreeCAD —
-ce module reste, comme ``optimiseur.py``, sans dépendance.
+ou absent valant :data:`optimiseur.FIL_LONGUEUR`. ``composable`` est
+optionnel, vide ou absent valant faux — voir :class:`optimiseur.Piece`
+pour ce que ça change. Les cotes sont en millimètres, point décimal.
+Aucune de ces colonnes n'est Qt ni FreeCAD — ce module reste, comme
+``optimiseur.py``, sans dépendance.
 """
 
 from __future__ import annotations
@@ -53,6 +55,10 @@ def _ligne_vers_piece(ligne: dict, num_ligne: int):
         if fil not in _FILS_VALIDES:
             raise ValueError("fil « %s » inconnu (attendu : %s)"
                              % (fil, ", ".join(_FILS_VALIDES)))
+        composable = (ligne.get("composable") or "").strip().casefold()
+        if composable not in ("", "0", "1", "vrai", "faux", "true", "false"):
+            raise ValueError("composable « %s » inconnu (attendu : vide,"
+                             " 0, 1, vrai ou faux)" % composable)
         return opt.Piece(
             reference=reference,
             longueur=float(ligne["longueur"]),
@@ -60,6 +66,7 @@ def _ligne_vers_piece(ligne: dict, num_ligne: int):
             epaisseur=float(ligne["epaisseur"] or 0),
             matiere=(ligne.get("matiere") or "").strip(),
             quantite=int(ligne["quantite"] or 1),
-            fil=fil)
+            fil=fil,
+            composable=composable in ("1", "vrai", "true"))
     except (TypeError, ValueError) as erreur:
         raise ValueError("ligne %d du CSV : %s" % (num_ligne, erreur)) from erreur

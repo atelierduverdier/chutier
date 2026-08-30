@@ -63,6 +63,11 @@ print(resultat.texte())               # résumé lisible
   fournir des pièces de finitions différentes.
 - La `surcote` (marge de recoupe) s'ajoute aux dimensions débitées ;
   la pièce garde ses cotes nominales.
+- Une pièce `composable` trop large pour tout brut se décompose
+  d'abord en lames à coller (ou à assembler tenon-rainure) — jamais si
+  elle logerait déjà telle quelle. `surcote_joint` : largeur perdue à
+  chaque collage. Sans effet sur `FIL_LARGEUR` (la largeur n'y est pas
+  l'axe qu'on élargirait par collage).
 - Score d'une solution, dans l'ordre : moins de pièces non placées,
   moins de surface **neuve** entamée (déstockage d'abord), moins de
   pertes, plus grande chute subsistante la plus grande possible.

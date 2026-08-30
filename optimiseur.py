@@ -62,7 +62,16 @@ RAISON_PLUS_DE_PLACE = "plus de place dans le stock fourni"
 
 @dataclass(frozen=True)
 class Piece:
-    """Une pièce à débiter (``quantite`` exemplaires identiques)."""
+    """Une pièce à débiter (``quantite`` exemplaires identiques).
+
+    ``composable`` : trop large pour tout brut du stock, cette pièce
+    peut se reconstituer en collant plusieurs lames côte à côte (ou en
+    tenon-rainure) plutôt que de rester non placée — voir
+    :func:`_decomposer_composables`. Ne s'applique qu'à la largeur (le
+    sens du fil ne change pas d'une lame à l'autre) ; sans effet sur une
+    pièce ``FIL_LARGEUR``, ni sur une pièce qui logerait déjà telle
+    quelle (moins de joints, plus solide).
+    """
 
     reference: str
     longueur: float
@@ -71,6 +80,7 @@ class Piece:
     matiere: str = ""
     quantite: int = 1
     fil: str = FIL_LONGUEUR
+    composable: bool = False
 
     @property
     def aire(self) -> float:
@@ -115,6 +125,10 @@ class Parametres:
       à la cote voulue, jamais l'inverse) ; ne sert qu'à absorber le
       bruit de mesure (18,0 mesuré contre 18,05 demandé), pas à faire
       passer une pièce plus épaisse que le stock.
+    - ``surcote_joint`` : largeur perdue à chaque collage entre deux
+      lames d'une pièce ``composable`` (équerrage des deux rives à
+      coller) — ne joue aucun rôle pour une pièce qui loge d'un seul
+      tenant.
     - ``essais_melanges`` : nombre d'ordres de pièces tirés au hasard en
       plus des stratégies déterministes (0 pour s'en passer) ;
       ``graine`` fixe le hasard, le résultat reste reproductible.
@@ -126,6 +140,7 @@ class Parametres:
     surcote_longueur: float = 0.0
     surcote_largeur: float = 0.0
     tolerance_epaisseur: float = 0.1
+    surcote_joint: float = 3.0
     essais_melanges: int = 8
     graine: int = 0
 
@@ -619,6 +634,64 @@ def _grouper(pieces: list, stock: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Pièces composables : décomposition en lames à coller
+# ---------------------------------------------------------------------------
+
+def _plus_large_compatible(piece: Piece, stock: list,
+                           params: Parametres) -> "float | None":
+    """La plus grande largeur de brut compatible (matière, épaisseur)
+    pour cette pièce — celle qui limite la largeur d'une lame. ``None``
+    si aucune planche de cette matière n'est même assez épaisse."""
+    candidats = [s.largeur for s in stock
+                if _cle_matiere(s.matiere) == _cle_matiere(piece.matiere)
+                and _epaisseur_compatible(piece.epaisseur, s.epaisseur,
+                                          params)]
+    return max(candidats) if candidats else None
+
+
+def _nombre_de_lames(largeur_totale: float, largeur_max: float,
+                     surcote_joint: float) -> int:
+    """Le plus petit nombre de lames, chacune ≤ ``largeur_max`` une fois
+    collées (chaque joint entre deux lames mange ``surcote_joint``), qui
+    reconstitue ``largeur_totale``. 1 si une seule lame suffit déjà."""
+    n = 1
+    while (largeur_totale + (n - 1) * surcote_joint) / n > largeur_max + EPS:
+        n += 1
+        if n > 50:            # garde-fou : rien de sensé ne demande autant
+            break
+    return n
+
+
+def _decomposer_composables(pieces: list, stock: list,
+                            params: Parametres) -> list:
+    """Remplace chaque pièce ``composable`` trop large pour tout brut par
+    N lames à coller (ou à assembler tenon-rainure), chacune une pièce
+    ordinaire pour le solveur — qui n'a rien à savoir de plus. Une pièce
+    qui logerait déjà telle quelle n'est jamais décomposée (moins de
+    joints, plus solide) ; le fil ``FIL_LARGEUR`` n'est pas concerné, la
+    largeur n'y est pas l'axe qu'on élargirait par collage."""
+    resultat = []
+    for p in pieces:
+        if not p.composable or p.fil == FIL_LARGEUR:
+            resultat.append(p)
+            continue
+        largeur_max = _plus_large_compatible(p, stock, params)
+        if largeur_max is None:
+            resultat.append(p)      # aucun brut compatible : le débit le dira
+            continue
+        n = _nombre_de_lames(p.largeur, largeur_max, params.surcote_joint)
+        if n <= 1:
+            resultat.append(p)
+            continue
+        largeur_lame = (p.largeur + (n - 1) * params.surcote_joint) / n
+        for i in range(1, n + 1):
+            resultat.append(Piece(
+                "%s (lame %d/%d)" % (p.reference, i, n), p.longueur,
+                largeur_lame, p.epaisseur, p.matiere, p.quantite, p.fil))
+    return resultat
+
+
+# ---------------------------------------------------------------------------
 # Entrée principale
 # ---------------------------------------------------------------------------
 
@@ -644,7 +717,7 @@ def _valider(pieces: list, stock: list, params: Parametres):
     if (params.trait_de_scie < 0 or params.chute_mini_longueur < 0
             or params.chute_mini_largeur < 0 or params.surcote_longueur < 0
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
-            or params.essais_melanges < 0):
+            or params.surcote_joint < 0 or params.essais_melanges < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
 
 
@@ -657,7 +730,10 @@ def optimiser(pieces: list, stock: list,
     matière et résolus séparément ; au sein d'un lot, une planche ne
     convient à une pièce que si elle est au moins aussi épaisse (le brut
     se rabote, jamais ne s'épaissit) — deux pièces de finitions
-    différentes peuvent donc venir du même brut.
+    différentes peuvent donc venir du même brut. Une pièce ``composable``
+    trop large pour tout brut se décompose d'abord en lames à coller
+    (:func:`_decomposer_composables`) ; le solveur ne voit ensuite que
+    des pièces ordinaires.
 
     Exemple::
 
@@ -668,6 +744,7 @@ def optimiser(pieces: list, stock: list,
     """
     params = parametres or Parametres()
     _valider(pieces, stock, params)
+    pieces = _decomposer_composables(pieces, stock, params)
 
     groupes = _grouper(pieces, stock)
     debits, non_placees = [], []
