@@ -842,7 +842,17 @@ def optimiser(pieces: list, stock: list,
         if not pieces_g:
             continue
         if not stock_g:
-            non_placees.extend(NonPlacee(p, p.quantite, RAISON_INCOMPATIBLE)
+            # repr(), pas la chaine telle quelle : un espace en trop ou un
+            # caractere invisible rend deux matieres visuellement identiques
+            # mais jamais appariees — ca doit se voir ICI, pas se deviner
+            # (piege reel, 30/08/2026 : "Douglas" partout, incompatible
+            # quand meme sur une partie des pieces).
+            dispo = sorted({s.matiere for s in stock})
+            raison = "%s (matière lue : %r%s)" % (
+                RAISON_INCOMPATIBLE, pieces_g[0].matiere,
+                " — en stock : %s" % ", ".join(map(repr, dispo)) if dispo
+                else "")
+            non_placees.extend(NonPlacee(p, p.quantite, raison)
                                for p in pieces_g)
             continue
         unites = [(p, ex) for p in pieces_g

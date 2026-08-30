@@ -347,7 +347,22 @@ class PiecesComposables(unittest.TestCase):
     def test_matiere_differente(self):
         r = optimiser([Piece("c", 100, 50, 18, "chêne")],
                       [Planche("b", 500, 200, 18, "sapin")], RAPIDE)
-        self.assertEqual(r.non_placees[0].raison, RAISON_INCOMPATIBLE)
+        raison = r.non_placees[0].raison
+        self.assertTrue(raison.startswith(RAISON_INCOMPATIBLE))
+        self.assertIn("'chêne'", raison)     # visible tel que lu, en repr()
+        self.assertIn("'sapin'", raison)     # et ce qui EST en stock, pour comparer
+
+    def test_matiere_differente_par_un_caractere_invisible(self):
+        # le vrai piege (signale par Christophe, 30/08/2026) : deux
+        # matieres qui SE LISENT pareil ("Bois Douglas") mais different
+        # par un caractere invisible (ici U+200B, espace de largeur
+        # nulle, au lieu d'une espace normale — str.split() n'y voit
+        # pas une espace) ne s'apparient jamais, et rien ne le montrait
+        matiere_piegee = "Bois" + chr(0x200B) + "Douglas"
+        r = optimiser([Piece("c", 100, 50, 18, matiere_piegee)],
+                      [Planche("b", 500, 200, 18, "Bois Douglas")], RAPIDE)
+        raison = r.non_placees[0].raison
+        self.assertIn("\\u200b", raison)  # repr() rend l'espace invisible visible
 
     def test_lots_separes(self):
         r = optimiser(
