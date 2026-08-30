@@ -1,0 +1,409 @@
+# -*- coding: utf-8 -*-
+"""Le dessin du plan de débit.
+
+Une seule scène porte TOUTES les planches, empilées, chacune sous son
+cartouche. C'est ce qui change le plus par rapport à la première
+interface : une planche seule affichée dans un panneau haut ne remplit
+rien — un brin de 4 m sur 200 mm ajusté en largeur ne fait qu'un filet
+de quarante pixels au milieu du vide. Empilées, les planches occupent
+la hauteur, et surtout on lit le débit ENTIER d'un coup d'œil, ce qu'on
+ne pouvait pas faire en cliquant les planches une par une.
+
+Le plan garde des couleurs claires même sur thème sombre : c'est une
+feuille qu'on imprime et qu'on emporte à l'établi.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QBrush, QFont, QImage, QPainter, QPen
+from PySide6.QtWidgets import (
+    QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsSimpleTextItem, QGraphicsView,
+)
+
+import apparence
+import optimiseur as opt
+
+
+class VuePlan(QGraphicsView):
+    """Planches débitées : pièces en couleur, chutes hachurées, et le
+    reste — sciure et rebuts trop petits — en fond de papier."""
+
+    ZOOM_MIN, ZOOM_MAX = 0.02, 40.0
+
+    # Hauteur visée, en pixels, pour le titre d'une planche une fois le
+    # plan ajusté à la fenêtre.
+    _CARTOUCHE_PX = 14.0
+
+    def __init__(self):
+        super().__init__()
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setScene(QGraphicsScene(self))
+        self.setBackgroundBrush(QBrush(apparence.fond_etabli(self)))
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        # Centré : une planche de 12:1 ne remplira jamais un panneau
+        # de 3:2, autant que le vide se répartisse plutôt que de
+        # s'amasser sous le dessin comme un oubli.
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._debits = []          # [(numero, Debit)] tels qu'affichés
+        self._etiquettes = []
+        self._cadres = {}          # numero -> QGraphicsRectItem du contour
+        self._zones = {}           # numero -> QRectF de la planche en scène
+        self._selection = None
+        self._zoom_manuel = False
+        self._traits_visibles = False
+        self.couleurs = {}          # référence -> QColor, posée par la fenêtre
+
+    # -- construction de la scène ---------------------------------------
+
+    def afficher(self, debits: list, traits: bool = None):
+        """``debits`` : liste de couples (numéro affiché, Debit)."""
+        if traits is not None:
+            self._traits_visibles = traits
+        self._debits = list(debits)
+        self._zoom_manuel = False
+        self.setBackgroundBrush(QBrush(apparence.fond_etabli(self)))
+        scene = self.scene()
+        scene.clear()
+        self._etiquettes = []
+        self._cadres = {}
+        self._zones = {}
+        self._selection = None
+        if not self._debits:
+            scene.setSceneRect(QRectF())
+            return
+
+        longueur_max = max(d.planche.longueur for _, d in self._debits)
+        largeur_max = max(d.planche.largeur for _, d in self._debits)
+        # Le cartouche est dessiné en millimètres de scène (il grandit
+        # donc au zoom), mais sa taille est choisie pour faire une hauteur
+        # de PIXELS donnée une fois le plan ajusté — c'est là qu'on le
+        # lit. Le déduire de la largeur des planches ne marchait pas :
+        # cinq brins de 4 m sur 150 se voient à 0,22 px/mm, et le titre
+        # tombait à huit pixels, illisible.
+        echelle_prevue = max(self.viewport().width(), 400) / longueur_max
+        hauteur_texte = min(max(self._CARTOUCHE_PX / echelle_prevue,
+                                largeur_max * 0.12), largeur_max * 0.55)
+        # Le titre se pose EN HAUT de sa bande : le reste de la bande
+        # reçoit les étiquettes qui débordent par le haut de la planche
+        # (celles des pièces au ras du bord), qui sinon s'écrivent par
+        # dessus le titre.
+        bande = hauteur_texte * 2.2
+        interligne = hauteur_texte * 1.4
+
+        y = 0.0
+        for numero, debit in self._debits:
+            self._cartouche(scene, numero, debit, y, hauteur_texte)
+            y += bande
+            self._planche(scene, numero, debit, y)
+            y += debit.planche.largeur + interligne
+
+        scene.setSceneRect(QRectF(0, 0, longueur_max, max(y - interligne, 1)))
+        self._ajuster()
+
+    def _cartouche(self, scene, numero, debit, y, hauteur_texte):
+        pl = debit.planche
+        marque = "chute" if pl.chute else ("catalogue" if pl.illimite else "")
+        plusieurs = pl.quantite > 1 or pl.illimite
+        exemplaire = " (ex. %d)" % debit.exemplaire if plusieurs else ""
+        libelle = ("%d.  %s%s   —   %s × %s × %s mm, %s%s   —   %d pièce(s),"
+                   " rendement %s %%"
+                   % (numero, pl.reference, exemplaire, opt._mm(pl.longueur),
+                      opt._mm(pl.largeur), opt._mm(pl.epaisseur), pl.matiere,
+                      " [%s]" % marque if marque else "",
+                      len(debit.poses), opt._pct(debit.rendement)))
+        texte = QGraphicsSimpleTextItem(libelle)
+        police = QFont()
+        police.setPointSize(10)
+        police.setBold(True)
+        texte.setFont(police)
+        texte.setBrush(QBrush(apparence.encre_marge(self)))
+        boite = texte.boundingRect()
+        if boite.height() > 0:
+            texte.setScale(hauteur_texte / boite.height())
+        texte.setPos(0, y + hauteur_texte * 0.05)
+        scene.addItem(texte)
+
+    def _planche(self, scene, numero, debit, y_haut):
+        pl = debit.planche
+        zone = QRectF(0, y_haut, pl.longueur, pl.largeur)
+        self._zones[numero] = zone
+
+        fond = QGraphicsRectItem(zone)
+        fond.setBrush(QBrush(apparence.PLAN_PAPIER))
+        fond.setPen(QPen(apparence.PLAN_BORD, max(pl.longueur, 1) / 500))
+        fond.setToolTip("Ce que ni pièce ni chute ne couvre est la perte :"
+                        " sciure et rebuts sous les minis de chute.")
+        scene.addItem(fond)
+
+        for pose in debit.poses:
+            self._rectangle(
+                scene, numero, pose.x, pose.y, pose.dim_x, pose.dim_y,
+                pl.largeur, y_haut, self.couleur(pose.piece.reference),
+                "%s\n%s × %s" % (pose.piece.reference, opt._mm(pose.dim_x),
+                                 opt._mm(pose.dim_y)),
+                pose.piece.reference)
+
+        for chute in debit.chutes:
+            self._rectangle(
+                scene, numero, chute.x, chute.y, chute.dim_x, chute.dim_y,
+                pl.largeur, y_haut, apparence.PLAN_CHUTE,
+                "chute\n%s × %s" % (opt._mm(chute.dim_x), opt._mm(chute.dim_y)),
+                "chute", hachure=True)
+
+        if self._traits_visibles:
+            self._traits_de_scie(scene, debit, y_haut)
+
+        cadre = QGraphicsRectItem(zone)
+        cadre.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        cadre.setPen(QPen(Qt.PenStyle.NoPen))
+        cadre.setZValue(10)
+        scene.addItem(cadre)
+        self._cadres[numero] = cadre
+
+    def couleur(self, reference: str):
+        return self.couleurs.get(reference) or apparence.couleur_piece(reference)
+
+    def _traits_de_scie(self, scene, debit, y_haut):
+        """Les coupes dans leur ordre d'exécution — chaque trait traverse
+        de bord à bord le morceau courant, tel qu'on le passera à la scie."""
+        pl = debit.planche
+        epaisseur = max(pl.longueur, pl.largeur) / 700
+        for coupe in debit.coupes:
+            if coupe.sens == opt.DELIGNAGE:
+                y = y_haut + pl.largeur - coupe.position
+                ligne = scene.addLine(coupe.de, y, coupe.a, y)
+            else:
+                ligne = scene.addLine(coupe.position, y_haut + pl.largeur - coupe.de,
+                                      coupe.position, y_haut + pl.largeur - coupe.a)
+            stylo = QPen(apparence.PLAN_TRAIT_SCIE, epaisseur)
+            stylo.setStyle(Qt.PenStyle.DashLine)
+            ligne.setPen(stylo)
+            ligne.setZValue(5)
+            ligne.setToolTip("Coupe n° %d — %s" % (coupe.ordre, coupe.sens))
+
+    def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
+                   y_haut, couleur, etiquette, etiquette_courte,
+                   hachure=False):
+        # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
+        # place la sienne en haut-gauche — on retourne y ici, une fois,
+        # plutôt que de retourner toute la vue (le texte resterait lisible).
+        y_qt = y_haut + largeur_planche - y - dy
+        rect = QGraphicsRectItem(x, y_qt, dx, dy)
+        if hachure:
+            rect.setBrush(QBrush(couleur, Qt.BrushStyle.BDiagPattern))
+            rect.setPen(QPen(apparence.PLAN_CHUTE_TRAIT, 1))
+        else:
+            rect.setBrush(QBrush(couleur))
+            rect.setPen(QPen(apparence.PLAN_BORD, 1))
+        rect.setToolTip(etiquette.replace("\n", " "))
+        scene.addItem(rect)
+
+        # Une planche de menuiserie est souvent longue et étroite (un
+        # 150×3000) : la pièce posée peut être trop basse pour ses deux
+        # lignes complètes tout en étant bien assez large pour son seul
+        # nom. Les trois variantes sont préparées ; _visibilite choisit
+        # celle qui loge sous le zoom courant, ou aucune (l'info-bulle
+        # reste).
+        complet = self._texte_centre(scene, etiquette, x, y_qt, dx, dy, 8)
+        court = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, dy, 6)
+        hors, cote_hors = None, None
+        if y < 0.5:
+            # Pièce au ras du bord bas : rien n'occupe l'en-dessous, et
+            # l'interligne entre planches y laisse la place — l'étiquette
+            # peut déborder là sans chevaucher un voisin.
+            hors = self._texte_centre(scene, etiquette_courte, x, y_qt + dy,
+                                      dx, 0, 6, cote="dessous")
+            cote_hors = "dessous"
+        elif y + dy > largeur_planche - 0.5:
+            hors = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, 0,
+                                      6, cote="dessus")
+            cote_hors = "dessus"
+        self._etiquettes.append(
+            (complet, court, hors, cote_hors, dx, dy, x + dx / 2, numero))
+
+    def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
+                      cote="dedans"):
+        texte = QGraphicsSimpleTextItem(chaine)
+        texte.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        police = QFont()
+        police.setPointSize(taille_police)
+        texte.setFont(police)
+        texte.setBrush(QBrush(apparence.PLAN_BORD if cote == "dedans"
+                              else apparence.encre_marge(self)))
+        texte.setZValue(6)
+        # ItemIgnoresTransformations ancre pos() au point de la scène (donc
+        # zoomé avec la vue) mais dessine ensuite en pixels non zoomés — le
+        # centrage se fait par une transformation propre à l'item, en pixels.
+        boite = texte.boundingRect()
+        texte.setPos(x + dx / 2, y_qt + dy / 2)
+        if cote == "dessus":
+            decalage_y = -boite.height() - 3
+        elif cote == "dessous":
+            decalage_y = 3
+        else:
+            decalage_y = -boite.height() / 2
+        texte.setTransform(
+            texte.transform().translate(-boite.width() / 2, decalage_y))
+        scene.addItem(texte)
+        return texte, boite
+
+    # -- sélection --------------------------------------------------------
+
+    def selectionner(self, numero, defiler=True):
+        """Encadre une planche et l'amène sous les yeux — la liste et le
+        dessin désignent ainsi toujours la même planche."""
+        for num, cadre in self._cadres.items():
+            if num == numero:
+                stylo = QPen(apparence.ORANGE,
+                             max(self.scene().sceneRect().width(), 1) / 250)
+                cadre.setPen(stylo)
+            else:
+                cadre.setPen(QPen(Qt.PenStyle.NoPen))
+        self._selection = numero
+        if defiler and numero in self._zones:
+            self.ensureVisible(self._zones[numero], 20, 20)
+
+    def planche_sous(self, position):
+        """Le numéro de la planche sous un point de la vue, ou None."""
+        point = self.mapToScene(position)
+        for numero, zone in self._zones.items():
+            if zone.contains(point):
+                return numero
+        return None
+
+    def mousePressEvent(self, evenement):
+        numero = self.planche_sous(evenement.position().toPoint())
+        if numero is not None and numero != self._selection:
+            self.selectionner(numero, defiler=False)
+            if callable(getattr(self, "au_clic_planche", None)):
+                self.au_clic_planche(numero)
+        super().mousePressEvent(evenement)
+
+    # -- zoom -------------------------------------------------------------
+
+    def wheelEvent(self, evenement):
+        # Molette = défilement (la pile de planches est plus haute que la
+        # vue), Ctrl+molette = zoom, comme dans toute visionneuse. La
+        # molette seule zoomait dans la première version, où il n'y avait
+        # jamais rien à faire défiler.
+        if not (evenement.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            super().wheelEvent(evenement)
+            return
+        self.zoomer(1.25 if evenement.angleDelta().y() > 0 else 1 / 1.25)
+
+    def zoomer(self, facteur):
+        if not self._debits:
+            return
+        echelle = self.transform().m11() * facteur
+        # Une planche très longue s'ajuste déjà loin sous ZOOM_MIN :
+        # rejeter tout zoom qui reste sous le plancher bloquerait le zoom
+        # AVANT pour toujours. Seul le sens qui s'approche de la borne
+        # doit s'y heurter.
+        if facteur > 1 and echelle > self.ZOOM_MAX:
+            return
+        if facteur < 1 and echelle < self.ZOOM_MIN:
+            return
+        self._zoom_manuel = True
+        self.scale(facteur, facteur)
+        self._visibilite(self.transform().m11())
+
+    def mouseDoubleClickEvent(self, evenement):
+        self.ajuster()
+        super().mouseDoubleClickEvent(evenement)
+
+    def ajuster(self):
+        self._zoom_manuel = False
+        self._ajuster()
+
+    def resizeEvent(self, evenement):
+        super().resizeEvent(evenement)
+        self._ajuster()
+
+    def _ajuster(self):
+        if self.scene() is None or self.scene().sceneRect().isEmpty():
+            return
+        if not self._zoom_manuel:
+            self.fitInView(self.scene().sceneRect(),
+                           Qt.AspectRatioMode.KeepAspectRatio)
+        self._visibilite(self.transform().m11())
+
+    def _visibilite(self, echelle):
+        # Une étiquette « hors » (au-dessus/en-dessous, débordant dans la
+        # marge) ne vérifie d'abord que SA propre pièce — deux petites
+        # pièces voisines peuvent chacune y passer et quand même se
+        # chevaucher, illisibles côte à côte. Les candidates qui passent
+        # ce premier tri s'accumulent par planche ET par côté, pour un
+        # second tri qui les compare entre elles. Par planche : deux
+        # planches empilées ont chacune leur propre bande de marge.
+        candidats = {}
+        for (texte_c, boite_c), (texte_k, boite_k), hors, cote_hors, dx, dy, \
+                x_centre, numero in self._etiquettes:
+            def tient(boite, hauteur=dy):
+                return (dx * echelle >= boite.width() + 4
+                        and hauteur * echelle >= boite.height() + 4)
+            if tient(boite_c):
+                texte_c.setVisible(True)
+                texte_k.setVisible(False)
+                if hors:
+                    hors[0].setVisible(False)
+            elif tient(boite_k):
+                texte_c.setVisible(False)
+                texte_k.setVisible(True)
+                if hors:
+                    hors[0].setVisible(False)
+            else:
+                texte_c.setVisible(False)
+                texte_k.setVisible(False)
+                if hors:
+                    texte_h, boite_h = hors
+                    if dx * echelle >= boite_h.width() + 4:
+                        candidats.setdefault((numero, cote_hors), []).append(
+                            (x_centre * echelle, boite_h.width(), texte_h))
+                    else:
+                        texte_h.setVisible(False)
+
+        for groupe in candidats.values():
+            groupe.sort(key=lambda c: c[0])
+            bord_precedent = None
+            for centre_px, largeur_px, texte_h in groupe:
+                gauche = centre_px - largeur_px / 2
+                if bord_precedent is not None and gauche < bord_precedent + 4:
+                    texte_h.setVisible(False)
+                else:
+                    texte_h.setVisible(True)
+                    bord_precedent = centre_px + largeur_px / 2
+
+    # -- export -----------------------------------------------------------
+
+    def exporter_image(self, chemin: str, largeur_px: int = 2400) -> bool:
+        """Rend ce qui est affiché à une résolution fixe, indépendante de
+        la taille de la fenêtre — un plan imprimé n'a pas les mêmes
+        contraintes de place qu'un widget à l'écran, les étiquettes s'y
+        recalculent donc à l'échelle d'export, pas celle affichée."""
+        if not self._debits:
+            return False
+        scene = self.scene()
+        rect = scene.sceneRect()
+        echelle = largeur_px / rect.width()
+        hauteur_px = max(1, round(rect.height() * echelle))
+        cadres = {n: c.pen() for n, c in self._cadres.items()}
+        for cadre in self._cadres.values():
+            cadre.setPen(QPen(Qt.PenStyle.NoPen))
+        self._visibilite(echelle)
+        image = QImage(largeur_px, hauteur_px, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        peintre = QPainter(image)
+        peintre.setRenderHint(QPainter.RenderHint.Antialiasing)
+        scene.render(peintre)
+        peintre.end()
+        ok = image.save(chemin)
+        for numero, stylo in cadres.items():
+            self._cadres[numero].setPen(stylo)
+        self._visibilite(self.transform().m11())
+        return ok

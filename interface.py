@@ -1,34 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Interface Qt du chutier — saisie des pièces et du stock, calcul de la
-feuille de débit, dessin du plan planche par planche.
+"""Interface Qt du chutier.
 
-Ne contient aucune logique de débit : tout passe par
-``optimiseur.optimiser()``. Cette couche ne fait qu'assembler les entrées
-et afficher le ``Resultat`` qui en revient.
+Trois temps, trois onglets à gauche : ce qu'on veut débiter, ce qu'on a
+en stock, comment on scie. Le résultat occupe toute la droite, le plan
+en tête — c'est ce qu'on regarde, pas la saisie qu'on vient de finir.
+
+Aucune logique de débit ici : tout passe par ``optimiseur.optimiser()``.
+Cette couche assemble les entrées et affiche le ``Resultat`` qui revient.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 
-from PySide6.QtCore import Qt, QRectF, QTimer
-from PySide6.QtGui import (
-    QBrush, QColor, QFont, QIcon, QImage, QPen, QPainter,
-)
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
-    QFileDialog, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
-    QGraphicsSimpleTextItem, QGraphicsView, QGroupBox, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSplitter,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+    QListWidget,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
+    QSpinBox, QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
+import apparence
 import csv_io
 import optimiseur as opt
 import projet_io
+import tables_saisie as tsa
+import vue_plan
+from tables_saisie import ErreurSaisie
 
 TITRE = "Chutier — feuille de débit"
 # Chemin absolu : le lanceur .desktop fixe le dossier courant, mais rien
@@ -36,620 +40,354 @@ TITRE = "Chutier — feuille de débit"
 ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
-COLONNES_PIECES = ["Référence", "Longueur", "Largeur", "Épaisseur",
-                    "Matière", "Qté", "Fil", "Composable"]
-COLONNES_STOCK = ["Référence", "Longueur", "Largeur", "Épaisseur",
-                   "Matière", "Qté", "Chute", "A un fil", "Catalogue",
-                   "Prix"]
-
-FILS_PIECE = [
-    (opt.FIL_LONGUEUR, "Longueur"),
-    (opt.FIL_LARGEUR, "Largeur"),
-    (opt.FIL_INDIFFERENT, "Indifférent"),
-]
-
-COULEUR_CHUTE = QColor("#b9bdc4")
-COULEUR_TRAIT_CHUTE = QColor("#6b7078")
-COULEUR_PERTE_FOND = QColor("#f4f2ee")
-COULEUR_BORD_PLANCHE = QColor("#2f3540")
-COULEUR_ALERTE = QColor("#c0392b")
-
-# Le décrochement par défaut d'un QSplitter (2-4 px, quasi invisible sur
-# beaucoup de thèmes) le rendait difficile à repérer et à saisir pour
-# agrandir un panneau — palette(...) suit le thème clair/sombre du système
-# plutôt qu'une couleur fixe.
-STYLE_POIGNEE_SPLITTER = """
-    QSplitter::handle { background: palette(mid); }
-    QSplitter::handle:hover { background: palette(highlight); }
-"""
+PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
 
 
-def _couleur_piece(reference: str) -> QColor:
-    """Une teinte stable par référence, dérivée de son nom — deux pièces
-    de même référence ont toujours la même couleur d'une session à
-    l'autre, sans table à tenir à jour."""
-    teinte = (hash(reference) % 360 + 360) % 360
-    return QColor.fromHsv(teinte, 110, 235)
+def chutes_groupees(resultat) -> dict:
+    """Les chutes créées rassemblées par cotes identiques, la plus grande
+    d'abord. Deux chutes de 505 × 41 sont un lot de deux, pas deux lignes."""
+    groupes = {}
+    for c in resultat.chutes_creees:
+        cle = (round(c.dim_x, 1), round(c.dim_y, 1), round(c.epaisseur, 1),
+               c.matiere, c.fil)
+        groupes[cle] = groupes.get(cle, 0) + 1
+    return dict(sorted(groupes.items(), key=lambda kv: -kv[0][0] * kv[0][1]))
 
 
-def _texte_ou_zero(cellule: QTableWidgetItem) -> str:
-    return cellule.text().strip() if cellule is not None else ""
+def planches_consommees(resultat) -> dict:
+    """Combien d'exemplaires de chaque référence le débit a entamés.
+
+    Un profil de catalogue n'y figure pas : il ne sort pas de l'atelier,
+    il s'achète — c'est ``Resultat.achats`` qui le compte."""
+    consommees = {}
+    for debit in resultat.debits:
+        if debit.planche.illimite:
+            continue
+        consommees[debit.planche.reference] = \
+            consommees.get(debit.planche.reference, 0) + 1
+    return consommees
 
 
-class TableEditable(QTableWidget):
-    """Table à lignes ajoutables/supprimables, colonnes fixées."""
+def stock_apres_debit(stock: list, resultat) -> list:
+    """Le stock tel qu'il sera une fois le débit fait à l'établi : les
+    planches entamées en moins, les chutes créées en plus.
 
-    def __init__(self, colonnes: list):
-        super().__init__(0, len(colonnes))
-        self.setHorizontalHeaderLabels(colonnes)
-        self.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(colonnes)):
-            self.horizontalHeader().setSectionResizeMode(
-                i, QHeaderView.ResizeMode.ResizeToContents)
-        self.verticalHeader().setVisible(False)
-        # Cliquer n'importe où dans une ligne la sélectionne entière ;
-        # Ctrl/Maj en sélectionne plusieurs — nécessaire pour appliquer
-        # une valeur à plusieurs lignes d'un coup (matière, notamment).
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+    C'est la seule opération du chutier qui réécrive une saisie de
+    l'utilisateur — elle est donc écrite ici, séparée de la boîte de
+    dialogue qui la propose, pour être vérifiable par un test.
+    """
+    restant = dict(planches_consommees(resultat))
+    nouveau = []
+    for planche in stock:
+        pris = min(restant.get(planche.reference, 0), planche.quantite)
+        if pris and not planche.illimite:
+            restant[planche.reference] -= pris
+            reste = planche.quantite - pris
+            if reste <= 0:
+                continue          # tout ce lot est passé sous la scie
+            planche = dataclasses.replace(planche, quantite=reste)
+        nouveau.append(planche)
 
-    def lignes_selectionnees(self) -> list:
-        return sorted({i.row() for i in self.selectedIndexes()})
-
-    def ligne_texte(self, ligne: int, colonne: int, defaut: str = "") -> str:
-        item = self.item(ligne, colonne)
-        return item.text().strip() if item is not None else defaut
-
-    def widget_ligne(self, ligne: int, colonne: int):
-        return self.cellWidget(ligne, colonne)
-
-    def ajouter_ligne(self):
-        self.insertRow(self.rowCount())
-
-    def supprimer_lignes_selectionnees(self):
-        for ligne in reversed(self.lignes_selectionnees()):
-            self.removeRow(ligne)
-
-
-class ComboMatiere(QComboBox):
-    """La liste des matières déjà présentes dans le stock, relue à chaque
-    ouverture — éditable pour une matière qui n'y figure pas encore.
-    Sans ce rafraîchissement paresseux, une liste figée à la création de
-    la ligne resterait périmée dès que le stock change ensuite."""
-
-    def __init__(self, table_stock: "TableStock"):
-        super().__init__()
-        self.setEditable(True)
-        self._table_stock = table_stock
-
-    def showPopup(self):
-        actuel = self.currentText()
-        matieres = sorted({self._table_stock.ligne_texte(r, 4)
-                           for r in range(self._table_stock.rowCount())
-                           if self._table_stock.ligne_texte(r, 4)})
-        self.blockSignals(True)
-        self.clear()
-        self.addItems(matieres)
-        self.setCurrentText(actuel)
-        self.blockSignals(False)
-        super().showPopup()
-
-
-class TablePieces(TableEditable):
-    def __init__(self, table_stock: "TableStock"):
-        super().__init__(COLONNES_PIECES)
-        self._table_stock = table_stock
-
-    def ajouter_ligne(self, reference="", longueur="", largeur="",
-                      epaisseur="18", matiere="", quantite="1",
-                      composable=False):
-        ligne = self.rowCount()
-        self.insertRow(ligne)
-        for col, valeur in enumerate(
-                [reference, longueur, largeur, epaisseur]):
-            self.setItem(ligne, col, QTableWidgetItem(str(valeur)))
-        combo_matiere = ComboMatiere(self._table_stock)
-        combo_matiere.setCurrentText(str(matiere))
-        self.setCellWidget(ligne, 4, combo_matiere)
-        self.setItem(ligne, 5, QTableWidgetItem(str(quantite)))
-        combo_fil = QComboBox()
-        for cle, libelle in FILS_PIECE:
-            combo_fil.addItem(libelle, cle)
-        self.setCellWidget(ligne, 6, combo_fil)
-        case_composable = QCheckBox()
-        case_composable.setChecked(bool(composable))
-        case_composable.setToolTip(
-            "Trop large pour tout brut, cette pièce peut se reconstituer"
-            " en collant plusieurs lames côte à côte (ou en tenon-rainure)"
-            " plutôt que de rester non placée.")
-        self.setCellWidget(ligne, 7, case_composable)
-
-    def pieces(self) -> list:
-        resultat = []
-        for ligne in range(self.rowCount()):
-            reference = self.ligne_texte(ligne, 0)
-            if not reference:
-                continue
-            longueur = _flottant(self.ligne_texte(ligne, 1), reference)
-            largeur = _flottant(self.ligne_texte(ligne, 2), reference)
-            epaisseur = _flottant(self.ligne_texte(ligne, 3, "0") or "0",
-                                  reference)
-            matiere = self.widget_ligne(ligne, 4).currentText().strip()
-            quantite = _entier(self.ligne_texte(ligne, 5, "1") or "1",
-                               reference)
-            fil = self.widget_ligne(ligne, 6).currentData()
-            composable = self.widget_ligne(ligne, 7).isChecked()
-            resultat.append(opt.Piece(reference, longueur, largeur,
-                                      epaisseur, matiere, quantite, fil,
-                                      composable))
-        return resultat
-
-
-class TableStock(TableEditable):
-    def __init__(self):
-        super().__init__(COLONNES_STOCK)
-
-    def ajouter_ligne(self, reference="", longueur="", largeur="",
-                      epaisseur="18", matiere="", quantite="1",
-                      chute=False, fil=True, illimite=False, prix="0"):
-        ligne = self.rowCount()
-        self.insertRow(ligne)
-        for col, valeur in enumerate(
-                [reference, longueur, largeur, epaisseur, matiere,
-                 quantite]):
-            self.setItem(ligne, col, QTableWidgetItem(str(valeur)))
-        case_chute = QCheckBox()
-        case_chute.setChecked(chute)
-        self.setCellWidget(ligne, 6, case_chute)
-        case_fil = QCheckBox()
-        case_fil.setChecked(fil)
-        self.setCellWidget(ligne, 7, case_fil)
-        case_illimite = QCheckBox()
-        case_illimite.setChecked(illimite)
-        case_illimite.setToolTip(
-            "Un profil de catalogue (une section qu'on peut acheter),"
-            " pas des planches déjà en atelier — la quantité ne borne"
-            " plus rien, le chutier en prend autant que le débit"
-            " demande, et compte ensuite combien en acheter.")
-        self.setCellWidget(ligne, 8, case_illimite)
-        item_prix = QTableWidgetItem(str(prix))
-        item_prix.setToolTip(
-            "Coût d'UNE planche à ces cotes, pas un prix au mètre. Sert à"
-            " départager plusieurs profils Catalogue par le coût réel"
-            " plutôt que la seule surface neuve — laisser à 0 pour ne pas"
-            " en tenir compte.")
-        self.setItem(ligne, 9, item_prix)
-
-    def stock(self) -> list:
-        resultat = []
-        for ligne in range(self.rowCount()):
-            reference = self.ligne_texte(ligne, 0)
-            if not reference:
-                continue
-            longueur = _flottant(self.ligne_texte(ligne, 1), reference)
-            largeur = _flottant(self.ligne_texte(ligne, 2), reference)
-            epaisseur = _flottant(self.ligne_texte(ligne, 3, "0") or "0",
-                                  reference)
-            matiere = self.ligne_texte(ligne, 4)
-            quantite = _entier(self.ligne_texte(ligne, 5, "1") or "1",
-                               reference)
-            chute = self.widget_ligne(ligne, 6).isChecked()
-            fil = self.widget_ligne(ligne, 7).isChecked()
-            illimite = self.widget_ligne(ligne, 8).isChecked()
-            prix = _flottant(self.ligne_texte(ligne, 9, "0") or "0",
-                             reference)
-            resultat.append(opt.Planche(reference, longueur, largeur,
-                                        epaisseur, matiere, quantite,
-                                        chute, fil, illimite, prix))
-        return resultat
-
-
-class ErreurSaisie(ValueError):
-    pass
-
-
-def _flottant(texte: str, reference: str) -> float:
-    try:
-        return float(texte.replace(",", "."))
-    except ValueError:
-        raise ErreurSaisie(
-            "« %s » : nombre attendu, « %s » lu" % (reference, texte))
-
-
-def _entier(texte: str, reference: str) -> int:
-    try:
-        return int(texte)
-    except ValueError:
-        raise ErreurSaisie(
-            "« %s » : entier attendu, « %s » lu" % (reference, texte))
-
-
-class VuePlanche(QGraphicsView):
-    """Dessine une planche débitée : pièces posées en couleur, chutes
-    réutilisables en hachuré. Ce que ni pièce ni chute ne couvrent est
-    la perte (sciure + rebuts) — il apparaît en fond, non détouré."""
-
-    ZOOM_MIN, ZOOM_MAX = 0.5, 40.0
-
-    def __init__(self):
-        super().__init__()
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setScene(QGraphicsScene(self))
-        self._debit = None
-        self._etiquettes = []
-        self._zoom_manuel = False
-        # Molette pour zoomer (sous la souris, pas au centre — on vise
-        # une étiquette précise) ; glisser-déposer pour se déplacer une
-        # fois zoomé. Double-clic reprend l'ajustement automatique.
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setTransformationAnchor(
-            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-
-    def afficher(self, debit):
-        self._debit = debit
-        self._zoom_manuel = False
-        scene = self.scene()
-        scene.clear()
-        if debit is None:
-            return
-
-        pl = debit.planche
-        scene.setSceneRect(QRectF(0, 0, pl.longueur, pl.largeur))
-
-        fond = QGraphicsRectItem(0, 0, pl.longueur, pl.largeur)
-        fond.setBrush(QBrush(COULEUR_PERTE_FOND))
-        fond.setPen(QPen(COULEUR_BORD_PLANCHE, max(pl.longueur, 1) / 400))
-        scene.addItem(fond)
-
-        self._etiquettes = []
-        for pose in debit.poses:
-            self._ajouter_rect(scene, pose.x, pose.y, pose.dim_x,
-                               pose.dim_y, pl.largeur,
-                               _couleur_piece(pose.piece.reference),
-                               "%s\n%g × %g" % (pose.piece.reference,
-                                                round(pose.dim_x, 1),
-                                                round(pose.dim_y, 1)),
-                               pose.piece.reference)
-
-        for chute in debit.chutes:
-            self._ajouter_rect(scene, chute.x, chute.y, chute.dim_x,
-                               chute.dim_y, pl.largeur, COULEUR_CHUTE,
-                               "chute\n%g × %g" % (round(chute.dim_x, 1),
-                                                   round(chute.dim_y, 1)),
-                               "chute", hachure=True)
-
-        self._ajuster()
-
-    def _ajouter_rect(self, scene, x, y, dx, dy, largeur_planche, couleur,
-                      etiquette, etiquette_courte, hachure=False):
-        # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
-        # place la sienne en haut-gauche — on retourne y ici, une fois,
-        # plutôt que de retourner toute la vue (le texte resterait lisible).
-        y_qt = largeur_planche - y - dy
-        rect = QGraphicsRectItem(x, y_qt, dx, dy)
-        if hachure:
-            brosse = QBrush(couleur, Qt.BrushStyle.BDiagPattern)
-            rect.setBrush(brosse)
-            rect.setPen(QPen(COULEUR_TRAIT_CHUTE, 1))
-        else:
-            rect.setBrush(QBrush(couleur))
-            rect.setPen(QPen(COULEUR_BORD_PLANCHE, 1))
-        rect.setToolTip(etiquette.replace("\n", " "))
-        scene.addItem(rect)
-
-        # Une planche de menuiserie est souvent longue et étroite (un
-        # 150×3000) : la pièce posée peut être trop basse pour ses deux
-        # lignes complètes tout en étant bien assez large pour son seul
-        # nom. Les trois variantes sont préparées ; _ajuster choisit celle
-        # qui loge sous le zoom courant, ou aucune (l'info-bulle reste).
-        complet = self._texte_centre(scene, etiquette, x, y_qt, dx, dy, 8)
-        court = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, dy, 6)
-        hors, cote_hors = None, None
-        if y < 0.5:
-            # La pièce est au ras du bord bas de la planche (y=0) : rien
-            # n'occupe l'en-dessous. La vue en garde toujours une marge
-            # libre là (une planche de charpente est bien plus longue que
-            # large) — l'étiquette peut y déborder sans chevaucher un
-            # voisin, qu'il soit une pièce ou une chute.
-            hors = self._texte_centre(scene, etiquette_courte, x,
-                                      y_qt + dy, dx, 0, 6, cote="dessous")
-            cote_hors = "dessous"
-        elif y + dy > largeur_planche - 0.5:
-            hors = self._texte_centre(scene, etiquette_courte, x, y_qt,
-                                      dx, 0, 6, cote="dessus")
-            cote_hors = "dessus"
-        self._etiquettes.append(
-            (complet, court, hors, cote_hors, dx, dy, x + dx / 2))
-
-    def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
-                      cote="dedans"):
-        texte = QGraphicsSimpleTextItem(chaine)
-        texte.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        police = QFont()
-        police.setPointSize(taille_police)
-        texte.setFont(police)
-        # ItemIgnoresTransformations ancre pos() au point de la scène (donc
-        # zoomé avec la vue) mais dessine ensuite en pixels non zoomés — le
-        # centrage se fait par une transformation propre à l'item, en pixels.
-        boite = texte.boundingRect()
-        texte.setPos(x + dx / 2, y_qt + dy / 2)
-        if cote == "dessus":
-            decalage_y = -boite.height() - 3
-        elif cote == "dessous":
-            decalage_y = 3
-        else:
-            decalage_y = -boite.height() / 2
-        texte.setTransform(
-            texte.transform().translate(-boite.width() / 2, decalage_y))
-        scene.addItem(texte)
-        return texte, boite
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._ajuster()
-
-    def wheelEvent(self, event):
-        if self._debit is None:
-            return
-        self._zoom_manuel = True
-        agrandit = event.angleDelta().y() > 0
-        facteur = 1.25 if agrandit else 1 / 1.25
-        echelle = self.transform().m11() * facteur
-        # Une planche tres longue s'ajuste deja tres en dessous de
-        # ZOOM_MIN (0,2 pour un brin de 4 m) : rejeter tout zoom qui
-        # reste sous le plancher bloquerait le zoom AVANT pour toujours,
-        # alors qu'il s'en eloigne. Seul le sens qui s'approche de la
-        # borne doit s'y heurter.
-        if agrandit and echelle > self.ZOOM_MAX:
-            return
-        if not agrandit and echelle < self.ZOOM_MIN:
-            return
-        self.scale(facteur, facteur)
-        self._appliquer_visibilite_etiquettes(self.transform().m11())
-
-    def mouseDoubleClickEvent(self, event):
-        self._zoom_manuel = False
-        self._ajuster()
-        super().mouseDoubleClickEvent(event)
-
-    def _ajuster(self):
-        if self.scene() is None or self.scene().sceneRect().isEmpty():
-            return
-        if not self._zoom_manuel:
-            self.fitInView(self.scene().sceneRect(),
-                           Qt.AspectRatioMode.KeepAspectRatio)
-        self._appliquer_visibilite_etiquettes(self.transform().m11())
-
-    def _appliquer_visibilite_etiquettes(self, echelle):
-        # Une étiquette "hors" (au-dessus/en-dessous, débordant dans la
-        # marge) ne vérifie jusqu'ici que SA propre pièce — deux petites
-        # pièces voisines peuvent chacune y passer et quand même se
-        # chevaucher l'une l'autre, illisibles côte à côte (signalé par
-        # Christophe, capture à l'appui : "tout s'enchevêtre"). Les
-        # candidates qui passent ce premier tri s'accumulent ici, par
-        # côté, pour un second tri qui les compare entre elles.
-        candidats_hors = {"dessus": [], "dessous": []}
-        for (texte_c, boite_c), (texte_k, boite_k), hors, cote_hors, dx, dy, \
-                x_centre in getattr(self, "_etiquettes", []):
-            def tient(boite, hauteur=dy):
-                return (dx * echelle >= boite.width() + 4
-                        and hauteur * echelle >= boite.height() + 4)
-            if tient(boite_c):
-                texte_c.setVisible(True)
-                texte_k.setVisible(False)
-                if hors:
-                    hors[0].setVisible(False)
-            elif tient(boite_k):
-                texte_c.setVisible(False)
-                texte_k.setVisible(True)
-                if hors:
-                    hors[0].setVisible(False)
-            else:
-                texte_c.setVisible(False)
-                texte_k.setVisible(False)
-                if hors:
-                    texte_h, boite_h = hors
-                    if dx * echelle >= boite_h.width() + 4:
-                        candidats_hors[cote_hors].append(
-                            (x_centre * echelle, boite_h.width(), texte_h))
-                    else:
-                        texte_h.setVisible(False)
-
-        for candidats in candidats_hors.values():
-            candidats.sort(key=lambda c: c[0])
-            bord_precedent = None
-            for centre_px, largeur_px, texte_h in candidats:
-                gauche = centre_px - largeur_px / 2
-                if bord_precedent is not None and gauche < bord_precedent + 4:
-                    texte_h.setVisible(False)
-                else:
-                    texte_h.setVisible(True)
-                    bord_precedent = centre_px + largeur_px / 2
-
-    def exporter_image(self, chemin: str, largeur_px: int = 2400) -> bool:
-        """Rend la planche à une résolution fixe, indépendante de la
-        taille de la fenêtre — un plan imprimé n'a pas les mêmes
-        contraintes de place qu'un widget à l'écran, les étiquettes s'y
-        recalculent donc à l'échelle d'export, pas celle affichée."""
-        if self._debit is None:
-            return False
-        scene = self.scene()
-        rect = scene.sceneRect()
-        echelle = largeur_px / rect.width()
-        hauteur_px = max(1, round(rect.height() * echelle))
-        self._appliquer_visibilite_etiquettes(echelle)
-        image = QImage(largeur_px, hauteur_px, QImage.Format.Format_ARGB32)
-        image.fill(Qt.GlobalColor.white)
-        peintre = QPainter(image)
-        peintre.setRenderHint(QPainter.RenderHint.Antialiasing)
-        scene.render(peintre)
-        peintre.end()
-        ok = image.save(chemin)
-        self._appliquer_visibilite_etiquettes(self.transform().m11())
-        return ok
+    for (dim_x, dim_y, epaisseur, matiere, fil), nombre in \
+            chutes_groupees(resultat).items():
+        modele = opt.ChuteCreee(dim_x, dim_y, 0, 0, epaisseur, matiere, fil)
+        reference = "Chute %s %s×%s" % (matiere, opt._mm(dim_x), opt._mm(dim_y))
+        nouveau.append(dataclasses.replace(modele.en_planche(reference),
+                                           quantite=nombre))
+    return nouveau
 
 
 class FenetrePrincipale(QMainWindow):
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(TITRE)
-        self.resize(1600, 850)
+        self.resize(1500, 900)
         self._resultat = None
-        self._tailles_appliquees = False
+        self._chemin = None
+        self._modifie = False
+        self._a_jour = False
+        self._chargement = True
+        self._reglages = QSettings("AtelierDuVerdier", "Chutier")
 
         self._construire()
         self._charger_exemple()
+        self._chargement = False
+        self._restaurer_geometrie()
+        QTimer.singleShot(0, self._calculer)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self._tailles_appliquees:
-            return
-        self._tailles_appliquees = True
-        # QSplitter.setSizes() avant que la fenêtre ait une géométrie
-        # réelle est redistribué au premier affichage réel (aux seuls
-        # facteurs d'étirement) — et showEvent lui-même est encore trop
-        # tôt, un resize venant de la fenêtre le réécrase juste après.
-        # Un timer à délai nul le réapplique une fois ce cycle passé.
-        QTimer.singleShot(0, self._appliquer_tailles)
-
-    def _appliquer_tailles(self):
-        # Un chiffre fixe se périme dès que le panneau de saisie
-        # s'élargit (un bouton, un paramètre de plus) — son propre
-        # minimum réel est le seul repère qui ne ment pas ; le reste
-        # de la largeur va aux résultats (le plan est ce qu'on regarde).
-        gauche = self._splitter_central.widget(0).minimumSizeHint().width()
-        droite = max(500, self._splitter_central.width() - gauche)
-        self._splitter_central.setSizes([gauche, droite])
-        self._splitter_resultats.setSizes([220, 780])
-        moitie = max(1, self._splitter_saisie.height() // 2)
-        self._splitter_saisie.setSizes([moitie, moitie])
-
-    # -- construction -----------------------------------------------
+    # -- construction -----------------------------------------------------
 
     def _construire(self):
+        self._actions()
         central = QSplitter(Qt.Orientation.Horizontal)
         central.setHandleWidth(9)
-        central.setStyleSheet(STYLE_POIGNEE_SPLITTER)
-        central.addWidget(self._panneau_saisie())
+        central.setStyleSheet(apparence.STYLE_POIGNEE)
+        central.addWidget(self._onglets_saisie())
         central.addWidget(self._panneau_resultats())
-        central.setStretchFactor(0, 2)
-        central.setStretchFactor(1, 3)
-        central.setSizes([520, 760])
-        self._splitter_central = central
+        central.setStretchFactor(0, 0)
+        central.setStretchFactor(1, 1)
+        central.setCollapsible(0, True)
+        central.setSizes([560, 1140])
+        self._splitter = central
         self.setCentralWidget(central)
 
-    def _panneau_saisie(self) -> QWidget:
-        panneau = QWidget()
-        disposition = QVBoxLayout(panneau)
+        self.etat_fichier = QLabel()
+        self.etat_calcul = QLabel()
+        self.statusBar().addWidget(self.etat_fichier, 1)
+        self.statusBar().addPermanentWidget(self.etat_calcul)
+        self._rafraichir_etat()
 
-        # Le stock se construit avant les pièces : ComboMatiere y puise sa
-        # liste de matières (relue à chaque ouverture, voir sa docstring).
-        self.table_stock = TableStock()
-        self.table_pieces = TablePieces(self.table_stock)
+    def _acte(self, texte, methode, raccourci=None, icone=None, info=None):
+        action = QAction(texte, self)
+        if icone:
+            action.setIcon(apparence.icone(*icone))
+        if raccourci:
+            action.setShortcut(QKeySequence(raccourci))
+        action.setToolTip(info or texte)
+        action.setStatusTip(info or texte)
+        action.triggered.connect(methode)
+        return action
 
-        bloc_pieces = QWidget()
-        colonne_pieces = QVBoxLayout(bloc_pieces)
-        colonne_pieces.setContentsMargins(0, 0, 0, 0)
-        colonne_pieces.addWidget(QLabel("<b>Pièces à débiter</b>"))
-        colonne_pieces.addWidget(self.table_pieces, stretch=1)
-        ligne_pieces = self._boutons_table(
-            self.table_pieces, lambda: self.table_pieces.ajouter_ligne())
-        bouton_matiere = QPushButton("Matière → lignes sélectionnées")
-        bouton_matiere.clicked.connect(self._appliquer_matiere_selection)
-        ligne_pieces.addWidget(bouton_matiere)
-        bouton_importer = QPushButton("Importer un CSV…")
-        bouton_importer.clicked.connect(self._importer_csv)
-        ligne_pieces.addWidget(bouton_importer)
-        colonne_pieces.addLayout(ligne_pieces)
+    def _actions(self):
+        self.a_nouveau = self._acte(
+            "&Nouveau", self._nouveau, "Ctrl+N", ("document-new",),
+            "Vider les pièces et le stock pour repartir d'une feuille blanche")
+        self.a_ouvrir = self._acte(
+            "&Ouvrir un projet…", self._ouvrir, "Ctrl+O", ("document-open",),
+            "Rouvrir un projet enregistré (pièces, stock et réglages)")
+        self.a_enregistrer = self._acte(
+            "&Enregistrer", self._enregistrer, "Ctrl+S", ("document-save",),
+            "Enregistrer le projet courant")
+        self.a_enregistrer_sous = self._acte(
+            "Enregistrer &sous…", self._enregistrer_sous, "Ctrl+Shift+S",
+            ("document-save-as",))
+        self.a_importer = self._acte(
+            "&Importer des pièces (CSV)…", self._importer_csv, "Ctrl+I",
+            ("document-import", "document-open"),
+            "Charger une liste de pièces produite par un autre projet")
+        self.a_exporter = self._acte(
+            "E&xporter le plan (image)…", self._exporter_image, "Ctrl+E",
+            ("document-export", "image-x-generic"),
+            "Enregistrer le plan affiché en PNG, à résolution d'impression")
+        self.a_quitter = self._acte("&Quitter", self.close, "Ctrl+Q",
+                                    ("application-exit",))
 
-        bloc_stock = QWidget()
-        colonne_stock = QVBoxLayout(bloc_stock)
-        colonne_stock.setContentsMargins(0, 0, 0, 0)
-        colonne_stock.addWidget(QLabel("<b>Stock (planches et chutes)</b>"))
-        colonne_stock.addWidget(self.table_stock, stretch=1)
-        colonne_stock.addLayout(self._boutons_table(
-            self.table_stock, lambda: self.table_stock.ajouter_ligne()))
+        self.a_ligne = self._acte("Ajouter une &ligne", self._ajouter_ligne,
+                                  "Ctrl+Return", ("list-add",))
+        self.a_dupliquer = self._acte(
+            "&Dupliquer la sélection", self._dupliquer, "Ctrl+D",
+            ("edit-copy",), "Recopier les lignes choisies juste en dessous")
+        self.a_supprimer = self._acte(
+            "&Supprimer les lignes", self._supprimer, "Ctrl+Del",
+            ("list-remove",))
+        self.a_matiere = self._acte(
+            "&Matière → lignes sélectionnées", self._matiere_en_lot, None,
+            None, "Appliquer une même matière à toutes les lignes choisies")
 
-        # Une table peut avoir bien plus de lignes que l'autre selon le
-        # projet (un long débit, un stock d'une ligne, ou l'inverse) —
-        # un partage fixe gênait toujours l'une des deux (signalé par
-        # Christophe, capture à l'appui, 30/08/2026).
-        scission_saisie = QSplitter(Qt.Orientation.Vertical)
-        scission_saisie.setHandleWidth(9)
-        scission_saisie.setStyleSheet(STYLE_POIGNEE_SPLITTER)
-        scission_saisie.addWidget(bloc_pieces)
-        scission_saisie.addWidget(bloc_stock)
-        scission_saisie.setStretchFactor(0, 1)
-        scission_saisie.setStretchFactor(1, 1)
-        self._splitter_saisie = scission_saisie
-        disposition.addWidget(scission_saisie, stretch=1)
+        self.a_calculer = self._acte(
+            "&Calculer le débit", self._calculer, "F5",
+            ("system-run", "media-playback-start", "view-refresh"),
+            "Recalculer la feuille de débit (F5)")
+        self.a_saisie = QAction("Masquer la &saisie", self)
+        self.a_saisie.setCheckable(True)
+        self.a_saisie.setShortcut(QKeySequence("Ctrl+M"))
+        self.a_saisie.setStatusTip(
+            "Laisser tout l'écran au plan — pratique sur un brin de 4 m")
+        self.a_saisie.toggled.connect(self._basculer_saisie)
 
-        disposition.addWidget(self._groupe_parametres())
+        self.a_exemple = self._acte("Exemple : &panneaux",
+                                    self._charger_exemple)
+        self.a_volets = self._acte("Exemple : &volets battants (150×30)",
+                                   self._charger_exemple_volets)
+        self.a_aide = self._acte("&Raccourcis et conventions", self._aide,
+                                 "F1", ("help-contents",))
 
-        ligne_projet = QHBoxLayout()
-        bouton_ouvrir = QPushButton("Ouvrir un projet…")
-        bouton_ouvrir.clicked.connect(self._ouvrir_projet)
-        ligne_projet.addWidget(bouton_ouvrir)
-        bouton_enregistrer = QPushButton("Enregistrer le projet…")
-        bouton_enregistrer.clicked.connect(self._enregistrer_projet)
-        ligne_projet.addWidget(bouton_enregistrer)
-        ligne_projet.addStretch()
-        disposition.addLayout(ligne_projet)
+        menu = self.menuBar()
+        fichier = menu.addMenu("&Fichier")
+        for action in (self.a_nouveau, self.a_ouvrir, self.a_enregistrer,
+                       self.a_enregistrer_sous):
+            fichier.addAction(action)
+        fichier.addSeparator()
+        fichier.addAction(self.a_importer)
+        fichier.addAction(self.a_exporter)
+        fichier.addSeparator()
+        fichier.addAction(self.a_quitter)
 
-        boutons = QHBoxLayout()
-        bouton_exemple = QPushButton("Exemple : panneaux")
-        bouton_exemple.clicked.connect(self._charger_exemple)
-        boutons.addWidget(bouton_exemple)
-        bouton_volets = QPushButton("Exemple : volets (150×30)")
-        bouton_volets.clicked.connect(self._charger_exemple_volets)
-        boutons.addWidget(bouton_volets)
-        boutons.addStretch()
-        bouton_calculer = QPushButton("Calculer le débit")
-        bouton_calculer.setDefault(True)
-        bouton_calculer.clicked.connect(self._calculer)
-        boutons.addWidget(bouton_calculer)
-        disposition.addLayout(boutons)
+        edition = menu.addMenu("&Édition")
+        for action in (self.a_ligne, self.a_dupliquer, self.a_supprimer):
+            edition.addAction(action)
+        edition.addSeparator()
+        edition.addAction(self.a_matiere)
 
-        return panneau
+        debit = menu.addMenu("&Débit")
+        debit.addAction(self.a_calculer)
+        debit.addSeparator()
+        debit.addAction(self.a_saisie)
 
-    def _boutons_table(self, table: TableEditable, ajouter) -> QHBoxLayout:
+        exemples = menu.addMenu("E&xemples")
+        exemples.addAction(self.a_exemple)
+        exemples.addAction(self.a_volets)
+
+        menu.addMenu("&Aide").addAction(self.a_aide)
+
+        barre = self.addToolBar("Principale")
+        barre.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        barre.setMovable(False)
+        for action in (self.a_ouvrir, self.a_enregistrer):
+            barre.addAction(action)
+        barre.addSeparator()
+        barre.addAction(self.a_importer)
+        barre.addSeparator()
+        barre.addAction(self.a_calculer)
+        barre.addAction(self.a_exporter)
+        barre.addSeparator()
+        barre.addAction(self.a_saisie)
+
+    # -- saisie ------------------------------------------------------------
+
+    def _onglets_saisie(self) -> QWidget:
+        self.table_stock = tsa.TableStock()
+        self.table_pieces = tsa.TablePieces(self.table_stock.matieres)
+
+        self.onglets_saisie = QTabWidget()
+        self.onglets_saisie.setDocumentMode(True)
+        self.onglets_saisie.addTab(self._page_pieces(), "Pièces")
+        self.onglets_saisie.addTab(self._page_stock(), "Stock")
+        self.onglets_saisie.addTab(self._page_reglages(), "Réglages")
+        self.onglets_saisie.setTabToolTip(
+            0, "Ce qu'il faut débiter : une ligne par référence")
+        self.onglets_saisie.setTabToolTip(
+            1, "Ce qu'on a sous la main : planches, chutes, profils à acheter")
+        self.onglets_saisie.setTabToolTip(
+            2, "Comment on scie : trait de scie, surcotes, seuils de chute")
+
+        for table in (self.table_pieces, self.table_stock):
+            table.itemChanged.connect(self._saisie_changee)
+            table.model().rowsInserted.connect(self._saisie_changee)
+            table.model().rowsRemoved.connect(self._saisie_changee)
+        return self.onglets_saisie
+
+    def _page_table(self, table, resume, actions) -> QWidget:
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        colonne.setContentsMargins(6, 6, 6, 6)
+        colonne.addWidget(table, stretch=1)
+        colonne.addWidget(resume)
         ligne = QHBoxLayout()
-        bouton_ajouter = QPushButton("+ ligne")
-        bouton_ajouter.clicked.connect(ajouter)
-        bouton_supprimer = QPushButton("− lignes sélectionnées")
-        bouton_supprimer.clicked.connect(table.supprimer_lignes_selectionnees)
-        ligne.addWidget(bouton_ajouter)
-        ligne.addWidget(bouton_supprimer)
+        for bouton in actions:
+            ligne.addWidget(bouton)
         ligne.addStretch()
-        return ligne
+        colonne.addLayout(ligne)
+        return page
 
-    def _groupe_parametres(self) -> QGroupBox:
-        groupe = QGroupBox("Paramètres")
-        disposition = QHBoxLayout(groupe)
+    def _bouton(self, action, texte=None) -> QToolButton:
+        """Un bouton de ligne, au libellé COURT.
 
+        Le libellé long du menu (« Matière → lignes sélectionnées »)
+        imposait au panneau de saisie une largeur minimale de 765 px : on
+        ne pouvait plus le rétrécir pour donner de la place au plan.
+        L'info-bulle, elle, porte toujours la phrase entière."""
+        bouton = QToolButton()
+        bouton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        if texte is None:
+            bouton.setDefaultAction(action)
+        else:
+            bouton.setText(texte)
+            bouton.setIcon(action.icon())
+            bouton.setToolTip(action.toolTip())
+            bouton.clicked.connect(action.trigger)
+        return bouton
+
+    def _page_pieces(self) -> QWidget:
+        self.resume_pieces = apparence.discret("")
+        return self._page_table(
+            self.table_pieces, self.resume_pieces,
+            [self._bouton(self.a_ligne, "+ ligne"),
+             self._bouton(self.a_dupliquer, "Dupliquer"),
+             self._bouton(self.a_supprimer, "Supprimer"),
+             self._bouton(self.a_matiere, "Matière…"),
+             self._bouton(self.a_importer, "Importer…")])
+
+    def _page_stock(self) -> QWidget:
+        self.resume_stock = apparence.discret("")
+        return self._page_table(
+            self.table_stock, self.resume_stock,
+            [self._bouton(self.a_ligne, "+ ligne"),
+             self._bouton(self.a_dupliquer, "Dupliquer"),
+             self._bouton(self.a_supprimer, "Supprimer")])
+
+    def _page_reglages(self) -> QWidget:
         defauts = opt.Parametres()
-
         self.spin_trait = self._spin(defauts.trait_de_scie, 0, 20)
-        self.spin_chute_longueur = self._spin(defauts.chute_mini_longueur,
-                                              0, 5000)
-        self.spin_chute_largeur = self._spin(defauts.chute_mini_largeur,
-                                             0, 2000)
+        self.spin_surcote_longueur = self._spin(defauts.surcote_longueur, 0, 200)
+        self.spin_surcote_largeur = self._spin(defauts.surcote_largeur, 0, 200)
+        self.spin_chute_longueur = self._spin(defauts.chute_mini_longueur, 0, 5000)
+        self.spin_chute_largeur = self._spin(defauts.chute_mini_largeur, 0, 2000)
         self.spin_tolerance = self._spin(defauts.tolerance_epaisseur, 0, 10)
         self.spin_surcote_joint = self._spin(defauts.surcote_joint, 0, 20)
+        self.spin_essais = QSpinBox()
+        self.spin_essais.setRange(0, 64)
+        self.spin_essais.setValue(defauts.essais_melanges)
+        self.spin_essais.valueChanged.connect(self._saisie_changee)
 
-        for libelle, widget in [
-                ("Trait de scie (mm)", self.spin_trait),
-                ("Chute mini — longueur (mm)", self.spin_chute_longueur),
-                ("Chute mini — largeur (mm)", self.spin_chute_largeur),
-                ("Tolérance épaisseur (mm)", self.spin_tolerance),
-                ("Surcote de joint collé (mm)", self.spin_surcote_joint)]:
-            colonne = QVBoxLayout()
-            colonne.addWidget(QLabel(libelle))
-            colonne.addWidget(widget)
-            disposition.addLayout(colonne)
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        colonne.setContentsMargins(6, 6, 6, 6)
+        colonne.addWidget(self._groupe_reglage("La scie", [
+            ("Trait de scie (mm)", self.spin_trait,
+             "Largeur de matière mangée par chaque coupe — 3 à 4 mm pour"
+             " une lame de scie circulaire."),
+            ("Surcote de longueur (mm)", self.spin_surcote_longueur,
+             "Marge de recoupe ajoutée à chaque pièce au débit. La pièce"
+             " garde ses cotes nominales dans la liste ; c'est le morceau"
+             " scié qui est plus grand."),
+            ("Surcote de largeur (mm)", self.spin_surcote_largeur,
+             "Idem en travers — de quoi dresser les rives à la"
+             " dégauchisseuse."),
+        ]))
+        colonne.addWidget(self._groupe_reglage("Ce qui mérite d'être gardé", [
+            ("Chute mini — longueur (mm)", self.spin_chute_longueur,
+             "En dessous, le reste part aux pertes plutôt qu'au chutier."
+             " C'est le grand côté du reste qui est comparé ici."),
+            ("Chute mini — largeur (mm)", self.spin_chute_largeur,
+             "Le petit côté du reste. Deux seuils, parce qu'un tasseau"
+             " long et étroit se garde, un carré de même surface non."),
+        ]))
+        colonne.addWidget(self._groupe_reglage("Le bois", [
+            ("Tolérance d'épaisseur (mm)", self.spin_tolerance,
+             "N'absorbe que le bruit de mesure (18,0 mesuré contre 18,05"
+             " demandé). Le brut se rabote : une planche plus épaisse"
+             " convient toujours, une plus mince jamais."),
+            ("Surcote de joint collé (mm)", self.spin_surcote_joint,
+             "Largeur perdue à chaque collage entre deux lames d'une"
+             " pièce composable — sans effet sur les autres."),
+        ]))
+        colonne.addWidget(self._groupe_reglage("Le calcul", [
+            ("Essais de mélange", self.spin_essais,
+             "Ordres de pièces tirés au hasard en plus des stratégies"
+             " réglées. Plus d'essais range parfois mieux, et calcule plus"
+             " longtemps. Le hasard est à graine fixe : mêmes entrées,"
+             " même plan."),
+        ]))
+        colonne.addStretch()
 
+        cadre = QScrollArea()
+        cadre.setWidgetResizable(True)
+        cadre.setWidget(page)
+        cadre.setFrameShape(QScrollArea.Shape.NoFrame)
+        return cadre
+
+    def _groupe_reglage(self, titre, champs) -> QGroupBox:
+        groupe = QGroupBox(titre)
+        formulaire = QFormLayout(groupe)
+        formulaire.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        for libelle, widget, info in champs:
+            formulaire.addRow(libelle, widget)
+            explication = apparence.discret(info)
+            formulaire.addRow("", explication)
+            widget.setToolTip(info)
         return groupe
 
     def _spin(self, valeur, minimum, maximum) -> QDoubleSpinBox:
@@ -657,89 +395,540 @@ class FenetrePrincipale(QMainWindow):
         spin.setRange(minimum, maximum)
         spin.setValue(valeur)
         spin.setDecimals(1)
+        spin.setSingleStep(0.5)
+        spin.setSuffix(" mm")
+        spin.valueChanged.connect(self._saisie_changee)
         return spin
+
+    # -- résultats ---------------------------------------------------------
 
     def _panneau_resultats(self) -> QWidget:
         panneau = QWidget()
-        disposition = QVBoxLayout(panneau)
+        colonne = QVBoxLayout(panneau)
+        colonne.setContentsMargins(6, 6, 6, 6)
 
-        self.label_bilan = QLabel("Aucun calcul pour l'instant.")
-        self.label_bilan.setWordWrap(True)
-        disposition.addWidget(self.label_bilan)
+        self.bilan = apparence.BandeauBilan()
+        colonne.addWidget(self.bilan)
 
-        self.groupe_achats = QGroupBox("À acheter")
-        self.groupe_achats.setVisible(False)
-        mise_achats = QVBoxLayout(self.groupe_achats)
-        self.liste_achats = QListWidget()
-        self.liste_achats.setMaximumHeight(100)
-        mise_achats.addWidget(self.liste_achats)
-        disposition.addWidget(self.groupe_achats)
+        self.onglets_resultats = QTabWidget()
+        self.onglets_resultats.setDocumentMode(True)
+        self.onglets_resultats.addTab(self._page_plan(), "Plan de débit")
+        self.onglets_resultats.addTab(self._page_achats(), "À acheter")
+        self.onglets_resultats.addTab(self._page_chutes(), "Chutes créées")
+        self.onglets_resultats.addTab(self._page_non_placees(),
+                                      "Pièces non placées")
+        colonne.addWidget(self.onglets_resultats, stretch=1)
+        return panneau
 
-        ligne_vue = QHBoxLayout()
-        ligne_vue.addWidget(QLabel(
-            "Molette : zoomer sous la souris — glisser : déplacer —"
-            " double-clic : réajuster"))
-        ligne_vue.addStretch()
-        bouton_export_image = QPushButton("Exporter cette planche (image)…")
-        bouton_export_image.clicked.connect(self._exporter_image_planche)
-        ligne_vue.addWidget(bouton_export_image)
-        disposition.addLayout(ligne_vue)
+    def _page_plan(self) -> QWidget:
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        colonne.setContentsMargins(6, 6, 6, 6)
+
+        barre = QHBoxLayout()
+        self.choix_vue = QComboBox()
+        self.choix_vue.addItem("Toutes les planches", True)
+        self.choix_vue.addItem("Planche sélectionnée seule", False)
+        self.choix_vue.setToolTip(
+            "Empilées, les planches se lisent d'un seul coup d'œil et"
+            " remplissent la hauteur ; seule, une planche se détaille.")
+        self.choix_vue.currentIndexChanged.connect(self._redessiner)
+        barre.addWidget(self.choix_vue)
+
+        self.case_traits = QCheckBox("Traits de scie")
+        self.case_traits.setToolTip(
+            "Les coupes telles qu'on les passera à la scie : chaque trait"
+            " traverse de bord à bord le morceau courant. Leur numéro"
+            " d'ordre est dans l'info-bulle du trait.")
+        self.case_traits.toggled.connect(self._redessiner)
+        barre.addWidget(self.case_traits)
+        barre.addStretch()
+
+        for texte, info, methode in (
+                ("−", "Dézoomer", lambda: self.vue.zoomer(1 / 1.25)),
+                ("+", "Zoomer", lambda: self.vue.zoomer(1.25)),
+                ("Ajuster", "Revoir tout le plan", lambda: self.vue.ajuster())):
+            bouton = QPushButton(texte)
+            bouton.setToolTip(info)
+            bouton.clicked.connect(methode)
+            if texte in ("−", "+"):
+                bouton.setFixedWidth(34)
+            barre.addWidget(bouton)
+        colonne.addLayout(barre)
 
         scission = QSplitter(Qt.Orientation.Horizontal)
         scission.setHandleWidth(9)
-        scission.setStyleSheet(STYLE_POIGNEE_SPLITTER)
+        scission.setStyleSheet(apparence.STYLE_POIGNEE)
         self.liste_planches = QListWidget()
-        self.liste_planches.setMinimumWidth(160)
-        self.liste_planches.currentRowChanged.connect(
-            self._afficher_planche_selectionnee)
+        self.liste_planches.setMinimumWidth(150)
+        self.liste_planches.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.liste_planches.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.liste_planches.currentRowChanged.connect(self._planche_choisie)
         scission.addWidget(self.liste_planches)
-        self.vue_planche = VuePlanche()
-        self.vue_planche.setMinimumWidth(300)
-        scission.addWidget(self.vue_planche)
-        scission.setStretchFactor(0, 1)
-        scission.setStretchFactor(1, 3)
-        # setStretchFactor ne répartit que l'espace gagné/perdu lors d'un
-        # redimensionnement ; sans setSizes, la taille initiale suit le
-        # sizeHint (minuscule pour un QGraphicsView vide).
-        scission.setSizes([220, 780])
-        self._splitter_resultats = scission
-        disposition.addWidget(scission, stretch=3)
 
-        disposition.addWidget(QLabel("<b>Pièces non placées</b>"))
+        self.vue = vue_plan.VuePlan()
+        self.vue.setMinimumWidth(300)
+        self.vue.au_clic_planche = self._planche_cliquee
+        scission.addWidget(self.vue)
+        scission.setStretchFactor(0, 0)
+        scission.setStretchFactor(1, 1)
+        scission.setSizes([230, 900])
+        colonne.addWidget(scission, stretch=1)
+
+        # Une planche de 12:1 ne remplira jamais un panneau de 3:2 : le
+        # dessin est bridé par la largeur, et la hauteur restante était
+        # du vide. La légende s'y loge sans lui prendre un pixel utile.
+        self.legende = QListWidget()
+        # ListMode et non IconMode : la pastille se met À CÔTÉ du nom
+        # au lieu de le surmonter, deux fois moins haut pour autant
+        # d'information.
+        self.legende.setFlow(QListWidget.Flow.LeftToRight)
+        self.legende.setWrapping(True)
+        self.legende.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.legende.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
+        self.legende.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.legende.setMaximumHeight(84)
+        self.legende.setSpacing(2)
+        self.legende.setFrameShape(QListWidget.Shape.NoFrame)
+        self.legende.setToolTip(
+            "Chaque référence a sa teinte, la même d'une séance à l'autre.")
+        colonne.addWidget(self.legende)
+
+        colonne.addWidget(apparence.discret(
+            "Ctrl+molette : zoomer — glisser : déplacer — double-clic :"
+            " ajuster — clic sur une planche : la sélectionner."))
+        return page
+
+    def _page_achats(self) -> QWidget:
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        colonne.addWidget(apparence.discret(
+            "Les planches NEUVES réellement entamées — les chutes, déjà en"
+            " atelier, n'y figurent jamais. Renseignez le prix d'une"
+            " planche dans le stock pour obtenir le coût."))
+        self.liste_achats = QListWidget()
+        colonne.addWidget(self.liste_achats, stretch=1)
+        return page
+
+    def _page_chutes(self) -> QWidget:
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        colonne.addWidget(apparence.discret(
+            "Les restes assez grands pour resservir — la raison d'être du"
+            " chutier. « Ranger au stock » met l'atelier à jour comme si"
+            " le débit était fait : les planches entamées en sortent, ces"
+            " chutes y entrent."))
+        self.liste_chutes = QListWidget()
+        colonne.addWidget(self.liste_chutes, stretch=1)
+        ligne = QHBoxLayout()
+        ligne.addStretch()
+        self.bouton_ranger = QPushButton("Ranger ces chutes au stock…")
+        self.bouton_ranger.clicked.connect(self._ranger_chutes)
+        ligne.addWidget(self.bouton_ranger)
+        colonne.addLayout(ligne)
+        return page
+
+    def _page_non_placees(self) -> QWidget:
+        page = QWidget()
+        colonne = QVBoxLayout(page)
+        self.mot_non_placees = apparence.discret("")
+        colonne.addWidget(self.mot_non_placees)
         self.liste_non_placees = QListWidget()
-        disposition.addWidget(self.liste_non_placees, stretch=1)
+        colonne.addWidget(self.liste_non_placees, stretch=1)
+        return page
 
-        return panneau
+    # -- état ---------------------------------------------------------------
 
-    # -- exemples et import ------------------------------------------------
+    def _saisie_changee(self, *_):
+        if self._chargement:
+            return
+        self._modifie = True
+        self._a_jour = False
+        self._rafraichir_etat()
 
-    def _remplir_pieces(self, pieces):
+    def _rafraichir_etat(self):
+        self.resume_pieces.setText(self.table_pieces.resume())
+        self.resume_stock.setText(self.table_stock.resume())
+        self.onglets_saisie.setTabText(
+            0, "Pièces  ·  %d" % len(self.table_pieces.lignes_utiles()))
+        self.onglets_saisie.setTabText(
+            1, "Stock  ·  %d" % len(self.table_stock.lignes_utiles()))
+
+        nom = os.path.basename(self._chemin) if self._chemin else "Projet non enregistré"
+        self.etat_fichier.setText(("● " if self._modifie else "") + nom)
+        self.setWindowTitle("%s%s — %s"
+                            % ("● " if self._modifie else "", nom, TITRE))
+        if self._resultat is None:
+            self.etat_calcul.setText("Aucun calcul")
+            self.etat_calcul.setStyleSheet("color: palette(mid);")
+        elif self._a_jour:
+            self.etat_calcul.setText("Plan à jour")
+            self.etat_calcul.setStyleSheet("color: palette(mid);")
+        else:
+            self.etat_calcul.setText("⚠ Saisie modifiée — F5 pour recalculer")
+            self.etat_calcul.setStyleSheet(
+                "color: %s; font-weight: bold;" % apparence.ORANGE.name())
+
+    # -- édition ------------------------------------------------------------
+
+    def _table_courante(self):
+        return (self.table_pieces if self.onglets_saisie.currentIndex() == 0
+                else self.table_stock if self.onglets_saisie.currentIndex() == 1
+                else None)
+
+    def _ajouter_ligne(self):
+        table = self._table_courante()
+        if table is None:
+            self.onglets_saisie.setCurrentIndex(0)
+            table = self.table_pieces
+        ligne = table.ajouter_ligne()
+        table.setCurrentCell(ligne, 0)
+        table.editItem(table.item(ligne, 0))
+
+    def _dupliquer(self):
+        table = self._table_courante()
+        if table is not None:
+            table.dupliquer_selection()
+
+    def _supprimer(self):
+        table = self._table_courante()
+        if table is not None:
+            table.supprimer_selection()
+
+    def _matiere_en_lot(self):
+        table = self._table_courante()
+        if table is None:
+            return
+        lignes = table.lignes_selectionnees()
+        if not lignes:
+            QMessageBox.information(
+                self, "Aucune ligne sélectionnée",
+                "Choisissez d'abord une ou plusieurs lignes (clic, puis"
+                " Ctrl ou Maj-clic pour en ajouter).")
+            return
+        matieres = self.table_stock.matieres()
+        depart = table.texte(lignes[0], 4)
+        matiere, ok = QInputDialog.getItem(
+            self, "Matière", "Matière à appliquer aux %d ligne(s) choisie(s) :"
+            % len(lignes), matieres,
+            matieres.index(depart) if depart in matieres else 0, True)
+        if not ok or not matiere.strip():
+            return
+        for ligne in lignes:
+            table.item(ligne, 4).setText(matiere.strip())
+
+    def _basculer_saisie(self, masquer):
+        if masquer:
+            self._tailles_saisie = self._splitter.sizes()
+            self._splitter.setSizes([0, sum(self._tailles_saisie)])
+            self.a_saisie.setText("Montrer la &saisie")
+        else:
+            self._splitter.setSizes(
+                getattr(self, "_tailles_saisie", [620, 880]))
+            self.a_saisie.setText("Masquer la &saisie")
+
+    # -- calcul --------------------------------------------------------------
+
+    def _parametres_actuels(self) -> opt.Parametres:
+        return opt.Parametres(
+            trait_de_scie=self.spin_trait.value(),
+            chute_mini_longueur=self.spin_chute_longueur.value(),
+            chute_mini_largeur=self.spin_chute_largeur.value(),
+            surcote_longueur=self.spin_surcote_longueur.value(),
+            surcote_largeur=self.spin_surcote_largeur.value(),
+            tolerance_epaisseur=self.spin_tolerance.value(),
+            surcote_joint=self.spin_surcote_joint.value(),
+            essais_melanges=self.spin_essais.value())
+
+    def _appliquer_parametres(self, p: opt.Parametres):
+        for spin, valeur in ((self.spin_trait, p.trait_de_scie),
+                             (self.spin_chute_longueur, p.chute_mini_longueur),
+                             (self.spin_chute_largeur, p.chute_mini_largeur),
+                             (self.spin_surcote_longueur, p.surcote_longueur),
+                             (self.spin_surcote_largeur, p.surcote_largeur),
+                             (self.spin_tolerance, p.tolerance_epaisseur),
+                             (self.spin_surcote_joint, p.surcote_joint),
+                             (self.spin_essais, p.essais_melanges)):
+            spin.setValue(valeur)
+
+    def _calculer(self):
+        try:
+            pieces = self.table_pieces.pieces()
+            stock = self.table_stock.stock()
+            if not pieces:
+                raise ErreurSaisie("aucune pièce à débiter")
+            resultat = opt.optimiser(pieces, stock, self._parametres_actuels())
+        except (ErreurSaisie, ValueError) as erreur:
+            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            return
+        self._resultat = resultat
+        self._a_jour = True
+        self._afficher_resultat()
+        self._rafraichir_etat()
+
+    def _afficher_resultat(self):
+        r = self._resultat
+        b = r.bilan
+        cout = sum(a.nombre * a.prix for a in r.achats)
+
+        self.bilan.posees.poser(
+            "%d / %d" % (b.nb_posees, b.nb_demandees),
+            "%d non placée(s)" % b.nb_non_placees if b.nb_non_placees else "",
+            "alerte" if b.nb_non_placees else "neutre")
+        self.bilan.rendement.poser("%s %%" % opt._pct(b.rendement),
+                                   "%s m² de pièces" % opt._m2(b.surface_pieces))
+        self.bilan.planches.poser(
+            "%d" % b.nb_planches_entamees,
+            "dont %d chute(s)" % b.nb_chutes_consommees
+            if b.nb_chutes_consommees else "aucune chute écoulée")
+        self.bilan.pertes.poser("%s m²" % opt._m2(b.surface_perdue),
+                                "sciure et rebuts")
+        self.bilan.chutes.poser(
+            "%d" % len(r.chutes_creees),
+            "%s m² à ranger" % opt._m2(b.surface_chutes_creees)
+            if r.chutes_creees else "rien à garder",
+            "accent" if r.chutes_creees else "neutre")
+        self.bilan.achat.poser(
+            "%d" % sum(a.nombre for a in r.achats),
+            opt._prix(cout) if cout else "prix non renseignés")
+
+        self.liste_achats.clear()
+        for a in r.achats:
+            detail = (" — %s" % opt._prix(a.nombre * a.prix)) if a.prix else ""
+            self.liste_achats.addItem(
+                "%d × « %s » — %s × %s × %s mm, %s%s"
+                % (a.nombre, a.reference, opt._mm(a.longueur),
+                   opt._mm(a.largeur), opt._mm(a.epaisseur), a.matiere, detail))
+        if cout:
+            self.liste_achats.addItem("Total : %s" % opt._prix(cout))
+        self.onglets_resultats.setTabText(
+            ACHATS, "À acheter  ·  %d" % sum(a.nombre for a in r.achats))
+
+        self.liste_chutes.clear()
+        for cle, nombre in chutes_groupees(r).items():
+            dim_x, dim_y, epaisseur, matiere, _fil = cle
+            self.liste_chutes.addItem(
+                "%d ×  %s × %s × %s mm — %s"
+                % (nombre, opt._mm(dim_x), opt._mm(dim_y), opt._mm(epaisseur),
+                   matiere))
+        self.bouton_ranger.setEnabled(bool(r.chutes_creees))
+        self.onglets_resultats.setTabText(
+            CHUTES, "Chutes créées  ·  %d" % len(r.chutes_creees))
+
+        self.liste_non_placees.clear()
+        for n in r.non_placees:
+            item = QListWidgetItem("« %s » ×%d — %s"
+                                   % (n.piece.reference, n.exemplaires, n.raison))
+            item.setForeground(apparence.ALERTE)
+            self.liste_non_placees.addItem(item)
+        self.mot_non_placees.setText(
+            "Tout est passé — aucune pièce laissée de côté."
+            if not r.non_placees else
+            "Ces pièces n'ont trouvé aucune place. Ajoutez du stock,"
+            " relâchez le fil, ou cochez « Composable » pour celles qui"
+            " peuvent se faire en plusieurs lames collées.")
+        self.onglets_resultats.setTabText(
+            NON_PLACEES, "Pièces non placées  ·  %d" % b.nb_non_placees
+            if b.nb_non_placees else "Pièces non placées")
+        self.onglets_resultats.tabBar().setTabTextColor(
+            NON_PLACEES, apparence.ALERTE if b.nb_non_placees
+            else self.palette().text().color())
+
+        # Une teinte par référence, calculée sur le débit ENTIER : en
+        # mode « planche seule » les couleurs doivent rester celles de la
+        # vue d'ensemble, sinon une pièce changerait de couleur en
+        # changeant de mode.
+        self.vue.couleurs = apparence.palette_pieces(
+            {pose.piece.reference for d in r.debits for pose in d.poses})
+
+        self.liste_planches.blockSignals(True)
+        self.liste_planches.clear()
+        for i, debit in enumerate(r.debits, 1):
+            plusieurs = debit.planche.quantite > 1 or debit.planche.illimite
+            ex = " (ex. %d)" % debit.exemplaire if plusieurs else ""
+            texte = ("%d. %s%s — %d pièce(s), %s %%"
+                     % (i, debit.planche.reference, ex, len(debit.poses),
+                        opt._pct(debit.rendement)))
+            item = QListWidgetItem(texte)
+            item.setToolTip(texte)
+            self.liste_planches.addItem(item)
+        self.liste_planches.blockSignals(False)
+        if r.debits:
+            self.liste_planches.setCurrentRow(0)
+        self._redessiner()
+
+    # -- dessin --------------------------------------------------------------
+
+    def _redessiner(self):
+        if self._resultat is None:
+            self.vue.afficher([], self.case_traits.isChecked())
+            return
+        ligne = max(0, self.liste_planches.currentRow())
+        if self.choix_vue.currentData():
+            debits = list(enumerate(self._resultat.debits, 1))
+        else:
+            if not self._resultat.debits:
+                debits = []
+            else:
+                debits = [(ligne + 1, self._resultat.debits[ligne])]
+        self.vue.afficher(debits, self.case_traits.isChecked())
+        if debits:
+            self.vue.selectionner(ligne + 1, defiler=False)
+        self.liste_planches.setVisible(not self.choix_vue.currentData())
+        self._remplir_legende(debits)
+
+    def _remplir_legende(self, debits):
+        self.legende.clear()
+        comptes, cotes = {}, {}
+        for _, debit in debits:
+            for pose in debit.poses:
+                reference = pose.piece.reference
+                comptes[reference] = comptes.get(reference, 0) + 1
+                cotes[reference] = (pose.dim_x, pose.dim_y)
+        for reference, nombre in comptes.items():
+            dim_x, dim_y = cotes[reference]
+            item = QListWidgetItem(
+                apparence.pastille(self.vue.couleur(reference)),
+                "%s  ×%d" % (reference, nombre))
+            item.setToolTip("%s — débitée à %s × %s mm"
+                            % (reference, opt._mm(dim_x), opt._mm(dim_y)))
+            self.legende.addItem(item)
+        if any(debit.chutes for _, debit in debits):
+            self.legende.addItem(QListWidgetItem(
+                apparence.pastille(apparence.PLAN_CHUTE, hachure=True),
+                "chute réutilisable"))
+        self.legende.addItem(QListWidgetItem(
+            apparence.pastille(apparence.PLAN_PAPIER), "perte"))
+
+    def _planche_choisie(self, ligne):
+        if self._resultat is None or ligne < 0:
+            return
+        if self.choix_vue.currentData():
+            self.vue.selectionner(ligne + 1)
+        else:
+            self._redessiner()
+
+    def _planche_cliquee(self, numero):
+        self.liste_planches.blockSignals(True)
+        self.liste_planches.setCurrentRow(numero - 1)
+        self.liste_planches.blockSignals(False)
+
+    # -- chutes au stock -------------------------------------------------------
+
+    def _ranger_chutes(self):
+        if self._resultat is None or not self._resultat.chutes_creees:
+            return
+        consommees = planches_consommees(self._resultat)
+        groupes = chutes_groupees(self._resultat)
+
+        lignes = ["Le stock sera mis à jour comme si le débit était fait :"]
+        for reference, nombre in consommees.items():
+            lignes.append("  − %d × « %s »" % (nombre, reference))
+        lignes.append("  + %d chute(s) en %d référence(s)"
+                      % (len(self._resultat.chutes_creees), len(groupes)))
+        lignes.append("")
+        lignes.append("Le plan affiché décrira alors le stock d'avant :"
+                      " il faudra le recalculer. Continuer ?")
+        if QMessageBox.question(
+                self, "Ranger les chutes au stock", "\n".join(lignes),
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.Cancel) \
+                != QMessageBox.StandardButton.Yes:
+            return
+
+        self.table_stock.remplir(
+            stock_apres_debit(self.table_stock.stock(), self._resultat))
+        self._a_jour = False
+        self._modifie = True
+        self._rafraichir_etat()
+        self.onglets_saisie.setCurrentIndex(1)
+
+    # -- fichiers ---------------------------------------------------------------
+
+    def _dossier(self) -> str:
+        return self._reglages.value("dossier", os.path.expanduser("~"))
+
+    def _retenir_dossier(self, chemin: str):
+        self._reglages.setValue("dossier", os.path.dirname(chemin))
+
+    def _nouveau(self):
+        if not self._confirmer_abandon():
+            return
+        self._chargement = True
         self.table_pieces.setRowCount(0)
-        for p in pieces:
-            self.table_pieces.ajouter_ligne(p.reference, p.longueur,
-                                            p.largeur, p.epaisseur,
-                                            p.matiere, p.quantite,
-                                            p.composable)
-            combo = self.table_pieces.widget_ligne(
-                self.table_pieces.rowCount() - 1, 6)
-            combo.setCurrentIndex(
-                [cle for cle, _ in FILS_PIECE].index(p.fil))
-
-    def _remplir_stock(self, stock):
         self.table_stock.setRowCount(0)
-        for s in stock:
-            self.table_stock.ajouter_ligne(s.reference, s.longueur,
-                                           s.largeur, s.epaisseur,
-                                           s.matiere, s.quantite, s.chute,
-                                           s.fil, s.illimite, s.prix)
+        self.table_pieces.ajouter_ligne()
+        self.table_stock.ajouter_ligne()
+        self._appliquer_parametres(opt.Parametres())
+        self._chargement = False
+        self._chemin = None
+        self._modifie = False
+        self._resultat = None
+        self._a_jour = False
+        self.bilan.vider()
+        self.vue.afficher([])
+        self.liste_planches.clear()
+        self._rafraichir_etat()
 
-    def _remplir_tables(self, pieces, stock):
-        self._remplir_pieces(pieces)
-        self._remplir_stock(stock)
+    def _confirmer_abandon(self) -> bool:
+        if not self._modifie:
+            return True
+        reponse = QMessageBox.question(
+            self, "Projet modifié",
+            "Le projet a changé depuis le dernier enregistrement.\n"
+            "Abandonner ces modifications ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        return reponse == QMessageBox.StandardButton.Yes
+
+    def _ouvrir(self):
+        if not self._confirmer_abandon():
+            return
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Ouvrir un projet", self._dossier(), "Projet chutier (*.json)")
+        if not chemin:
+            return
+        try:
+            pieces, stock, parametres = projet_io.lire(chemin)
+        except (OSError, ValueError) as erreur:
+            QMessageBox.warning(self, "Ouverture impossible", str(erreur))
+            return
+        self._remplir(pieces, stock, parametres)
+        self._chemin = chemin
+        self._modifie = False
+        self._retenir_dossier(chemin)
+        self._rafraichir_etat()
+        self._calculer()
+
+    def _enregistrer(self):
+        if not self._chemin:
+            return self._enregistrer_sous()
+        try:
+            projet_io.enregistrer(self._chemin, self.table_pieces.pieces(),
+                                  self.table_stock.stock(),
+                                  self._parametres_actuels())
+        except (OSError, ErreurSaisie) as erreur:
+            QMessageBox.warning(self, "Enregistrement impossible", str(erreur))
+            return
+        self._modifie = False
+        self._rafraichir_etat()
+
+    def _enregistrer_sous(self):
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer le projet", self._dossier(),
+            "Projet chutier (*.json)")
+        if not chemin:
+            return
+        if not chemin.lower().endswith(".json"):
+            chemin += ".json"
+        self._chemin = chemin
+        self._retenir_dossier(chemin)
+        self._enregistrer()
 
     def _importer_csv(self):
         chemin, _ = QFileDialog.getOpenFileName(
-            self, "Importer des pièces", "", "CSV (*.csv)")
+            self, "Importer des pièces", self._dossier(), "CSV (*.csv)")
         if not chemin:
             return
         try:
@@ -747,43 +936,55 @@ class FenetrePrincipale(QMainWindow):
         except (OSError, ValueError) as erreur:
             QMessageBox.warning(self, "Import impossible", str(erreur))
             return
-        self._remplir_pieces(pieces)
+        self._chargement = True
+        self.table_pieces.remplir(pieces)
+        self._chargement = False
+        self._retenir_dossier(chemin)
+        self.onglets_saisie.setCurrentIndex(0)
+        self._saisie_changee()
 
-    def _appliquer_matiere_selection(self):
-        lignes = self.table_pieces.lignes_selectionnees()
-        if not lignes:
+    def _exporter_image(self):
+        if self._resultat is None or not self._resultat.debits:
             QMessageBox.information(
-                self, "Aucune ligne sélectionnée",
-                "Sélectionnez d'abord une ou plusieurs lignes de pièces"
-                " (clic, puis Ctrl/Maj-clic pour en ajouter).")
+                self, "Rien à exporter",
+                "Calculez d'abord le débit (F5).")
             return
-        matieres = sorted({self.table_stock.ligne_texte(r, 4)
-                           for r in range(self.table_stock.rowCount())
-                           if self.table_stock.ligne_texte(r, 4)})
-        depart = self.table_pieces.widget_ligne(lignes[0], 4).currentText()
-        matiere, ok = QInputDialog.getItem(
-            self, "Matière", "Matière à appliquer aux lignes sélectionnées :",
-            matieres, matieres.index(depart) if depart in matieres else 0,
-            editable=True)
-        if not ok or not matiere.strip():
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Exporter le plan", self._dossier(), "Image PNG (*.png)")
+        if not chemin:
             return
-        for ligne in lignes:
-            self.table_pieces.widget_ligne(ligne, 4).setCurrentText(
-                matiere.strip())
+        if not chemin.lower().endswith(".png"):
+            chemin += ".png"
+        self._retenir_dossier(chemin)
+        if not self.vue.exporter_image(chemin):
+            QMessageBox.warning(self, "Export impossible",
+                                "L'image n'a pas pu être enregistrée.")
+        else:
+            self.statusBar().showMessage("Plan exporté : %s" % chemin, 6000)
+
+    # -- exemples ----------------------------------------------------------------
+
+    def _remplir(self, pieces, stock, parametres):
+        self._chargement = True
+        self.table_stock.remplir(stock)
+        self.table_pieces.remplir(pieces)
+        self._appliquer_parametres(parametres)
+        self._chargement = False
+        self._rafraichir_etat()
 
     def _charger_exemple(self):
-        self._remplir_tables(
+        self._remplir(
             [opt.Piece("montant", 1750, 60, 18, "sapin", quantite=4),
              opt.Piece("traverse", 560, 60, 18, "sapin", quantite=6),
              opt.Piece("tablette", 560, 180, 18, "sapin", quantite=3),
              opt.Piece("taquet", 120, 40, 18, "sapin", quantite=8,
                        fil=opt.FIL_INDIFFERENT)],
-            [opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin",
-                        quantite=4),
+            [opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin", quantite=4),
              opt.Planche("chute étagère", 800, 180, 18, "sapin", chute=True),
-             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)])
-        self.spin_trait.setValue(opt.Parametres().trait_de_scie)
-        self.spin_tolerance.setValue(opt.Parametres().tolerance_epaisseur)
+             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)],
+            opt.Parametres())
+        if not self._chargement:
+            self._calculer()
 
     def _charger_exemple_volets(self):
         """Débit réel d'une paire de volets battants (projet Christophe,
@@ -791,7 +992,11 @@ class FenetrePrincipale(QMainWindow):
         de corroyage) sorties du modèle FreeCAD AtelierVolets. Le
         couvre-joint (15 mm) vient d'une autre section, il n'est pas ici.
         """
-        self._remplir_tables(
+        # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
+        # d'épaisseur : les planches sont du brut (30) à raboter à la cote
+        # finie (27) — sans cet écart, le stock et les pièces ne se rangent
+        # pas dans le même lot (par matière + épaisseur À LA TOLÉRANCE PRÈS).
+        self._remplir(
             [opt.Piece("Lame 1 G", 1140, 119, 27, "douglas", 1),
              opt.Piece("Lame 2 G", 1140, 119, 27, "douglas", 1),
              opt.Piece("Lame 3 G", 1140, 119, 27, "douglas", 1),
@@ -809,163 +1014,67 @@ class FenetrePrincipale(QMainWindow):
              opt.Piece("Barre du Z D", 505, 105, 27, "douglas", 2),
              opt.Piece("Echarpe D", 824.9482377125985, 105, 27, "douglas", 1)],
             [opt.Planche("douglas 150x30 -- 3 m", 3000, 150, 30, "douglas",
-                        quantite=3),
+                         quantite=3),
              opt.Planche("douglas 150x30 -- 4 m", 4000, 150, 30, "douglas",
-                        quantite=2)])
-        # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
-        # d'épaisseur : les planches sont du brut (30) à raboter à la cote
-        # finie (27), comme le prévoit SUREPAISSEUR côté volets — sans
-        # cet écart, le stock et les pièces ne se rangent pas dans le
-        # même lot (par matière + épaisseur À LA TOLÉRANCE PRÈS).
-        self.spin_trait.setValue(4.0)
-        self.spin_tolerance.setValue(5.0)
+                         quantite=2)],
+            opt.Parametres(trait_de_scie=4.0, tolerance_epaisseur=5.0))
+        self._calculer()
 
-    # -- calcul ---------------------------------------------------------
+    def _aide(self):
+        QMessageBox.information(self, "Chutier — repères", """\
+<b>Le geste</b><br>
+① les pièces à débiter, ② le stock où les tailler, ③ les réglages de
+scie, puis <b>F5</b>. Le plan se lit à droite, toutes planches empilées.
 
-    def _parametres_actuels(self) -> opt.Parametres:
-        return opt.Parametres(
-            trait_de_scie=self.spin_trait.value(),
-            chute_mini_longueur=self.spin_chute_longueur.value(),
-            chute_mini_largeur=self.spin_chute_largeur.value(),
-            tolerance_epaisseur=self.spin_tolerance.value(),
-            surcote_joint=self.spin_surcote_joint.value())
+<p><b>Saisie</b><br>
+<b>Ctrl+V</b> colle un bloc venu d'un tableur à partir de la cellule
+courante — colonnes séparées par une tabulation ou un point-virgule.<br>
+<b>Ctrl+C</b> recopie la sélection dans l'autre sens.<br>
+<b>Ctrl+D</b> duplique les lignes choisies (cinq lames identiques).<br>
+<b>Suppr</b> vide les cellules, <b>Ctrl+Suppr</b> ôte les lignes.</p>
 
-    def _appliquer_parametres(self, p: opt.Parametres):
-        self.spin_trait.setValue(p.trait_de_scie)
-        self.spin_chute_longueur.setValue(p.chute_mini_longueur)
-        self.spin_chute_largeur.setValue(p.chute_mini_largeur)
-        self.spin_tolerance.setValue(p.tolerance_epaisseur)
-        self.spin_surcote_joint.setValue(p.surcote_joint)
+<p><b>Plan</b><br>
+<b>Ctrl+molette</b> zoome sous la souris, glisser déplace, double-clic
+réajuste. <b>Ctrl+M</b> masque la saisie et laisse tout l'écran au plan.
+<b>Ctrl+E</b> exporte en PNG ce qui est affiché.</p>
 
-    def _calculer(self):
-        try:
-            pieces = self.table_pieces.pieces()
-            stock = self.table_stock.stock()
-            parametres = self._parametres_actuels()
-            if not pieces:
-                raise ErreurSaisie("aucune pièce à débiter")
-            resultat = opt.optimiser(pieces, stock, parametres)
-        except (ErreurSaisie, ValueError) as erreur:
-            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+<p><b>Conventions</b><br>
+Tout est en millimètres. La longueur court le long du fil. Une planche
+plus épaisse que la pièce convient (le brut se rabote) ; une plus mince,
+jamais. Les chutes passent avant les planches neuves.</p>""")
+
+    # -- fenêtre ------------------------------------------------------------------
+
+    def _restaurer_geometrie(self):
+        geometrie = self._reglages.value("geometrie")
+        if geometrie:
+            self.restoreGeometry(geometrie)
+        etat = self._reglages.value("splitter")
+        if etat:
+            self._splitter.restoreState(etat)
+
+    def closeEvent(self, evenement):
+        if not self._confirmer_abandon():
+            evenement.ignore()
             return
-
-        self._resultat = resultat
-        self._afficher_resultat()
-
-    def _enregistrer_projet(self):
-        chemin, _ = QFileDialog.getSaveFileName(
-            self, "Enregistrer le projet", "", "Projet chutier (*.json)")
-        if not chemin:
-            return
-        if not chemin.lower().endswith(".json"):
-            chemin += ".json"
-        try:
-            projet_io.enregistrer(chemin, self.table_pieces.pieces(),
-                                  self.table_stock.stock(),
-                                  self._parametres_actuels())
-        except OSError as erreur:
-            QMessageBox.warning(self, "Enregistrement impossible", str(erreur))
-
-    def _ouvrir_projet(self):
-        chemin, _ = QFileDialog.getOpenFileName(
-            self, "Ouvrir un projet", "", "Projet chutier (*.json)")
-        if not chemin:
-            return
-        try:
-            pieces, stock, parametres = projet_io.lire(chemin)
-        except (OSError, ValueError) as erreur:
-            QMessageBox.warning(self, "Ouverture impossible", str(erreur))
-            return
-        self._remplir_tables(pieces, stock)
-        self._appliquer_parametres(parametres)
-
-    def _afficher_resultat(self):
-        r = self._resultat
-        b = r.bilan
-        self.label_bilan.setText(
-            "%d/%d pièce(s) posée(s) — rendement %s %% — "
-            "%d planche(s) entamée(s) dont %d chute(s) — "
-            "pertes %s m² — chutes créées : %d (%s m²)"
-            % (b.nb_posees, b.nb_demandees, opt._pct(b.rendement),
-               b.nb_planches_entamees, b.nb_chutes_consommees,
-               opt._m2(b.surface_perdue), len(r.chutes_creees),
-               opt._m2(b.surface_chutes_creees)))
-
-        self.liste_achats.clear()
-        for a in r.achats:
-            cout = (" — %s" % opt._prix(a.nombre * a.prix)) if a.prix else ""
-            self.liste_achats.addItem(QListWidgetItem(
-                "%d × « %s » — %s × %s × %s mm, %s%s"
-                % (a.nombre, a.reference, opt._mm(a.longueur),
-                   opt._mm(a.largeur), opt._mm(a.epaisseur), a.matiere,
-                   cout)))
-        cout_total = sum(a.nombre * a.prix for a in r.achats)
-        if cout_total:
-            self.liste_achats.addItem(QListWidgetItem(
-                "Total : %s" % opt._prix(cout_total)))
-        self.groupe_achats.setVisible(bool(r.achats))
-
-        self.liste_planches.clear()
-        for i, debit in enumerate(r.debits, 1):
-            # illimite : la quantite affichee ne dit rien du nombre pris
-            plusieurs = debit.planche.quantite > 1 or debit.planche.illimite
-            ex = " (ex. %d)" % debit.exemplaire if plusieurs else ""
-            texte = ("%d. %s%s — %d pièce(s), rendement %s %%"
-                     % (i, debit.planche.reference, ex, len(debit.poses),
-                        opt._pct(debit.rendement)))
-            item = QListWidgetItem(texte)
-            item.setToolTip(texte)
-            self.liste_planches.addItem(item)
-        if r.debits:
-            self.liste_planches.setCurrentRow(0)
-        else:
-            self.vue_planche.afficher(None)
-
-        self.liste_non_placees.clear()
-        for n in r.non_placees:
-            item = QListWidgetItem(
-                "« %s » ×%d — %s" % (n.piece.reference, n.exemplaires,
-                                     n.raison))
-            item.setForeground(COULEUR_ALERTE)
-            self.liste_non_placees.addItem(item)
-
-    def _afficher_planche_selectionnee(self, ligne: int):
-        if self._resultat is None or ligne < 0:
-            return
-        self.vue_planche.afficher(self._resultat.debits[ligne])
-
-    def _exporter_image_planche(self):
-        if self.vue_planche._debit is None:
-            QMessageBox.information(self, "Aucune planche",
-                                    "Calculez le débit et sélectionnez une"
-                                    " planche à exporter.")
-            return
-        chemin, _ = QFileDialog.getSaveFileName(
-            self, "Exporter cette planche", "", "Image PNG (*.png)")
-        if not chemin:
-            return
-        if not chemin.lower().endswith(".png"):
-            chemin += ".png"
-        if not self.vue_planche.exporter_image(chemin):
-            QMessageBox.warning(self, "Export impossible",
-                                "L'image n'a pas pu être enregistrée.")
+        self._reglages.setValue("geometrie", self.saveGeometry())
+        self._reglages.setValue("splitter", self._splitter.saveState())
+        super().closeEvent(evenement)
 
 
 def main():
     app = QApplication(sys.argv)
     # Relie l'appli à chutier.desktop — le WM_CLASS par défaut (basé sur
-    # l'exécutable, "python3" puisqu'on lance via python3 interface.py)
+    # l'exécutable, « python3 » puisqu'on lance via python3 interface.py)
     # ne correspond à rien, et la barre des tâches retombe sur une icône
-    # générique même quand le lanceur en porte une bonne (signalé par
-    # Christophe, capture à l'appui). setWindowIcon ci-dessous reste la
-    # deuxième ligne de défense, indépendante du lanceur.
+    # générique même quand le lanceur en porte une bonne. setWindowIcon
+    # reste la deuxième ligne de défense, indépendante du lanceur.
     app.setDesktopFileName("chutier")
     if os.path.isfile(ICONE):
-        icone = QIcon(ICONE)
-        app.setWindowIcon(icone)
+        app.setWindowIcon(QIcon(ICONE))
     fenetre = FenetrePrincipale()
     if os.path.isfile(ICONE):
-        fenetre.setWindowIcon(icone)
+        fenetre.setWindowIcon(QIcon(ICONE))
     fenetre.show()
     sys.exit(app.exec())
 

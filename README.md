@@ -10,16 +10,47 @@ l'autre et passe **avant** les planches neuves.
 
 ## État
 
-**Seul le cœur existe** : `optimiseur.py`, sans aucune dépendance, testé.
-Restent à faire (sessions suivantes) :
+Le cœur (`optimiseur.py`, sans aucune dépendance) et l'interface Qt
+existent tous les deux, et se lancent par :
 
-- l'interface Qt (PySide6) : saisie des pièces, du stock, dessin du plan ;
-- la persistance du stock de chutes (JSON) et la réinjection des chutes
-  créées via `ChuteCreee.en_planche()` ;
+```bash
+python3 interface.py
+```
+
+Restent à faire :
+
+- un stock de chutes qui vive **hors projet** : aujourd'hui le stock est
+  enregistré dans le projet, et « Ranger ces chutes au stock » remet
+  l'atelier à jour dans la saisie courante ; il manque le fichier commun
+  qu'on retrouverait d'un projet à l'autre sans le recopier ;
 - l'import de la liste de pièces depuis la feuille de calcul FreeCAD
-  d'un projet ;
-- le plan de découpe imprimable (les `Coupe` sont des segments prêts à
-  dessiner, dans un ordre exécutable à l'établi).
+  d'un projet (le CSV est le contrat d'échange en attendant) ;
+- un plan imprimable paginé — l'export PNG rend le plan affiché à
+  résolution d'impression, mais rien ne le met en pages ni ne numérote
+  les coupes sur le papier.
+
+## L'interface
+
+Trois onglets à gauche, dans l'ordre du geste : **Pièces** (ce qu'il faut
+débiter), **Stock** (ce qu'on a), **Réglages** (comment on scie). Le
+résultat occupe toute la droite : une rangée de chiffres-clés, puis le
+plan, toutes les planches empilées — pièces colorées par référence,
+chutes hachurées, fond clair pour la perte.
+
+| Raccourci | |
+|---|---|
+| `F5` | calculer le débit |
+| `Ctrl+V` / `Ctrl+C` | coller un bloc venu d'un tableur / le recopier |
+| `Ctrl+D` | dupliquer les lignes choisies |
+| `Suppr` / `Ctrl+Suppr` | vider les cellules / ôter les lignes |
+| `Ctrl+M` | masquer la saisie, tout l'écran au plan |
+| `Ctrl+molette` | zoomer sous la souris (la molette seule fait défiler) |
+| `Ctrl+E` | exporter le plan affiché en PNG |
+| `F1` | les repères, dans l'appli |
+
+Les couleurs des pièces ne dépendent que du **nom** de la référence : la
+même pièce garde sa teinte d'une séance à l'autre, et deux références
+d'un même débit n'ont jamais la même.
 
 ## Utilisation
 
@@ -88,14 +119,30 @@ print(resultat.texte())               # résumé lisible
 ## Règle de couches
 
 `optimiseur.py` ne doit **jamais** importer Qt (un test y veille).
-L'interface appellera le cœur, pas l'inverse — même partage que
+L'interface appelle le cœur, jamais l'inverse — même partage que
 laser_core / task_panels dans LaserAtelier.
+
+| Module | Rôle |
+|---|---|
+| `optimiseur.py` | toute la géométrie et le solveur. Aucune dépendance. |
+| `csv_io.py`, `projet_io.py` | échange CSV, projet JSON. Sans Qt. |
+| `apparence.py` | couleurs, tuiles de bilan. Connaît Qt, pas le débit. |
+| `tables_saisie.py` | les deux tables et leurs délégués. |
+| `vue_plan.py` | le dessin des planches débitées. |
+| `interface.py` | la fenêtre : menus, onglets, actions, fichiers. |
 
 ## Tests
 
 ```bash
-python3 tests/test_optimiseur.py
+python3 tests/lancer.py
 ```
+
+Les tests d'interface tournent sans écran (`QT_QPA_PLATFORM=offscreen`)
+et détournent les réglages Qt vers un dossier jetable. Ils gardent ce que
+l'œil ne vérifie pas seul : qu'une table rende exactement les pièces
+qu'on lui a données, qu'une couleur ne bouge pas d'un lancement à
+l'autre, que « ranger les chutes au stock » ne perde ni n'invente de
+bois. Que le plan se **lise**, en revanche, se juge sur capture.
 
 Propriétés vérifiées sur instances aléatoires à graine fixe (bornes,
 chevauchements, trait de scie entre toute paire de rectangles,
