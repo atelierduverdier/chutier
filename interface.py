@@ -88,22 +88,50 @@ class TableEditable(QTableWidget):
             self.removeRow(ligne)
 
 
+class ComboMatiere(QComboBox):
+    """La liste des matières déjà présentes dans le stock, relue à chaque
+    ouverture — éditable pour une matière qui n'y figure pas encore.
+    Sans ce rafraîchissement paresseux, une liste figée à la création de
+    la ligne resterait périmée dès que le stock change ensuite."""
+
+    def __init__(self, table_stock: "TableStock"):
+        super().__init__()
+        self.setEditable(True)
+        self._table_stock = table_stock
+
+    def showPopup(self):
+        actuel = self.currentText()
+        matieres = sorted({self._table_stock.ligne_texte(r, 4)
+                           for r in range(self._table_stock.rowCount())
+                           if self._table_stock.ligne_texte(r, 4)})
+        self.blockSignals(True)
+        self.clear()
+        self.addItems(matieres)
+        self.setCurrentText(actuel)
+        self.blockSignals(False)
+        super().showPopup()
+
+
 class TablePieces(TableEditable):
-    def __init__(self):
+    def __init__(self, table_stock: "TableStock"):
         super().__init__(COLONNES_PIECES)
+        self._table_stock = table_stock
 
     def ajouter_ligne(self, reference="", longueur="", largeur="",
                       epaisseur="18", matiere="", quantite="1"):
         ligne = self.rowCount()
         self.insertRow(ligne)
         for col, valeur in enumerate(
-                [reference, longueur, largeur, epaisseur, matiere,
-                 quantite]):
+                [reference, longueur, largeur, epaisseur]):
             self.setItem(ligne, col, QTableWidgetItem(str(valeur)))
-        combo = QComboBox()
+        combo_matiere = ComboMatiere(self._table_stock)
+        combo_matiere.setCurrentText(str(matiere))
+        self.setCellWidget(ligne, 4, combo_matiere)
+        self.setItem(ligne, 5, QTableWidgetItem(str(quantite)))
+        combo_fil = QComboBox()
         for cle, libelle in FILS_PIECE:
-            combo.addItem(libelle, cle)
-        self.setCellWidget(ligne, 6, combo)
+            combo_fil.addItem(libelle, cle)
+        self.setCellWidget(ligne, 6, combo_fil)
 
     def pieces(self) -> list:
         resultat = []
@@ -115,7 +143,7 @@ class TablePieces(TableEditable):
             largeur = _flottant(self.ligne_texte(ligne, 2), reference)
             epaisseur = _flottant(self.ligne_texte(ligne, 3, "0") or "0",
                                   reference)
-            matiere = self.ligne_texte(ligne, 4)
+            matiere = self.widget_ligne(ligne, 4).currentText().strip()
             quantite = _entier(self.ligne_texte(ligne, 5, "1") or "1",
                                reference)
             fil = self.widget_ligne(ligne, 6).currentData()
@@ -350,8 +378,12 @@ class FenetrePrincipale(QMainWindow):
         panneau = QWidget()
         disposition = QVBoxLayout(panneau)
 
+        # Le stock se construit avant les pièces : ComboMatiere y puise sa
+        # liste de matières (relue à chaque ouverture, voir sa docstring).
+        self.table_stock = TableStock()
+        self.table_pieces = TablePieces(self.table_stock)
+
         disposition.addWidget(QLabel("<b>Pièces à débiter</b>"))
-        self.table_pieces = TablePieces()
         disposition.addWidget(self.table_pieces, stretch=2)
         ligne_pieces = self._boutons_table(
             self.table_pieces, lambda: self.table_pieces.ajouter_ligne())
@@ -361,7 +393,6 @@ class FenetrePrincipale(QMainWindow):
         disposition.addLayout(ligne_pieces)
 
         disposition.addWidget(QLabel("<b>Stock (planches et chutes)</b>"))
-        self.table_stock = TableStock()
         disposition.addWidget(self.table_stock, stretch=2)
         disposition.addLayout(self._boutons_table(
             self.table_stock, lambda: self.table_stock.ajouter_ligne()))
