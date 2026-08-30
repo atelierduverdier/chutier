@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt, QRectF, QTimer
-from PySide6.QtGui import QBrush, QColor, QFont, QPen, QPainter
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPen, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 import csv_io
 import optimiseur as opt
+import projet_io
 
 TITRE = "Chutier — feuille de débit"
 
@@ -262,15 +263,26 @@ class VuePlanche(QGraphicsView):
     réutilisables en hachuré. Ce que ni pièce ni chute ne couvrent est
     la perte (sciure + rebuts) — il apparaît en fond, non détouré."""
 
+    ZOOM_MIN, ZOOM_MAX = 0.5, 40.0
+
     def __init__(self):
         super().__init__()
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setScene(QGraphicsScene(self))
         self._debit = None
         self._etiquettes = []
+        self._zoom_manuel = False
+        # Molette pour zoomer (sous la souris, pas au centre — on vise
+        # une étiquette précise) ; glisser-déposer pour se déplacer une
+        # fois zoomé. Double-clic reprend l'ajustement automatique.
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
 
     def afficher(self, debit):
         self._debit = debit
+        self._zoom_manuel = False
         scene = self.scene()
         scene.clear()
         if debit is None:
@@ -368,12 +380,39 @@ class VuePlanche(QGraphicsView):
         super().resizeEvent(event)
         self._ajuster()
 
+    def wheelEvent(self, event):
+        if self._debit is None:
+            return
+        self._zoom_manuel = True
+        agrandit = event.angleDelta().y() > 0
+        facteur = 1.25 if agrandit else 1 / 1.25
+        echelle = self.transform().m11() * facteur
+        # Une planche tres longue s'ajuste deja tres en dessous de
+        # ZOOM_MIN (0,2 pour un brin de 4 m) : rejeter tout zoom qui
+        # reste sous le plancher bloquerait le zoom AVANT pour toujours,
+        # alors qu'il s'en eloigne. Seul le sens qui s'approche de la
+        # borne doit s'y heurter.
+        if agrandit and echelle > self.ZOOM_MAX:
+            return
+        if not agrandit and echelle < self.ZOOM_MIN:
+            return
+        self.scale(facteur, facteur)
+        self._appliquer_visibilite_etiquettes(self.transform().m11())
+
+    def mouseDoubleClickEvent(self, event):
+        self._zoom_manuel = False
+        self._ajuster()
+        super().mouseDoubleClickEvent(event)
+
     def _ajuster(self):
         if self.scene() is None or self.scene().sceneRect().isEmpty():
             return
-        self.fitInView(self.scene().sceneRect(),
-                       Qt.AspectRatioMode.KeepAspectRatio)
-        echelle = self.transform().m11()
+        if not self._zoom_manuel:
+            self.fitInView(self.scene().sceneRect(),
+                           Qt.AspectRatioMode.KeepAspectRatio)
+        self._appliquer_visibilite_etiquettes(self.transform().m11())
+
+    def _appliquer_visibilite_etiquettes(self, echelle):
         for (texte_c, boite_c), (texte_k, boite_k), hors, dx, dy \
                 in getattr(self, "_etiquettes", []):
             def tient(boite, hauteur=dy):
@@ -395,6 +434,28 @@ class VuePlanche(QGraphicsView):
                 if hors:
                     texte_h, boite_h = hors
                     texte_h.setVisible(dx * echelle >= boite_h.width() + 4)
+
+    def exporter_image(self, chemin: str, largeur_px: int = 2400) -> bool:
+        """Rend la planche à une résolution fixe, indépendante de la
+        taille de la fenêtre — un plan imprimé n'a pas les mêmes
+        contraintes de place qu'un widget à l'écran, les étiquettes s'y
+        recalculent donc à l'échelle d'export, pas celle affichée."""
+        if self._debit is None:
+            return False
+        scene = self.scene()
+        rect = scene.sceneRect()
+        echelle = largeur_px / rect.width()
+        hauteur_px = max(1, round(rect.height() * echelle))
+        self._appliquer_visibilite_etiquettes(echelle)
+        image = QImage(largeur_px, hauteur_px, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        peintre = QPainter(image)
+        peintre.setRenderHint(QPainter.RenderHint.Antialiasing)
+        scene.render(peintre)
+        peintre.end()
+        ok = image.save(chemin)
+        self._appliquer_visibilite_etiquettes(self.transform().m11())
+        return ok
 
 
 class FenetrePrincipale(QMainWindow):
@@ -494,6 +555,16 @@ class FenetrePrincipale(QMainWindow):
 
         disposition.addWidget(self._groupe_parametres())
 
+        ligne_projet = QHBoxLayout()
+        bouton_ouvrir = QPushButton("Ouvrir un projet…")
+        bouton_ouvrir.clicked.connect(self._ouvrir_projet)
+        ligne_projet.addWidget(bouton_ouvrir)
+        bouton_enregistrer = QPushButton("Enregistrer le projet…")
+        bouton_enregistrer.clicked.connect(self._enregistrer_projet)
+        ligne_projet.addWidget(bouton_enregistrer)
+        ligne_projet.addStretch()
+        disposition.addLayout(ligne_projet)
+
         boutons = QHBoxLayout()
         bouton_exemple = QPushButton("Exemple : panneaux")
         bouton_exemple.clicked.connect(self._charger_exemple)
@@ -570,6 +641,16 @@ class FenetrePrincipale(QMainWindow):
         self.liste_achats.setMaximumHeight(100)
         mise_achats.addWidget(self.liste_achats)
         disposition.addWidget(self.groupe_achats)
+
+        ligne_vue = QHBoxLayout()
+        ligne_vue.addWidget(QLabel(
+            "Molette : zoomer sous la souris — glisser : déplacer —"
+            " double-clic : réajuster"))
+        ligne_vue.addStretch()
+        bouton_export_image = QPushButton("Exporter cette planche (image)…")
+        bouton_export_image.clicked.connect(self._exporter_image_planche)
+        ligne_vue.addWidget(bouton_export_image)
+        disposition.addLayout(ligne_vue)
 
         scission = QSplitter(Qt.Orientation.Horizontal)
         scission.setHandleWidth(9)
@@ -708,16 +789,26 @@ class FenetrePrincipale(QMainWindow):
 
     # -- calcul ---------------------------------------------------------
 
+    def _parametres_actuels(self) -> opt.Parametres:
+        return opt.Parametres(
+            trait_de_scie=self.spin_trait.value(),
+            chute_mini_longueur=self.spin_chute_longueur.value(),
+            chute_mini_largeur=self.spin_chute_largeur.value(),
+            tolerance_epaisseur=self.spin_tolerance.value(),
+            surcote_joint=self.spin_surcote_joint.value())
+
+    def _appliquer_parametres(self, p: opt.Parametres):
+        self.spin_trait.setValue(p.trait_de_scie)
+        self.spin_chute_longueur.setValue(p.chute_mini_longueur)
+        self.spin_chute_largeur.setValue(p.chute_mini_largeur)
+        self.spin_tolerance.setValue(p.tolerance_epaisseur)
+        self.spin_surcote_joint.setValue(p.surcote_joint)
+
     def _calculer(self):
         try:
             pieces = self.table_pieces.pieces()
             stock = self.table_stock.stock()
-            parametres = opt.Parametres(
-                trait_de_scie=self.spin_trait.value(),
-                chute_mini_longueur=self.spin_chute_longueur.value(),
-                chute_mini_largeur=self.spin_chute_largeur.value(),
-                tolerance_epaisseur=self.spin_tolerance.value(),
-                surcote_joint=self.spin_surcote_joint.value())
+            parametres = self._parametres_actuels()
             if not pieces:
                 raise ErreurSaisie("aucune pièce à débiter")
             resultat = opt.optimiser(pieces, stock, parametres)
@@ -727,6 +818,33 @@ class FenetrePrincipale(QMainWindow):
 
         self._resultat = resultat
         self._afficher_resultat()
+
+    def _enregistrer_projet(self):
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer le projet", "", "Projet chutier (*.json)")
+        if not chemin:
+            return
+        if not chemin.lower().endswith(".json"):
+            chemin += ".json"
+        try:
+            projet_io.enregistrer(chemin, self.table_pieces.pieces(),
+                                  self.table_stock.stock(),
+                                  self._parametres_actuels())
+        except OSError as erreur:
+            QMessageBox.warning(self, "Enregistrement impossible", str(erreur))
+
+    def _ouvrir_projet(self):
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Ouvrir un projet", "", "Projet chutier (*.json)")
+        if not chemin:
+            return
+        try:
+            pieces, stock, parametres = projet_io.lire(chemin)
+        except (OSError, ValueError) as erreur:
+            QMessageBox.warning(self, "Ouverture impossible", str(erreur))
+            return
+        self._remplir_tables(pieces, stock)
+        self._appliquer_parametres(parametres)
 
     def _afficher_resultat(self):
         r = self._resultat
@@ -782,6 +900,22 @@ class FenetrePrincipale(QMainWindow):
         if self._resultat is None or ligne < 0:
             return
         self.vue_planche.afficher(self._resultat.debits[ligne])
+
+    def _exporter_image_planche(self):
+        if self.vue_planche._debit is None:
+            QMessageBox.information(self, "Aucune planche",
+                                    "Calculez le débit et sélectionnez une"
+                                    " planche à exporter.")
+            return
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Exporter cette planche", "", "Image PNG (*.png)")
+        if not chemin:
+            return
+        if not chemin.lower().endswith(".png"):
+            chemin += ".png"
+        if not self.vue_planche.exporter_image(chemin):
+            QMessageBox.warning(self, "Export impossible",
+                                "L'image n'a pas pu être enregistrée.")
 
 
 def main():
