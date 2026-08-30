@@ -15,12 +15,12 @@ import sys
 from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import QBrush, QColor, QFont, QPen, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-    QGraphicsItem, QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem,
-    QGraphicsView, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
+    QFileDialog, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsSimpleTextItem, QGraphicsView, QGroupBox, QHBoxLayout,
+    QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSplitter,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 import csv_io
@@ -45,6 +45,15 @@ COULEUR_TRAIT_CHUTE = QColor("#6b7078")
 COULEUR_PERTE_FOND = QColor("#f4f2ee")
 COULEUR_BORD_PLANCHE = QColor("#2f3540")
 COULEUR_ALERTE = QColor("#c0392b")
+
+# Le décrochement par défaut d'un QSplitter (2-4 px, quasi invisible sur
+# beaucoup de thèmes) le rendait difficile à repérer et à saisir pour
+# agrandir un panneau — palette(...) suit le thème clair/sombre du système
+# plutôt qu'une couleur fixe.
+STYLE_POIGNEE_SPLITTER = """
+    QSplitter::handle { background: palette(mid); }
+    QSplitter::handle:hover { background: palette(highlight); }
+"""
 
 
 def _couleur_piece(reference: str) -> QColor:
@@ -71,6 +80,14 @@ class TableEditable(QTableWidget):
             self.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.ResizeToContents)
         self.verticalHeader().setVisible(False)
+        # Cliquer n'importe où dans une ligne la sélectionne entière ;
+        # Ctrl/Maj en sélectionne plusieurs — nécessaire pour appliquer
+        # une valeur à plusieurs lignes d'un coup (matière, notamment).
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    def lignes_selectionnees(self) -> list:
+        return sorted({i.row() for i in self.selectedIndexes()})
 
     def ligne_texte(self, ligne: int, colonne: int, defaut: str = "") -> str:
         item = self.item(ligne, colonne)
@@ -83,9 +100,7 @@ class TableEditable(QTableWidget):
         self.insertRow(self.rowCount())
 
     def supprimer_lignes_selectionnees(self):
-        lignes = sorted({i.row() for i in self.selectedIndexes()},
-                        reverse=True)
-        for ligne in lignes:
+        for ligne in reversed(self.lignes_selectionnees()):
             self.removeRow(ligne)
 
 
@@ -419,6 +434,8 @@ class FenetrePrincipale(QMainWindow):
 
     def _construire(self):
         central = QSplitter(Qt.Orientation.Horizontal)
+        central.setHandleWidth(9)
+        central.setStyleSheet(STYLE_POIGNEE_SPLITTER)
         central.addWidget(self._panneau_saisie())
         central.addWidget(self._panneau_resultats())
         central.setStretchFactor(0, 2)
@@ -440,6 +457,9 @@ class FenetrePrincipale(QMainWindow):
         disposition.addWidget(self.table_pieces, stretch=2)
         ligne_pieces = self._boutons_table(
             self.table_pieces, lambda: self.table_pieces.ajouter_ligne())
+        bouton_matiere = QPushButton("Matière → lignes sélectionnées")
+        bouton_matiere.clicked.connect(self._appliquer_matiere_selection)
+        ligne_pieces.addWidget(bouton_matiere)
         bouton_importer = QPushButton("Importer un CSV…")
         bouton_importer.clicked.connect(self._importer_csv)
         ligne_pieces.addWidget(bouton_importer)
@@ -530,6 +550,8 @@ class FenetrePrincipale(QMainWindow):
         disposition.addWidget(self.groupe_achats)
 
         scission = QSplitter(Qt.Orientation.Horizontal)
+        scission.setHandleWidth(9)
+        scission.setStyleSheet(STYLE_POIGNEE_SPLITTER)
         self.liste_planches = QListWidget()
         self.liste_planches.setMinimumWidth(160)
         self.liste_planches.currentRowChanged.connect(
@@ -590,6 +612,28 @@ class FenetrePrincipale(QMainWindow):
             QMessageBox.warning(self, "Import impossible", str(erreur))
             return
         self._remplir_pieces(pieces)
+
+    def _appliquer_matiere_selection(self):
+        lignes = self.table_pieces.lignes_selectionnees()
+        if not lignes:
+            QMessageBox.information(
+                self, "Aucune ligne sélectionnée",
+                "Sélectionnez d'abord une ou plusieurs lignes de pièces"
+                " (clic, puis Ctrl/Maj-clic pour en ajouter).")
+            return
+        matieres = sorted({self.table_stock.ligne_texte(r, 4)
+                           for r in range(self.table_stock.rowCount())
+                           if self.table_stock.ligne_texte(r, 4)})
+        depart = self.table_pieces.widget_ligne(lignes[0], 4).currentText()
+        matiere, ok = QInputDialog.getItem(
+            self, "Matière", "Matière à appliquer aux lignes sélectionnées :",
+            matieres, matieres.index(depart) if depart in matieres else 0,
+            editable=True)
+        if not ok or not matiere.strip():
+            return
+        for ligne in lignes:
+            self.table_pieces.widget_ligne(ligne, 4).setCurrentText(
+                matiere.strip())
 
     def _charger_exemple(self):
         self._remplir_tables(

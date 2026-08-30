@@ -471,14 +471,28 @@ class ProfilsDeCatalogue(unittest.TestCase):
         self.assertEqual(len(r.non_placees), 1)
         self.assertEqual(r.non_placees[0].exemplaires, 4)
 
-    def test_sans_prix_le_plus_petit_gagne(self):
-        # prix a 0 partout (le defaut) : comportement d'avant Planche.prix,
-        # la plus petite surface neuve depatage seule (175 < 200)
+    def test_sans_prix_le_moins_de_rabotage_perdu_gagne(self):
+        # prix a 0 partout (le defaut) : sans savoir lequel coute le plus,
+        # le choix se fait par le moins de rabotage perdu — une piece a 20
+        # gaspille 45 sur un brut a 65, seulement 10 sur un brut a 30, le
+        # 200x30 doit donc l'emporter meme si sa surface est plus grande
+        # (signale par Christophe : "mes planches de 32mm ne sont jamais
+        # prises", 30/08/2026 — l'ancien depart par la seule surface
+        # ecartait a tort tout brut plus large mais mieux ajuste)
         pieces = [Piece("p", 1000, 100, 20, "sapin", quantite=3)]
         stock = [Planche("175x65", 4000, 175, 65, "sapin", illimite=True),
                 Planche("200x30", 4000, 200, 30, "sapin", illimite=True)]
         r = optimiser(pieces, stock, RAPIDE)
-        self.assertEqual({a.reference for a in r.achats}, {"175x65"})
+        self.assertEqual({a.reference for a in r.achats}, {"200x30"})
+
+    def test_sans_prix_la_surface_depatage_a_gaspillage_egal(self):
+        # a gaspillage de rabotage identique (0 pour les deux : la piece
+        # loge pile), la plus petite surface neuve tranche, comme avant
+        pieces = [Piece("p", 1000, 100, 18, "sapin", quantite=3)]
+        stock = [Planche("petit", 4000, 175, 18, "sapin", illimite=True),
+                Planche("grand", 4000, 200, 18, "sapin", illimite=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual({a.reference for a in r.achats}, {"petit"})
 
     def test_prix_depart_le_choix_entre_profils_epaisseur_compatibles(self):
         # les deux profils logent la piece (20 <= 65 et 20 <= 30) : sans

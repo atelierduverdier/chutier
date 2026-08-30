@@ -76,8 +76,10 @@ print(resultat.texte())               # résumé lisible
   à acheter). Entre plusieurs profils compatibles, `Planche.prix`
   (coût d'UNE planche, pas au mètre) départage le choix par le coût
   réel plutôt que la seule surface neuve entamée — à renseigner sur
-  TOUS les profils comparés, sinon (le défaut, 0 partout) c'est la
-  plus petite section suffisante qui l'emporte, sans savoir son prix.
+  TOUS les profils comparés. Sans prix (le défaut, 0 partout), c'est
+  le moins de rabotage perdu qui décide (une pièce à 20 préfère un
+  brut à 30 plutôt qu'un brut à 65, même si sa surface est plus
+  grande), la plus petite surface ne tranchant qu'à égalité.
 - Score d'une solution, dans l'ordre : moins de pièces non placées,
   moins de surface **neuve** entamée (déstockage d'abord), moins de
   pertes, plus grande chute subsistante la plus grande possible.

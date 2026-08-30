@@ -544,9 +544,11 @@ def _poser(o: _Ouverte, i_libre: int, piece: Piece, exemplaire: int,
 def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
             strat: _Strategie):
     """Entame le stock le moins coûteux où la pièce loge, assez épais
-    pour elle (chutes d'abord si la stratégie le demande) — le prix s'il
-    est renseigné, la surface sinon (une chute vaut toujours 0, déjà
-    possédée). Rend l'indice de la planche ouverte, ou None."""
+    pour elle (chutes d'abord si la stratégie le demande). Le prix
+    départage s'il est renseigné ; sinon, le moins de rabotage perdu
+    (une planche à peine plus épaisse que la pièce avant une bien plus
+    épaisse), puis la plus petite surface. Une chute vaut toujours 0,
+    déjà possédée. Rend l'indice de la planche ouverte, ou None."""
     candidats = []
     for idx, (pl, _ex) in enumerate(dispo):
         if not _epaisseur_compatible(piece.epaisseur, pl.epaisseur, params):
@@ -554,12 +556,17 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
         if any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
                for dx, dy, _ in _orientations(piece, pl, params)):
             prio = 0 if (pl.chute and strat.chutes_d_abord) else 1
-            cout = 0.0 if pl.chute else (pl.prix if pl.prix > 0 else pl.aire)
-            candidats.append((prio, cout, idx))
+            if pl.chute:
+                cout, gaspillage = 0.0, 0.0
+            else:
+                cout = pl.prix
+                gaspillage = (0.0 if pl.prix > 0
+                             else max(0.0, pl.epaisseur - piece.epaisseur))
+            candidats.append((prio, cout, gaspillage, pl.aire, idx))
     if not candidats:
         return None
     candidats.sort()
-    pl, ex = dispo.pop(candidats[0][2])
+    pl, ex = dispo.pop(candidats[0][4])
     ouvertes.append(_Ouverte(pl, ex))
     return len(ouvertes) - 1
 
