@@ -346,7 +346,7 @@ class VuePlanche(QGraphicsView):
         # qui loge sous le zoom courant, ou aucune (l'info-bulle reste).
         complet = self._texte_centre(scene, etiquette, x, y_qt, dx, dy, 8)
         court = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, dy, 6)
-        hors = None
+        hors, cote_hors = None, None
         if y < 0.5:
             # La pièce est au ras du bord bas de la planche (y=0) : rien
             # n'occupe l'en-dessous. La vue en garde toujours une marge
@@ -355,10 +355,13 @@ class VuePlanche(QGraphicsView):
             # voisin, qu'il soit une pièce ou une chute.
             hors = self._texte_centre(scene, etiquette_courte, x,
                                       y_qt + dy, dx, 0, 6, cote="dessous")
+            cote_hors = "dessous"
         elif y + dy > largeur_planche - 0.5:
             hors = self._texte_centre(scene, etiquette_courte, x, y_qt,
                                       dx, 0, 6, cote="dessus")
-        self._etiquettes.append((complet, court, hors, dx, dy))
+            cote_hors = "dessus"
+        self._etiquettes.append(
+            (complet, court, hors, cote_hors, dx, dy, x + dx / 2))
 
     def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
                       cote="dedans"):
@@ -420,8 +423,16 @@ class VuePlanche(QGraphicsView):
         self._appliquer_visibilite_etiquettes(self.transform().m11())
 
     def _appliquer_visibilite_etiquettes(self, echelle):
-        for (texte_c, boite_c), (texte_k, boite_k), hors, dx, dy \
-                in getattr(self, "_etiquettes", []):
+        # Une étiquette "hors" (au-dessus/en-dessous, débordant dans la
+        # marge) ne vérifie jusqu'ici que SA propre pièce — deux petites
+        # pièces voisines peuvent chacune y passer et quand même se
+        # chevaucher l'une l'autre, illisibles côte à côte (signalé par
+        # Christophe, capture à l'appui : "tout s'enchevêtre"). Les
+        # candidates qui passent ce premier tri s'accumulent ici, par
+        # côté, pour un second tri qui les compare entre elles.
+        candidats_hors = {"dessus": [], "dessous": []}
+        for (texte_c, boite_c), (texte_k, boite_k), hors, cote_hors, dx, dy, \
+                x_centre in getattr(self, "_etiquettes", []):
             def tient(boite, hauteur=dy):
                 return (dx * echelle >= boite.width() + 4
                         and hauteur * echelle >= boite.height() + 4)
@@ -440,7 +451,22 @@ class VuePlanche(QGraphicsView):
                 texte_k.setVisible(False)
                 if hors:
                     texte_h, boite_h = hors
-                    texte_h.setVisible(dx * echelle >= boite_h.width() + 4)
+                    if dx * echelle >= boite_h.width() + 4:
+                        candidats_hors[cote_hors].append(
+                            (x_centre * echelle, boite_h.width(), texte_h))
+                    else:
+                        texte_h.setVisible(False)
+
+        for candidats in candidats_hors.values():
+            candidats.sort(key=lambda c: c[0])
+            bord_precedent = None
+            for centre_px, largeur_px, texte_h in candidats:
+                gauche = centre_px - largeur_px / 2
+                if bord_precedent is not None and gauche < bord_precedent + 4:
+                    texte_h.setVisible(False)
+                else:
+                    texte_h.setVisible(True)
+                    bord_precedent = centre_px + largeur_px / 2
 
     def exporter_image(self, chemin: str, largeur_px: int = 2400) -> bool:
         """Rend la planche à une résolution fixe, indépendante de la
