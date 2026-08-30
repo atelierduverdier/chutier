@@ -34,9 +34,9 @@ COLONNES_STOCK = ["Référence", "Longueur", "Largeur", "Épaisseur",
                    "Matière", "Qté", "Chute", "A un fil"]
 
 FILS_PIECE = [
-    (opt.FIL_LONGUEUR, "le long de la longueur"),
-    (opt.FIL_LARGEUR, "le long de la largeur"),
-    (opt.FIL_INDIFFERENT, "indifférent"),
+    (opt.FIL_LONGUEUR, "Longueur"),
+    (opt.FIL_LARGEUR, "Largeur"),
+    (opt.FIL_INDIFFERENT, "Indifférent"),
 ]
 
 COULEUR_CHUTE = QColor("#b9bdc4")
