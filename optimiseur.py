@@ -100,6 +100,14 @@ class Planche:
     plusieurs profils, il choisit lui-même dans lequel tailler chaque
     pièce ; :meth:`Resultat.achats` compte ensuite, par profil, combien en
     acheter. Sans effet sur une chute (déjà possédée, jamais à acheter).
+
+    ``prix`` : coût d'UNE planche à ces cotes (ce que le marchand facture
+    pour une longueur de ``longueur``), pas un prix au mètre. Départage le
+    choix entre plusieurs profils illimités par le coût réel plutôt que
+    par la seule surface neuve entamée — mettre un prix à zéro (le
+    défaut) revient à ne pas en tenir compte pour cette planche. À
+    renseigner pour TOUS les profils comparés : un mélange de planches
+    prisées et non prisées dans le même choix n'a pas de sens.
     """
 
     reference: str
@@ -111,6 +119,7 @@ class Planche:
     chute: bool = False
     fil: bool = True
     illimite: bool = False
+    prix: float = 0.0
 
     @property
     def aire(self) -> float:
@@ -278,7 +287,10 @@ class Bilan:
 
 @dataclass(frozen=True)
 class Achat:
-    """Combien acheter d'un profil de catalogue réellement entamé."""
+    """Combien acheter d'un profil de catalogue réellement entamé.
+
+    ``prix`` reprend ``Planche.prix`` (coût d'UNE planche, pas au
+    mètre) ; ``nombre * prix`` donne le coût de ce profil."""
 
     reference: str
     longueur: float
@@ -286,6 +298,7 @@ class Achat:
     epaisseur: float
     matiere: str
     nombre: int
+    prix: float = 0.0
 
 
 @dataclass
@@ -315,7 +328,8 @@ class Resultat:
                 ordre.append(pl)
             compte[pl.reference] += 1
         return [Achat(pl.reference, pl.longueur, pl.largeur, pl.epaisseur,
-                      pl.matiere, compte[pl.reference]) for pl in ordre]
+                      pl.matiere, compte[pl.reference], pl.prix)
+                for pl in ordre]
 
     def texte(self) -> str:
         """Résumé lisible, pour la démo et le débogage."""
@@ -333,10 +347,14 @@ class Resultat:
             lignes.append("")
             lignes.append("À acheter :")
             for a in self.achats:
+                cout = " — %s" % _prix(a.nombre * a.prix) if a.prix else ""
                 lignes.append(
-                    "  %d × « %s » (%s × %s × %s mm, %s)"
+                    "  %d × « %s » (%s × %s × %s mm, %s)%s"
                     % (a.nombre, a.reference, _mm(a.longueur),
-                       _mm(a.largeur), _mm(a.epaisseur), a.matiere))
+                       _mm(a.largeur), _mm(a.epaisseur), a.matiere, cout))
+            cout_total = sum(a.nombre * a.prix for a in self.achats)
+            if cout_total:
+                lignes.append("  Total : %s" % _prix(cout_total))
         for i, d in enumerate(self.debits, 1):
             # illimite : quantite ne dit rien du nombre reellement pris
             plusieurs = d.planche.quantite > 1 or d.planche.illimite
@@ -377,6 +395,11 @@ def _m2(v: float) -> str:
 
 def _pct(v: float) -> str:
     return ("%.1f" % (100.0 * v)).replace(".", ",")
+
+
+def _prix(v: float) -> str:
+    # aucune devise imposée : celle dans laquelle Planche.prix a été saisi
+    return ("%.2f" % v).replace(".", ",")
 
 
 # ---------------------------------------------------------------------------
@@ -520,9 +543,10 @@ def _poser(o: _Ouverte, i_libre: int, piece: Piece, exemplaire: int,
 
 def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
             strat: _Strategie):
-    """Entame le plus petit stock où la pièce loge, assez épais pour elle
-    (chutes d'abord si la stratégie le demande). Rend l'indice de la
-    planche ouverte, ou None."""
+    """Entame le stock le moins coûteux où la pièce loge, assez épais
+    pour elle (chutes d'abord si la stratégie le demande) — le prix s'il
+    est renseigné, la surface sinon (une chute vaut toujours 0, déjà
+    possédée). Rend l'indice de la planche ouverte, ou None."""
     candidats = []
     for idx, (pl, _ex) in enumerate(dispo):
         if not _epaisseur_compatible(piece.epaisseur, pl.epaisseur, params):
@@ -530,7 +554,8 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
         if any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
                for dx, dy, _ in _orientations(piece, pl, params)):
             prio = 0 if (pl.chute and strat.chutes_d_abord) else 1
-            candidats.append((prio, pl.aire, idx))
+            cout = 0.0 if pl.chute else (pl.prix if pl.prix > 0 else pl.aire)
+            candidats.append((prio, cout, idx))
     if not candidats:
         return None
     candidats.sort()
@@ -626,14 +651,22 @@ def _finaliser(ouvertes: list, dispo: list, non: dict,
 
 def _score_solution(sol: _Solution):
     """Le score lexicographique documenté en tête de module (plus petit
-    = meilleur). Arrondis pour que les égalités flottantes en soient."""
+    = meilleur). Arrondis pour que les égalités flottantes en soient.
+
+    Le coût passe juste après les pièces non placées : entre deux
+    stratégies qui placent tout, la moins chère gagne avant même de
+    regarder la surface neuve. Un prix à 0 partout (le défaut) rend ce
+    critère toujours nul — la surface neuve reste alors seule à
+    décider, comme avant que ``Planche.prix`` existe."""
     nb_non = sum(n.exemplaires for n in sol.non_placees)
+    cout = sum(d.planche.prix for d in sol.debits if not d.planche.chute)
     neuve = sum(d.planche.aire for d in sol.debits if not d.planche.chute)
     perte = sum(d.perte for d in sol.debits)
     subsistantes = [c.aire for d in sol.debits for c in d.chutes]
     subsistantes += [pl.aire for pl, _ex in sol.dispo_restant if pl.chute]
     plus_grande = max(subsistantes, default=0.0)
-    return (nb_non, round(neuve, 3), round(perte, 3), -round(plus_grande, 3))
+    return (nb_non, round(cout, 2), round(neuve, 3), round(perte, 3),
+            -round(plus_grande, 3))
 
 
 def _strategies(params: Parametres):

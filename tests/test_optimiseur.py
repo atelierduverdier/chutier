@@ -471,6 +471,51 @@ class ProfilsDeCatalogue(unittest.TestCase):
         self.assertEqual(len(r.non_placees), 1)
         self.assertEqual(r.non_placees[0].exemplaires, 4)
 
+    def test_sans_prix_le_plus_petit_gagne(self):
+        # prix a 0 partout (le defaut) : comportement d'avant Planche.prix,
+        # la plus petite surface neuve depatage seule (175 < 200)
+        pieces = [Piece("p", 1000, 100, 20, "sapin", quantite=3)]
+        stock = [Planche("175x65", 4000, 175, 65, "sapin", illimite=True),
+                Planche("200x30", 4000, 200, 30, "sapin", illimite=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual({a.reference for a in r.achats}, {"175x65"})
+
+    def test_prix_depart_le_choix_entre_profils_epaisseur_compatibles(self):
+        # les deux profils logent la piece (20 <= 65 et 20 <= 30) : sans
+        # prix, la plus petite surface (175) gagnerait — avec un prix qui
+        # dit le contraire, c'est le moins cher qui doit l'emporter
+        pieces = [Piece("p", 1000, 100, 20, "sapin", quantite=3)]
+        cher = Planche("cher_mais_petit", 4000, 175, 65, "sapin",
+                       illimite=True, prix=100.0)
+        bon_marche = Planche("bon_marche_mais_large", 4000, 200, 30, "sapin",
+                             illimite=True, prix=1.0)
+        r = optimiser(pieces, [cher, bon_marche], RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        self.assertEqual({a.reference for a in r.achats},
+                         {"bon_marche_mais_large"})
+
+    def test_prix_minimise_le_cout_total_pas_seulement_la_surface(self):
+        # cas a deux epaisseurs de besoin, comme un vrai achat
+        # (29/08/2026) : le 65 cher ne doit servir qu'aux pieces qui n'ont
+        # pas le choix, le reste va au 30 moins cher
+        pieces = [
+            Piece("epaisse", 1000, 100, 50, "sapin", quantite=2),
+            Piece("fine", 1000, 100, 20, "sapin", quantite=6),
+        ]
+        stock = [
+            Planche("4000x175x65", 4000, 175, 65, "sapin", illimite=True,
+                    prix=35.0),
+            Planche("4000x200x30", 4000, 200, 30, "sapin", illimite=True,
+                    prix=12.0),
+        ]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        achats = {a.reference: a.nombre for a in r.achats}
+        self.assertEqual(achats, {"4000x175x65": 1, "4000x200x30": 2})
+        # moins cher que si tout etait force dans le seul profil epais
+        cout = achats["4000x175x65"] * 35.0 + achats["4000x200x30"] * 12.0
+        self.assertLess(cout, 8 * 35.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

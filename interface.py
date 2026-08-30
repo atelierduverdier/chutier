@@ -31,7 +31,8 @@ TITRE = "Chutier — feuille de débit"
 COLONNES_PIECES = ["Référence", "Longueur", "Largeur", "Épaisseur",
                     "Matière", "Qté", "Fil", "Composable"]
 COLONNES_STOCK = ["Référence", "Longueur", "Largeur", "Épaisseur",
-                   "Matière", "Qté", "Chute", "A un fil", "Catalogue"]
+                   "Matière", "Qté", "Chute", "A un fil", "Catalogue",
+                   "Prix"]
 
 FILS_PIECE = [
     (opt.FIL_LONGUEUR, "Longueur"),
@@ -168,7 +169,7 @@ class TableStock(TableEditable):
 
     def ajouter_ligne(self, reference="", longueur="", largeur="",
                       epaisseur="18", matiere="", quantite="1",
-                      chute=False, fil=True, illimite=False):
+                      chute=False, fil=True, illimite=False, prix="0"):
         ligne = self.rowCount()
         self.insertRow(ligne)
         for col, valeur in enumerate(
@@ -189,6 +190,13 @@ class TableStock(TableEditable):
             " plus rien, le chutier en prend autant que le débit"
             " demande, et compte ensuite combien en acheter.")
         self.setCellWidget(ligne, 8, case_illimite)
+        item_prix = QTableWidgetItem(str(prix))
+        item_prix.setToolTip(
+            "Coût d'UNE planche à ces cotes, pas un prix au mètre. Sert à"
+            " départager plusieurs profils Catalogue par le coût réel"
+            " plutôt que la seule surface neuve — laisser à 0 pour ne pas"
+            " en tenir compte.")
+        self.setItem(ligne, 9, item_prix)
 
     def stock(self) -> list:
         resultat = []
@@ -206,9 +214,11 @@ class TableStock(TableEditable):
             chute = self.widget_ligne(ligne, 6).isChecked()
             fil = self.widget_ligne(ligne, 7).isChecked()
             illimite = self.widget_ligne(ligne, 8).isChecked()
+            prix = _flottant(self.ligne_texte(ligne, 9, "0") or "0",
+                             reference)
             resultat.append(opt.Planche(reference, longueur, largeur,
                                         epaisseur, matiere, quantite,
-                                        chute, fil, illimite))
+                                        chute, fil, illimite, prix))
         return resultat
 
 
@@ -563,7 +573,7 @@ class FenetrePrincipale(QMainWindow):
             self.table_stock.ajouter_ligne(s.reference, s.longueur,
                                            s.largeur, s.epaisseur,
                                            s.matiere, s.quantite, s.chute,
-                                           s.fil, s.illimite)
+                                           s.fil, s.illimite, s.prix)
 
     def _remplir_tables(self, pieces, stock):
         self._remplir_pieces(pieces)
@@ -666,10 +676,16 @@ class FenetrePrincipale(QMainWindow):
 
         self.liste_achats.clear()
         for a in r.achats:
+            cout = (" — %s" % opt._prix(a.nombre * a.prix)) if a.prix else ""
             self.liste_achats.addItem(QListWidgetItem(
-                "%d × « %s » — %s × %s × %s mm, %s"
+                "%d × « %s » — %s × %s × %s mm, %s%s"
                 % (a.nombre, a.reference, opt._mm(a.longueur),
-                   opt._mm(a.largeur), opt._mm(a.epaisseur), a.matiere)))
+                   opt._mm(a.largeur), opt._mm(a.epaisseur), a.matiere,
+                   cout)))
+        cout_total = sum(a.nombre * a.prix for a in r.achats)
+        if cout_total:
+            self.liste_achats.addItem(QListWidgetItem(
+                "Total : %s" % opt._prix(cout_total)))
         self.groupe_achats.setVisible(bool(r.achats))
 
         self.liste_planches.clear()

@@ -73,10 +73,11 @@ print(resultat.texte())               # résumé lisible
   `quantite` ne borne plus rien, le solveur en prend autant que le
   débit demande. `Resultat.achats` compte ensuite, par profil,
   combien en acheter. Sans effet sur une chute (déjà possédée, jamais
-  à acheter). **Le choix entre plusieurs profils illimités reste
-  purement géométrique** (moins de surface neuve d'abord, donc en
-  pratique la plus petite section suffisante) — le coût réel des
-  sections n'entre pour rien dans ce choix.
+  à acheter). Entre plusieurs profils compatibles, `Planche.prix`
+  (coût d'UNE planche, pas au mètre) départage le choix par le coût
+  réel plutôt que la seule surface neuve entamée — à renseigner sur
+  TOUS les profils comparés, sinon (le défaut, 0 partout) c'est la
+  plus petite section suffisante qui l'emporte, sans savoir son prix.
 - Score d'une solution, dans l'ordre : moins de pièces non placées,
   moins de surface **neuve** entamée (déstockage d'abord), moins de
   pertes, plus grande chute subsistante la plus grande possible.
