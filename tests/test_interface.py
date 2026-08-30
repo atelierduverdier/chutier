@@ -14,11 +14,13 @@ vers un dossier jetable : un test ne touche jamais la configuration de
 l'utilisateur.
 """
 
+import contextlib
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -26,7 +28,9 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QRectF, Qt  # noqa: E402
+from PySide6.QtGui import QImage, QPageLayout, QPainter  # noqa: E402
+from PySide6.QtPrintSupport import QPrinter  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -39,6 +43,7 @@ APP = QApplication.instance() or QApplication([])
 
 import apparence  # noqa: E402
 import interface  # noqa: E402
+import csv_io  # noqa: E402
 import optimiseur as opt  # noqa: E402
 import projet_io  # noqa: E402
 import tables_saisie as tsa  # noqa: E402
@@ -53,6 +58,20 @@ STOCK = [
     opt.Planche("sapin 2400x200", 2400, 200, 18, "sapin", quantite=4),
     opt.Planche("chute etagere", 800, 180, 18, "sapin", chute=True),
 ]
+
+
+@contextlib.contextmanager
+def _dialogue_repond(chemin):
+    """Fait répondre ``chemin`` au sélecteur de fichiers, le temps d'un
+    test : les exports passent tous par lui, et c'est justement le chemin
+    complet qu'on veut éprouver."""
+    ancien = interface.QFileDialog.getSaveFileName
+    interface.QFileDialog.getSaveFileName = staticmethod(
+        lambda *a, **k: (chemin, ""))
+    try:
+        yield
+    finally:
+        interface.QFileDialog.getSaveFileName = ancien
 
 
 def _fenetre():
@@ -195,11 +214,10 @@ class RangerLesChutes(unittest.TestCase):
         apres = interface.stock_apres_debit(STOCK, self.resultat)
         consommees = interface.planches_consommees(self.resultat)
         for planche in STOCK:
-            avant = planche.quantite
             reste = sum(p.quantite for p in apres
                         if p.reference == planche.reference)
             self.assertEqual(reste,
-                             avant - consommees.get(planche.reference, 0),
+                             planche.quantite - consommees.get(planche, 0),
                              "mauvais décompte pour « %s »" % planche.reference)
 
     def test_les_chutes_creees_entrent_au_stock(self):
@@ -211,6 +229,23 @@ class RangerLesChutes(unittest.TestCase):
             if planche.reference not in anciennes:
                 self.assertTrue(planche.chute,
                                 "une chute rangée doit rester une chute")
+
+    def test_deux_lignes_de_stock_du_meme_nom_ne_se_confondent_pas(self):
+        """Rien n'interdit deux chutes appelées pareil à des cotes
+        différentes. Décompter sur le seul nom retirait les exemplaires
+        de la mauvaise ligne."""
+        stock = [opt.Planche("chute", 2400, 200, 18, "sapin", quantite=2,
+                             chute=True),
+                 opt.Planche("chute", 300, 80, 18, "sapin", quantite=2,
+                             chute=True)]
+        resultat = opt.optimiser(
+            [opt.Piece("montant", 1750, 60, 18, "sapin", 2)], stock,
+            opt.Parametres(essais_melanges=0))
+        apres = interface.stock_apres_debit(stock, resultat)
+        petite = [p for p in apres if p.longueur == 300]
+        self.assertEqual([p.quantite for p in petite], [2],
+                         "la petite chute n'a pas servi, elle doit rester"
+                         " entière")
 
     def test_un_profil_de_catalogue_ne_se_deduit_pas(self):
         catalogue = [opt.Planche("douglas 4 m", 4000, 200, 30, "sapin",
@@ -316,6 +351,195 @@ class Fenetre(unittest.TestCase):
                    if p.reference == "Echarpe G"][0]
         self.assertAlmostEqual(echarpe.longueur, 829.6857318589343, places=3)
         self.assertEqual(f.table_pieces.texte(7, 1), "829.686")
+
+    def test_nouveau_efface_aussi_les_resultats(self):
+        """« Nouveau » ne vidait que le plan et les tuiles : les onglets
+        gardaient leurs comptes, la liste d'achats sa ligne, la légende
+        ses pastilles. Un projet neuf s'ouvrait avec le bilan du
+        précédent."""
+        f = _fenetre()
+        self.assertGreater(f.liste_achats.count(), 0)
+        self.assertGreater(f.legende.count(), 0)
+        f._modifie = False
+        f._nouveau()
+        self.assertEqual(f.liste_achats.count(), 0)
+        self.assertEqual(f.liste_chutes.count(), 0)
+        self.assertEqual(f.legende.count(), 0)
+        self.assertEqual(f.liste_planches.count(), 0)
+        for indice in (interface.ACHATS, interface.CHUTES,
+                       interface.NON_PLACEES):
+            self.assertNotIn("·", f.onglets_resultats.tabText(indice))
+
+    def test_l_export_borne_la_taille_de_l_image(self):
+        """Soixante planches font une scène de 7:1 : à 2400 px de large,
+        l'image réclamait 16 774 px de haut, 161 Mo — et un PNG de cette
+        forme ne s'imprime pas."""
+        f = _fenetre()
+        f._remplir([opt.Piece("p%d" % i, 900, 180, 27, "douglas", 1)
+                    for i in range(180)],
+                   [opt.Planche("douglas 3 m", 3000, 200, 30, "douglas",
+                                quantite=1, illimite=True)],
+                   opt.Parametres(essais_melanges=0))
+        f._calculer()
+        self.assertGreater(len(f._resultat.debits), 30)
+        image = f.vue.rendre_image(24000)
+        self.assertIsNotNone(image)
+        self.assertLessEqual(image.width() * image.height(),
+                             f.vue.PIXELS_MAX)
+
+    def test_la_fiche_d_atelier_liste_les_planches(self):
+        chemin = os.path.join(_JETABLE, "fiche.txt")
+        with _dialogue_repond(chemin):
+            self.f._exporter_fiche()
+        contenu = open(chemin, encoding="utf-8").read()
+        for debit in self.f._resultat.debits:
+            self.assertIn(debit.planche.reference, contenu)
+        for pose in self.f._resultat.debits[0].poses:
+            self.assertIn(pose.piece.reference, contenu)
+
+    def test_export_csv_puis_reimport(self):
+        chemin = os.path.join(_JETABLE, "pieces.csv")
+        with _dialogue_repond(chemin):
+            self.f._exporter_csv()
+        self.assertEqual(csv_io.lire_pieces(chemin),
+                         self.f.table_pieces.pieces())
+
+    def test_la_page_imprimee_se_compose(self):
+        """L'impression ne peut pas être essayée sans imprimante, mais sa
+        mise en page, si : on peint sur une image aux dimensions d'une A4
+        paysage à 150 points par pouce."""
+        f = _fenetre()
+        page = QImage(1754, 1240, QImage.Format.Format_ARGB32)
+        page.fill(Qt.GlobalColor.white)
+        peintre = QPainter(page)
+        try:
+            f._dessiner_page(peintre)
+        finally:
+            peintre.end()
+        blancs = sum(1 for y in range(0, page.height(), 7)
+                     for x in range(0, page.width(), 7)
+                     if page.pixelColor(x, y) == Qt.GlobalColor.white)
+        total = len(range(0, page.height(), 7)) * len(range(0, page.width(), 7))
+        self.assertLess(blancs / total, 0.97, "la page est restée blanche")
+
+    def test_un_debit_courant_tient_sur_une_page(self):
+        f = _fenetre()
+        self.assertEqual(len(f._pages_a_imprimer()), 1)
+        f._charger_exemple_volets()
+        self.assertEqual(len(f._resultat.debits), 5)
+        self.assertEqual(len(f._pages_a_imprimer()), 1)
+
+    def test_un_gros_debit_se_pagine(self):
+        """Tout imprimer sur UNE page marchait pour cinq planches et
+        donnait une bande illisible pour soixante."""
+        f = _fenetre()
+        f._remplir([opt.Piece("p%d" % i, 900, 180, 27, "douglas", 1)
+                    for i in range(180)],
+                   [opt.Planche("douglas 3 m", 3000, 200, 30, "douglas",
+                                quantite=1, illimite=True)],
+                   opt.Parametres(essais_melanges=0))
+        f._calculer()
+        pages = f._pages_a_imprimer()
+        self.assertGreater(len(pages), 1)
+        self.assertEqual(sum(len(p) for p in pages), len(f._resultat.debits))
+        self.assertLessEqual(max(len(p) for p in pages), 8)
+        # aucune planche perdue ni comptée deux fois
+        numeros = [n for page in pages for n, _ in page]
+        self.assertEqual(numeros, list(range(1, len(numeros) + 1)))
+
+    def test_le_document_sort_en_pdf(self):
+        """L'impression ne peut pas s'essayer sans imprimante, mais tout
+        le chemin — pagination, rendu, mise en page — se vérifie sur un
+        PDF."""
+        f = _fenetre()
+        chemin = os.path.join(_JETABLE, "plan.pdf")
+        imprimante = QPrinter(QPrinter.PrinterMode.HighResolution)
+        imprimante.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        imprimante.setOutputFileName(chemin)
+        imprimante.setPageOrientation(QPageLayout.Orientation.Landscape)
+        peintre = QPainter()
+        self.assertTrue(peintre.begin(imprimante))
+        try:
+            pages = f.composer_document(peintre, imprimante)
+        finally:
+            peintre.end()
+        self.assertEqual(pages, 1)
+        self.assertGreater(os.path.getsize(chemin), 5000)
+
+    def test_les_reglages_reviennent_d_une_seance_a_l_autre(self):
+        """Un trait de scie est une propriété de la scie, pas du projet :
+        le retaper à chaque nouveau débit était une corvée, et une source
+        d'erreur silencieuse quand on l'oubliait."""
+        reglages = self.f._reglages
+        self.addCleanup(reglages.remove, "parametres")
+        self.f._appliquer_parametres(
+            opt.Parametres(trait_de_scie=4.5, tolerance_epaisseur=5.0))
+        self.f._memoriser_reglages()
+        suivante = _fenetre()
+        self.assertEqual(suivante._parametres_actuels().trait_de_scie, 4.5)
+        self.assertEqual(suivante._parametres_actuels().tolerance_epaisseur,
+                         5.0)
+        suivante._modifie = False
+        suivante._nouveau()
+        self.assertEqual(suivante._parametres_actuels().trait_de_scie, 4.5)
+
+    def test_un_reglage_disparu_ne_bloque_pas_l_ouverture(self):
+        self.f._reglages.setValue(
+            "parametres", '{"trait_de_scie": 3.0, "vieux_champ": 12}')
+        self.addCleanup(self.f._reglages.remove, "parametres")
+        self.assertEqual(self.f._reglages_memorises(), opt.Parametres())
+
+    def test_le_dialogue_de_perte_propose_d_enregistrer(self):
+        """N'offrir qu'« abandonner ou annuler » obligeait à annuler,
+        enregistrer à la main, puis refaire le geste."""
+        f = _fenetre()
+        f._chemin = os.path.join(_JETABLE, "sauve-au-vol.json")
+        f._modifie = True
+        with mock.patch.object(
+                interface.QMessageBox, "warning",
+                return_value=interface.QMessageBox.StandardButton.Save):
+            self.assertTrue(f._confirmer_abandon())
+        self.assertFalse(f._modifie)
+        self.assertTrue(os.path.exists(f._chemin))
+
+    def test_annuler_protege_la_saisie(self):
+        f = _fenetre()
+        f._modifie = True
+        with mock.patch.object(
+                interface.QMessageBox, "warning",
+                return_value=interface.QMessageBox.StandardButton.Cancel):
+            self.assertFalse(f._confirmer_abandon())
+
+    def test_les_cotes_s_impriment_sous_le_plan(self):
+        """Une planche de 4 m sur 150 en travers d'une A4 laisse la moitié
+        de la page blanche, et les étiquettes du dessin ne portent que le
+        NOM des pièces. Les cotes vont dans ce blanc-là."""
+        f = _fenetre()
+        zone = QImage(1200, 300, QImage.Format.Format_ARGB32)
+        zone.fill(Qt.GlobalColor.white)
+        peintre = QPainter(zone)
+        try:
+            f._dessiner_cotes(peintre, f.vue.debits_affiches(),
+                              QRectF(10, 10, 1180, 280))
+        finally:
+            peintre.end()
+        encre = sum(1 for y in range(0, 300, 3) for x in range(0, 1200, 3)
+                    if zone.pixelColor(x, y) != Qt.GlobalColor.white)
+        self.assertGreater(encre, 50, "aucune cote imprimée")
+
+    def test_pas_de_cotes_si_le_plan_prend_toute_la_page(self):
+        f = _fenetre()
+        page = QImage(600, 40, QImage.Format.Format_ARGB32)
+        page.fill(Qt.GlobalColor.white)
+        peintre = QPainter(page)
+        try:
+            f._dessiner_cotes(peintre, f.vue.debits_affiches(),
+                              QRectF(0, 0, 600, 8))
+        finally:
+            peintre.end()
+        encre = sum(1 for y in range(40) for x in range(0, 600, 3)
+                    if page.pixelColor(x, y) != Qt.GlobalColor.white)
+        self.assertEqual(encre, 0, "le dessin prime : pas de texte écrasé")
 
     def test_les_reglages_font_l_aller_retour(self):
         p = opt.Parametres(trait_de_scie=4.0, surcote_longueur=6.0,

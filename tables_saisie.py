@@ -501,13 +501,19 @@ class TablePieces(TableEditable):
         exemplaires = sum(p.quantite for p in pieces)
         matieres = sorted({p.matiere for p in pieces if p.matiere})
         surface = sum(p.aire * p.quantite for p in pieces)
-        return ("%d référence(s), %d exemplaire(s) · %s · surface débitée"
-                " %s m²" % (len(pieces), exemplaires,
+        return ("%d référence(s), %d exemplaire(s) · %s · surface des"
+                " pièces %s m²" % (len(pieces), exemplaires,
                             ", ".join(matieres) or "matière non renseignée",
                             opt._m2(surface)))
 
 
 class TableStock(TableEditable):
+    """Le stock. Sa colonne Matière propose ses PROPRES matières : c'est
+    ici qu'on les invente, mais une fois « douglas » écrit sur une ligne,
+    le retaper à la main sur les suivantes est l'occasion rêvée d'écrire
+    « Douglas » ou « douglas » avec une espace de trop — deux matières
+    qui ne s'apparient plus."""
+
     COLONNES = (
         Colonne("Référence", "reference", TEXTE,
                 "Nom du morceau de stock, tel qu'il est repéré à"
@@ -538,6 +544,10 @@ class TableStock(TableEditable):
                 " Départage plusieurs profils de catalogue par le coût"
                 " réel — laisser à 0 pour ne pas en tenir compte.", 0),
     )
+
+    def __init__(self):
+        super().__init__()
+        self.setItemDelegateForColumn(4, DelegateMatiere(self.matieres, self))
 
     def stock(self) -> list:
         return [opt.Planche(**self.valeurs_ligne(l))

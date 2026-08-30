@@ -118,5 +118,43 @@ class LecturePieces(unittest.TestCase):
             self.assertNotIn(interdit, source)
 
 
+class EcriturePieces(unittest.TestCase):
+    """Le contrat d'echange ne servait que dans un sens : on importait une
+    feuille produite ailleurs, jamais on ne ressortait celle qu'on venait
+    de saisir."""
+
+    def test_aller_retour(self):
+        pieces = [
+            Piece("montant", 1750, 60, 18, "sapin", 4),
+            Piece("echarpe", 829.6857, 105, 27, "douglas", 1),
+            Piece("taquet", 120, 40, 18, "sapin", 8, FIL_INDIFFERENT,
+                 composable=True),
+        ]
+        chemin = _fichier("")
+        csv_io.ecrire_pieces(chemin, pieces)
+        relues = csv_io.lire_pieces(chemin)
+        self.assertEqual(len(relues), len(pieces))
+        for ecrite, relue in zip(pieces, relues):
+            self.assertEqual(relue.reference, ecrite.reference)
+            self.assertAlmostEqual(relue.longueur, ecrite.longueur, places=3)
+            self.assertEqual(relue.quantite, ecrite.quantite)
+            self.assertEqual(relue.fil, ecrite.fil)
+            self.assertEqual(relue.composable, ecrite.composable)
+
+    def test_pas_de_zero_decoratif(self):
+        chemin = _fichier("")
+        csv_io.ecrire_pieces(
+            chemin, [Piece("montant", 1750, 60, 18, "sapin", 4)])
+        ligne = open(chemin, encoding="utf-8").read().splitlines()[1]
+        self.assertTrue(ligne.startswith("montant,1750,60,18,"), ligne)
+
+    def test_l_entete_ecrit_est_celui_qui_est_lu(self):
+        chemin = _fichier("")
+        csv_io.ecrire_pieces(chemin, [Piece("p", 10, 10, 10, "m", 1)])
+        entete = open(chemin, encoding="utf-8").read().splitlines()[0]
+        for colonne in csv_io.COLONNES_REQUISES:
+            self.assertIn(colonne, entete.split(","))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

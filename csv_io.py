@@ -29,6 +29,31 @@ COLONNES_REQUISES = ("reference", "longueur", "largeur", "epaisseur",
 _FILS_VALIDES = (opt.FIL_LONGUEUR, opt.FIL_LARGEUR, opt.FIL_INDIFFERENT)
 
 
+def ecrire_pieces(chemin: str, pieces: list) -> None:
+    """Écrit la liste de pièces au format lu par :func:`lire_pieces`.
+
+    Le contrat d'échange ne servait que dans un sens : on pouvait
+    importer une feuille de débit produite ailleurs, jamais ressortir
+    celle qu'on venait de saisir pour la porter dans un autre projet ou
+    un tableur.
+    """
+    with open(chemin, "w", newline="", encoding="utf-8") as f:
+        graveur = csv.writer(f)
+        graveur.writerow(COLONNES_REQUISES + ("fil", "composable"))
+        for p in pieces:
+            graveur.writerow([p.reference, _nombre(p.longueur),
+                              _nombre(p.largeur), _nombre(p.epaisseur),
+                              p.matiere, p.quantite, p.fil,
+                              "1" if p.composable else "0"])
+
+
+def _nombre(valeur: float) -> str:
+    """Sans zéro décoratif : 1750 plutôt que 1750.0, mais 829.686 entier."""
+    if float(valeur) == int(valeur):
+        return str(int(valeur))
+    return ("%.3f" % valeur).rstrip("0").rstrip(".")
+
+
 def lire_pieces(chemin: str) -> list:
     """Les :class:`optimiseur.Piece` décrites par le CSV à ``chemin``.
 

@@ -738,7 +738,11 @@ def _plus_large_compatible(piece: Piece, stock: list,
                            params: Parametres) -> "float | None":
     """La plus grande largeur de brut compatible (matière, épaisseur)
     pour cette pièce — celle qui limite la largeur d'une lame. ``None``
-    si aucune planche de cette matière n'est même assez épaisse."""
+    si aucune planche de cette matière n'est même assez épaisse.
+
+    Largeur BRUTE de la planche : c'est l'appelant qui en retire la
+    surcote de largeur, puisque c'est lui qui sait qu'une lame sera
+    débitée surcotée."""
     candidats = [s.largeur for s in stock
                 if _cle_matiere(s.matiere) == _cle_matiere(piece.matiere)
                 and _epaisseur_compatible(piece.epaisseur, s.epaisseur,
@@ -776,7 +780,17 @@ def _decomposer_composables(pieces: list, stock: list,
         if largeur_max is None:
             resultat.append(p)      # aucun brut compatible : le débit le dira
             continue
-        n = _nombre_de_lames(p.largeur, largeur_max, params.surcote_joint)
+        # Une lame est débitée SURCOTÉE comme n'importe quelle pièce : ce
+        # qu'elle peut mesurer une fois finie, c'est la largeur du brut
+        # moins cette surcote. L'oublier taillait des lames larges
+        # d'exactement la planche, qui ne rentraient plus une fois la
+        # surcote ajoutée — et la pièce composable ressortait « trop
+        # grande », précisément ce qu'être composable devait éviter.
+        utile = largeur_max - params.surcote_largeur
+        if utile <= EPS:
+            resultat.append(p)      # la surcote mange toute la planche
+            continue
+        n = _nombre_de_lames(p.largeur, utile, params.surcote_joint)
         if n <= 1:
             resultat.append(p)
             continue

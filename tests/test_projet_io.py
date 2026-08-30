@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -89,6 +90,41 @@ class EnregistrerEtLire(unittest.TestCase):
             source = f.read()
         for interdit in ("PySide", "PyQt", "QtWidgets", "QtCore", "QtGui"):
             self.assertNotIn(interdit, source)
+
+
+class EcritureAtomique(unittest.TestCase):
+    """Un disque plein ou une coupure en plein json.dump laissait un
+    projet TRONQUE a la place du bon : le fichier de destination etait
+    ouvert en ecriture avant meme de savoir si l'ecriture aboutirait."""
+
+    def test_un_echec_laisse_l_ancien_fichier_intact(self):
+        chemin = _chemin_temp()
+        pieces = [Piece("montant", 1750, 60, 18, "sapin", 4)]
+        stock = [Planche("b", 2400, 200, 18, "sapin")]
+        projet_io.enregistrer(chemin, pieces, stock, Parametres())
+        avant = open(chemin, encoding="utf-8").read()
+
+        with mock.patch("json.dump", side_effect=OSError("disque plein")):
+            with self.assertRaises(OSError):
+                projet_io.enregistrer(chemin, pieces, stock,
+                                     Parametres(trait_de_scie=9.0))
+
+        self.assertEqual(open(chemin, encoding="utf-8").read(), avant)
+        relu = projet_io.lire(chemin)
+        self.assertEqual(relu[0], pieces)
+
+    def test_aucun_fichier_temporaire_ne_subsiste(self):
+        chemin = _chemin_temp()
+        dossier = os.path.dirname(os.path.abspath(chemin))
+        avant = set(os.listdir(dossier))
+        pieces = [Piece("montant", 1750, 60, 18, "sapin", 4)]
+        projet_io.enregistrer(chemin, pieces, [], Parametres())
+        with mock.patch("json.dump", side_effect=OSError("disque plein")):
+            with self.assertRaises(OSError):
+                projet_io.enregistrer(chemin, pieces, [], Parametres())
+        restes = {n for n in set(os.listdir(dossier)) - avant
+                  if n.startswith(".chutier-")}
+        self.assertEqual(restes, set())
 
 
 if __name__ == "__main__":

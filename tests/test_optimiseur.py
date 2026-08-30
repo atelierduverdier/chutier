@@ -322,6 +322,39 @@ class PiecesComposables(unittest.TestCase):
                                       "Panneau_Haut (lame 2/3)",
                                       "Panneau_Haut (lame 3/3)"})
 
+    def test_la_surcote_de_largeur_retrecit_les_lames(self):
+        # Une lame se debite surcotee comme n'importe quelle piece : ce
+        # qu'elle peut mesurer finie, c'est la largeur du brut MOINS la
+        # surcote. Sans ca, la decoupe taillait des lames larges
+        # d'exactement la planche, qui ne rentraient plus une fois la
+        # surcote ajoutee -- et la piece composable ressortait "trop
+        # grande", precisement ce qu'etre composable devait eviter.
+        piece = [Piece("plateau", 1000, 397, 27, "chene", composable=True)]
+        stock = [Planche("b", 3000, 200, 27, "chene", quantite=6)]
+        sans = optimiser(piece, stock,
+                        Parametres(surcote_largeur=0.0, surcote_joint=3.0,
+                                   essais_melanges=0))
+        self.assertEqual(sans.bilan.nb_posees, 2)
+        avec = optimiser(piece, stock,
+                        Parametres(surcote_largeur=5.0, surcote_joint=3.0,
+                                   essais_melanges=0))
+        self.assertEqual(len(avec.non_placees), 0)
+        self.assertEqual(avec.bilan.nb_posees, 3)
+        for d in avec.debits:
+            for pose in d.poses:
+                self.assertLessEqual(pose.dim_y, d.planche.largeur + 1e-6)
+
+    def test_surcote_plus_large_que_le_brut(self):
+        # cas absurde mais possible a la saisie : la surcote mange toute
+        # la planche. On ne decompose pas en lames de largeur negative,
+        # la piece ressort simplement non placee.
+        r = optimiser(
+            [Piece("plateau", 1000, 400, 18, "sapin", composable=True)],
+            [Planche("b", 3000, 100, 18, "sapin")],
+            Parametres(surcote_largeur=120.0, essais_melanges=0))
+        self.assertEqual(r.bilan.nb_posees, 0)
+        self.assertEqual(len(r.non_placees), 1)
+
     def test_fil_largeur_non_decompose(self):
         # sur FIL_LARGEUR c'est la longueur de la piece qui court le long
         # de la largeur de la planche (pivotee) : 800 > 200, trop grande,

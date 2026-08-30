@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import tempfile
 
 import optimiseur as opt
 
@@ -25,8 +27,23 @@ def enregistrer(chemin: str, pieces: list, stock: list,
         "stock": [dataclasses.asdict(s) for s in stock],
         "parametres": dataclasses.asdict(parametres),
     }
-    with open(chemin, "w", encoding="utf-8") as f:
-        json.dump(donnees, f, ensure_ascii=False, indent=2)
+    # Écriture atomique : un disque plein ou une coupure en plein
+    # json.dump laisserait un projet tronqué À LA PLACE du bon. On écrit
+    # à côté, puis on remplace d'un seul geste.
+    dossier = os.path.dirname(os.path.abspath(chemin))
+    fichier = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=dossier, prefix=".chutier-", suffix=".tmp",
+        delete=False)
+    try:
+        with fichier as f:
+            json.dump(donnees, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(fichier.name, chemin)
+    except BaseException:
+        if os.path.exists(fichier.name):
+            os.unlink(fichier.name)
+        raise
 
 
 def lire(chemin: str):

@@ -238,7 +238,8 @@ class Tuile(QFrame):
             couleur = ALERTE.name()
             bord = ALERTE.name()
         elif ton == "accent":
-            couleur = ORANGE.darker(115).name() if not sombre() else ORANGE.name()
+            couleur = (ORANGE.name() if sombre(self)
+                       else ORANGE.darker(115).name())
             bord = "palette(mid)"
         else:
             couleur = "palette(text)"

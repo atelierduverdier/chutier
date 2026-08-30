@@ -32,9 +32,18 @@ class VuePlan(QGraphicsView):
 
     ZOOM_MIN, ZOOM_MAX = 0.02, 40.0
 
+    # Plafond d'une image rendue, en pixels (≈ 80 Mo en ARGB32).
+    PIXELS_MAX = 20_000_000
+
     # Hauteur visée, en pixels, pour le titre d'une planche une fois le
     # plan ajusté à la fenêtre.
     _CARTOUCHE_PX = 14.0
+
+    # Largeur de rendu pour laquelle les tailles de texte ci-dessus sont
+    # réglées. Au-delà, il faut les grossir d'autant : elles sont fixées
+    # en PIXELS, ce qui ne veut plus rien dire sur une page à 1200 points
+    # par pouce — un plan imprimé sortait avec des noms de 0,4 mm.
+    LARGEUR_LISIBLE = 1600.0
 
     def __init__(self):
         super().__init__()
@@ -57,14 +66,30 @@ class VuePlan(QGraphicsView):
         self._selection = None
         self._zoom_manuel = False
         self._traits_visibles = False
+        self._facteur_texte = 1.0
         self.couleurs = {}          # référence -> QColor, posée par la fenêtre
 
     # -- construction de la scène ---------------------------------------
 
-    def afficher(self, debits: list, traits: bool = None):
-        """``debits`` : liste de couples (numéro affiché, Debit)."""
+    def debits_affiches(self) -> list:
+        return list(self._debits)
+
+    def afficher(self, debits: list, traits: bool = None,
+                 largeur_prevue: int = None, facteur_texte: float = 1.0):
+        """``debits`` : liste de couples (numéro affiché, Debit).
+
+        ``largeur_prevue`` : largeur en pixels à laquelle le plan sera vu,
+        si ce n'est pas celle de cette vue — c'est le cas d'une vue
+        montée hors écran pour composer une page imprimée, dont la taille
+        du widget ne veut rien dire.
+
+        ``facteur_texte`` : multiplie toutes les tailles de texte. Elles
+        sont réglées pour un rendu d'environ :data:`LARGEUR_LISIBLE`
+        pixels ; un rendu quatre fois plus large veut des lettres quatre
+        fois plus grandes, sans quoi elles fondent en taches grises."""
         if traits is not None:
             self._traits_visibles = traits
+        self._facteur_texte = max(0.1, facteur_texte)
         self._debits = list(debits)
         self._zoom_manuel = False
         self.setBackgroundBrush(QBrush(apparence.fond_etabli(self)))
@@ -86,9 +111,12 @@ class VuePlan(QGraphicsView):
         # lit. Le déduire de la largeur des planches ne marchait pas :
         # cinq brins de 4 m sur 150 se voient à 0,22 px/mm, et le titre
         # tombait à huit pixels, illisible.
-        echelle_prevue = max(self.viewport().width(), 400) / longueur_max
-        hauteur_texte = min(max(self._CARTOUCHE_PX / echelle_prevue,
-                                largeur_max * 0.12), largeur_max * 0.55)
+        echelle_prevue = (largeur_prevue or max(self.viewport().width(), 400)) \
+            / longueur_max
+        hauteur_texte = min(max(self._CARTOUCHE_PX * self._facteur_texte
+                                / echelle_prevue,
+                                largeur_max * 0.12),
+                            largeur_max * 0.55)
         # Le titre se pose EN HAUT de sa bande : le reste de la bande
         # reçoit les étiquettes qui débordent par le haut de la planche
         # (celles des pièces au ras du bord), qui sinon s'écrivent par
@@ -232,7 +260,7 @@ class VuePlan(QGraphicsView):
         texte = QGraphicsSimpleTextItem(chaine)
         texte.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         police = QFont()
-        police.setPointSize(taille_police)
+        police.setPointSizeF(taille_police * self._facteur_texte)
         texte.setFont(police)
         texte.setBrush(QBrush(apparence.PLAN_BORD if cote == "dedans"
                               else apparence.encre_marge(self)))
@@ -242,10 +270,11 @@ class VuePlan(QGraphicsView):
         # centrage se fait par une transformation propre à l'item, en pixels.
         boite = texte.boundingRect()
         texte.setPos(x + dx / 2, y_qt + dy / 2)
+        ecart = 3 * self._facteur_texte
         if cote == "dessus":
-            decalage_y = -boite.height() - 3
+            decalage_y = -boite.height() - ecart
         elif cote == "dessous":
-            decalage_y = 3
+            decalage_y = ecart
         else:
             decalage_y = -boite.height() / 2
         texte.setTransform(
@@ -344,9 +373,11 @@ class VuePlan(QGraphicsView):
         candidats = {}
         for (texte_c, boite_c), (texte_k, boite_k), hors, cote_hors, dx, dy, \
                 x_centre, numero in self._etiquettes:
+            marge = 4 * self._facteur_texte
+
             def tient(boite, hauteur=dy):
-                return (dx * echelle >= boite.width() + 4
-                        and hauteur * echelle >= boite.height() + 4)
+                return (dx * echelle >= boite.width() + marge
+                        and hauteur * echelle >= boite.height() + marge)
             if tient(boite_c):
                 texte_c.setVisible(True)
                 texte_k.setVisible(False)
@@ -362,7 +393,7 @@ class VuePlan(QGraphicsView):
                 texte_k.setVisible(False)
                 if hors:
                     texte_h, boite_h = hors
-                    if dx * echelle >= boite_h.width() + 4:
+                    if dx * echelle >= boite_h.width() + marge:
                         candidats.setdefault((numero, cote_hors), []).append(
                             (x_centre * echelle, boite_h.width(), texte_h))
                     else:
@@ -373,7 +404,8 @@ class VuePlan(QGraphicsView):
             bord_precedent = None
             for centre_px, largeur_px, texte_h in groupe:
                 gauche = centre_px - largeur_px / 2
-                if bord_precedent is not None and gauche < bord_precedent + 4:
+                if bord_precedent is not None and \
+                        gauche < bord_precedent + 4 * self._facteur_texte:
                     texte_h.setVisible(False)
                 else:
                     texte_h.setVisible(True)
@@ -381,29 +413,62 @@ class VuePlan(QGraphicsView):
 
     # -- export -----------------------------------------------------------
 
-    def exporter_image(self, chemin: str, largeur_px: int = 2400) -> bool:
-        """Rend ce qui est affiché à une résolution fixe, indépendante de
-        la taille de la fenêtre — un plan imprimé n'a pas les mêmes
+    def rendre_image(self, largeur_px: int = 2400):
+        """L'image du plan AFFICHÉ, à résolution choisie — indépendante
+        de la taille de la fenêtre : un plan imprimé n'a pas les mêmes
         contraintes de place qu'un widget à l'écran, les étiquettes s'y
-        recalculent donc à l'échelle d'export, pas celle affichée."""
+        recalculent donc à l'échelle du rendu, pas celle affichée.
+
+        La largeur demandée est réduite si l'image dépassait
+        :data:`PIXELS_MAX`. Un plan de soixante planches fait une scène
+        de 7:1 : à 2400 px de large il réclamait 16 774 px de haut, soit
+        161 Mo en mémoire — et un PNG de cette forme ne s'imprime pas.
+
+        Rend ``None`` s'il n'y a rien à dessiner ou si l'image n'a pas pu
+        être allouée.
+        """
         if not self._debits:
-            return False
+            return None
         scene = self.scene()
         rect = scene.sceneRect()
-        echelle = largeur_px / rect.width()
-        hauteur_px = max(1, round(rect.height() * echelle))
+        proportion = rect.height() / rect.width()
+        largeur_px = max(1, int(largeur_px))
+        if largeur_px * largeur_px * proportion > self.PIXELS_MAX:
+            largeur_px = max(1, int((self.PIXELS_MAX / proportion) ** 0.5))
+        hauteur_px = max(1, round(largeur_px * proportion))
+
+        # Le cadre orange marque la planche choisie À L'ÉCRAN ; sur le
+        # papier il n'a aucun sens et fausserait la lecture.
         cadres = {n: c.pen() for n, c in self._cadres.items()}
         for cadre in self._cadres.values():
             cadre.setPen(QPen(Qt.PenStyle.NoPen))
-        self._visibilite(echelle)
+        self._visibilite(largeur_px / rect.width())
         image = QImage(largeur_px, hauteur_px, QImage.Format.Format_ARGB32)
+        if image.isNull():
+            for numero, stylo in cadres.items():
+                self._cadres[numero].setPen(stylo)
+            self._visibilite(self.transform().m11())
+            return None
         image.fill(Qt.GlobalColor.white)
         peintre = QPainter(image)
         peintre.setRenderHint(QPainter.RenderHint.Antialiasing)
         scene.render(peintre)
         peintre.end()
-        ok = image.save(chemin)
         for numero, stylo in cadres.items():
             self._cadres[numero].setPen(stylo)
         self._visibilite(self.transform().m11())
-        return ok
+        return image
+
+    def exporter_image(self, chemin: str, largeur_px: int = 2400):
+        """Enregistre le plan affiché tel quel. Rend le couple (largeur,
+        hauteur) réellement écrit, ou ``None`` en cas d'échec.
+
+        L'interface passe plutôt par une vue jetable (voir
+        ``FenetrePrincipale._image_du_plan``) : le texte doit y être
+        grossi à la mesure de la résolution demandée, ce qui suppose de
+        reconstruire la scène — on ne va pas défigurer celle qu'on
+        regarde pour écrire un fichier."""
+        image = self.rendre_image(largeur_px)
+        if image is None or not image.save(chemin):
+            return None
+        return image.width(), image.height()

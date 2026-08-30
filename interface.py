@@ -13,14 +13,17 @@ Cette couche assemble les entrées et affiche le ``Resultat`` qui revient.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import sys
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QPageLayout, QPainter
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
-    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+    QApplication, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
+    QLabel,
     QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
     QSpinBox, QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget,
@@ -55,7 +58,12 @@ def chutes_groupees(resultat) -> dict:
 
 
 def planches_consommees(resultat) -> dict:
-    """Combien d'exemplaires de chaque référence le débit a entamés.
+    """Combien d'exemplaires de chaque planche le débit a entamés.
+
+    La clé est la :class:`~optimiseur.Planche` ENTIÈRE, pas sa seule
+    référence : rien n'interdit deux lignes de stock du même nom à des
+    cotes différentes (« chute douglas » deux fois), et décompter sur le
+    nom seul aurait retiré les exemplaires de la mauvaise.
 
     Un profil de catalogue n'y figure pas : il ne sort pas de l'atelier,
     il s'achète — c'est ``Resultat.achats`` qui le compte."""
@@ -63,8 +71,7 @@ def planches_consommees(resultat) -> dict:
     for debit in resultat.debits:
         if debit.planche.illimite:
             continue
-        consommees[debit.planche.reference] = \
-            consommees.get(debit.planche.reference, 0) + 1
+        consommees[debit.planche] = consommees.get(debit.planche, 0) + 1
     return consommees
 
 
@@ -79,9 +86,9 @@ def stock_apres_debit(stock: list, resultat) -> list:
     restant = dict(planches_consommees(resultat))
     nouveau = []
     for planche in stock:
-        pris = min(restant.get(planche.reference, 0), planche.quantite)
+        pris = min(restant.get(planche, 0), planche.quantite)
         if pris and not planche.illimite:
-            restant[planche.reference] -= pris
+            restant[planche] -= pris
             reste = planche.quantite - pris
             if reste <= 0:
                 continue          # tout ce lot est passé sous la scie
@@ -112,6 +119,10 @@ class FenetrePrincipale(QMainWindow):
 
         self._construire()
         self._charger_exemple()
+        # Le trait de scie est une propriété de LA SCIE, pas du projet :
+        # il revient donc tel qu'on l'a laissé, y compris par-dessus les
+        # réglages d'usine de l'exemple d'accueil.
+        self._appliquer_parametres(self._reglages_memorises())
         self._chargement = False
         self._restaurer_geometrie()
         QTimer.singleShot(0, self._calculer)
@@ -170,6 +181,20 @@ class FenetrePrincipale(QMainWindow):
             "E&xporter le plan (image)…", self._exporter_image, "Ctrl+E",
             ("document-export", "image-x-generic"),
             "Enregistrer le plan affiché en PNG, à résolution d'impression")
+        self.a_imprimer = self._acte(
+            "Im&primer le plan…", self._imprimer, "Ctrl+P",
+            ("document-print",),
+            "Sortir le plan affiché sur papier, à emporter à l'établi")
+        self.a_fiche = self._acte(
+            "Exporter la &fiche d'atelier (texte)…", self._exporter_fiche,
+            None, ("text-x-generic",),
+            "La liste des poses et des coupes planche par planche, à cocher"
+            " au fur et à mesure du débit")
+        self.a_exporter_csv = self._acte(
+            "Exporter les pièces (CSV)…", self._exporter_csv, None,
+            ("document-export",),
+            "Ressortir la liste de pièces au format d'échange, pour un"
+            " tableur ou un autre projet")
         self.a_quitter = self._acte("&Quitter", self.close, "Ctrl+Q",
                                     ("application-exit",))
 
@@ -210,7 +235,11 @@ class FenetrePrincipale(QMainWindow):
             fichier.addAction(action)
         fichier.addSeparator()
         fichier.addAction(self.a_importer)
+        fichier.addAction(self.a_exporter_csv)
+        fichier.addSeparator()
         fichier.addAction(self.a_exporter)
+        fichier.addAction(self.a_fiche)
+        fichier.addAction(self.a_imprimer)
         fichier.addSeparator()
         fichier.addAction(self.a_quitter)
 
@@ -241,6 +270,7 @@ class FenetrePrincipale(QMainWindow):
         barre.addSeparator()
         barre.addAction(self.a_calculer)
         barre.addAction(self.a_exporter)
+        barre.addAction(self.a_imprimer)
         barre.addSeparator()
         barre.addAction(self.a_saisie)
 
@@ -334,6 +364,11 @@ class FenetrePrincipale(QMainWindow):
         page = QWidget()
         colonne = QVBoxLayout(page)
         colonne.setContentsMargins(6, 6, 6, 6)
+        colonne.addWidget(apparence.discret(
+            "Ces réglages sont retenus d'une séance à l'autre et reviennent"
+            " pour tout projet neuf — un trait de scie est une propriété de"
+            " la scie, pas du projet. Un projet enregistré, lui, garde les"
+            " siens et les réimpose à l'ouverture."))
         colonne.addWidget(self._groupe_reglage("La scie", [
             ("Trait de scie (mm)", self.spin_trait,
              "Largeur de matière mangée par chaque coupe — 3 à 4 mm pour"
@@ -432,7 +467,6 @@ class FenetrePrincipale(QMainWindow):
         self.choix_vue.setToolTip(
             "Empilées, les planches se lisent d'un seul coup d'œil et"
             " remplissent la hauteur ; seule, une planche se détaille.")
-        self.choix_vue.currentIndexChanged.connect(self._redessiner)
         barre.addWidget(self.choix_vue)
 
         self.case_traits = QCheckBox("Traits de scie")
@@ -440,9 +474,13 @@ class FenetrePrincipale(QMainWindow):
             "Les coupes telles qu'on les passera à la scie : chaque trait"
             " traverse de bord à bord le morceau courant. Leur numéro"
             " d'ordre est dans l'info-bulle du trait.")
-        self.case_traits.toggled.connect(self._redessiner)
         barre.addWidget(self.case_traits)
         barre.addStretch()
+        # Les deux signaux ne se branchent qu'une fois TOUS les widgets
+        # que _redessiner touche construits : brancher au fil de l'eau
+        # marchait par chance, l'ordre des lignes tenant lieu de garantie.
+        self.choix_vue.currentIndexChanged.connect(self._redessiner)
+        self.case_traits.toggled.connect(self._redessiner)
 
         for texte, info, methode in (
                 ("−", "Dézoomer", lambda: self.vue.zoomer(1 / 1.25)),
@@ -541,6 +579,28 @@ class FenetrePrincipale(QMainWindow):
 
     # -- état ---------------------------------------------------------------
 
+    def _vider_resultats(self):
+        """Efface TOUT ce qu'un calcul avait affiché. « Nouveau » ne vidait
+        que le plan et les tuiles : les onglets gardaient leurs comptes,
+        la liste d'achats sa ligne et la légende ses pastilles — un projet
+        neuf s'ouvrait avec le bilan du précédent."""
+        self._resultat = None
+        self._a_jour = False
+        self.bilan.vider()
+        self.vue.afficher([])
+        for liste in (self.liste_planches, self.liste_achats,
+                      self.liste_chutes, self.liste_non_placees,
+                      self.legende):
+            liste.clear()
+        self.bouton_ranger.setEnabled(False)
+        self.mot_non_placees.setText("")
+        for indice, libelle in ((ACHATS, "À acheter"),
+                                (CHUTES, "Chutes créées"),
+                                (NON_PLACEES, "Pièces non placées")):
+            self.onglets_resultats.setTabText(indice, libelle)
+        self.onglets_resultats.tabBar().setTabTextColor(
+            NON_PLACEES, self.palette().text().color())
+
     def _saisie_changee(self, *_):
         if self._chargement:
             return
@@ -631,6 +691,25 @@ class FenetrePrincipale(QMainWindow):
 
     # -- calcul --------------------------------------------------------------
 
+    def _reglages_memorises(self) -> opt.Parametres:
+        brut = self._reglages.value("parametres")
+        if not brut:
+            return opt.Parametres()
+        try:
+            return opt.Parametres(**json.loads(brut))
+        except (ValueError, TypeError):
+            # Un réglage retiré du cœur depuis la dernière séance ne doit
+            # pas empêcher l'appli de s'ouvrir.
+            return opt.Parametres()
+
+    def _memoriser_reglages(self):
+        try:
+            parametres = self._parametres_actuels()
+        except (ErreurSaisie, ValueError):
+            return
+        self._reglages.setValue(
+            "parametres", json.dumps(dataclasses.asdict(parametres)))
+
     def _parametres_actuels(self) -> opt.Parametres:
         return opt.Parametres(
             trait_de_scie=self.spin_trait.value(),
@@ -654,6 +733,11 @@ class FenetrePrincipale(QMainWindow):
             spin.setValue(valeur)
 
     def _calculer(self):
+        # Un débit de 150 pièces demande un tiers de seconde, mais rien ne
+        # borne une saisie : le sablier dit au moins que la fenêtre n'est
+        # pas figée pour rien.
+        resultat, plainte = None, None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             pieces = self.table_pieces.pieces()
             stock = self.table_stock.stock()
@@ -661,7 +745,13 @@ class FenetrePrincipale(QMainWindow):
                 raise ErreurSaisie("aucune pièce à débiter")
             resultat = opt.optimiser(pieces, stock, self._parametres_actuels())
         except (ErreurSaisie, ValueError) as erreur:
-            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            plainte = str(erreur)
+        finally:
+            # Le curseur revient AVANT la boîte de message : sinon elle
+            # s'affiche sous un sablier, à attendre un clic.
+            QApplication.restoreOverrideCursor()
+        if plainte is not None:
+            QMessageBox.warning(self, "Saisie invalide", plainte)
             return
         self._resultat = resultat
         self._a_jour = True
@@ -820,12 +910,25 @@ class FenetrePrincipale(QMainWindow):
     def _ranger_chutes(self):
         if self._resultat is None or not self._resultat.chutes_creees:
             return
+        if not self._a_jour:
+            # Le décompte se fait planche par planche, à l'identique : si
+            # la saisie a bougé depuis le calcul, plus rien ne correspond
+            # et l'opération retirerait — ou pas — n'importe quoi.
+            QMessageBox.information(
+                self, "Plan périmé",
+                "La saisie a changé depuis le dernier calcul : recalculez"
+                " (F5) avant de ranger les chutes, sinon le stock serait"
+                " mis à jour d'après un débit qui n'est plus celui-là.")
+            return
         consommees = planches_consommees(self._resultat)
         groupes = chutes_groupees(self._resultat)
 
         lignes = ["Le stock sera mis à jour comme si le débit était fait :"]
-        for reference, nombre in consommees.items():
-            lignes.append("  − %d × « %s »" % (nombre, reference))
+        for planche, nombre in consommees.items():
+            lignes.append("  − %d × « %s » (%s × %s mm)"
+                          % (nombre, planche.reference,
+                             opt._mm(planche.longueur),
+                             opt._mm(planche.largeur)))
         lignes.append("  + %d chute(s) en %d référence(s)"
                       % (len(self._resultat.chutes_creees), len(groupes)))
         lignes.append("")
@@ -861,26 +964,33 @@ class FenetrePrincipale(QMainWindow):
         self.table_stock.setRowCount(0)
         self.table_pieces.ajouter_ligne()
         self.table_stock.ajouter_ligne()
-        self._appliquer_parametres(opt.Parametres())
+        self._appliquer_parametres(self._reglages_memorises())
         self._chargement = False
         self._chemin = None
         self._modifie = False
-        self._resultat = None
-        self._a_jour = False
-        self.bilan.vider()
-        self.vue.afficher([])
-        self.liste_planches.clear()
+        self._vider_resultats()
         self._rafraichir_etat()
 
-    def _confirmer_abandon(self) -> bool:
+    def _confirmer_abandon(self, precision: str = "") -> bool:
+        """Vrai si l'on peut écraser la saisie courante.
+
+        Trois issues, pas deux : n'offrir qu'« abandonner ou annuler »
+        obligeait à annuler, enregistrer à la main, puis recommencer le
+        geste — et invitait à cliquer « abandonner » de lassitude."""
         if not self._modifie:
             return True
-        reponse = QMessageBox.question(
+        reponse = QMessageBox.warning(
             self, "Projet modifié",
-            "Le projet a changé depuis le dernier enregistrement.\n"
-            "Abandonner ces modifications ?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        return reponse == QMessageBox.StandardButton.Yes
+            "Le projet a changé depuis le dernier enregistrement.\n%s"
+            % (precision + "\n" if precision else ""),
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save)
+        if reponse == QMessageBox.StandardButton.Save:
+            self._enregistrer()
+            return not self._modifie      # l'enregistrement a pu échouer
+        return reponse == QMessageBox.StandardButton.Discard
 
     def _ouvrir(self):
         if not self._confirmer_abandon():
@@ -899,7 +1009,10 @@ class FenetrePrincipale(QMainWindow):
         self._modifie = False
         self._retenir_dossier(chemin)
         self._rafraichir_etat()
-        self._calculer()
+        if self.table_pieces.lignes_utiles():
+            self._calculer()
+        else:
+            self._vider_resultats()
 
     def _enregistrer(self):
         if not self._chemin:
@@ -927,6 +1040,12 @@ class FenetrePrincipale(QMainWindow):
         self._enregistrer()
 
     def _importer_csv(self):
+        # L'import REMPLACE toute la liste de pièces : sans cette
+        # question, un clic effaçait une saisie non enregistrée.
+        if self.table_pieces.lignes_utiles() and not self._confirmer_abandon(
+                "La liste de pièces va être remplacée par le contenu du"
+                " fichier."):
+            return
         chemin, _ = QFileDialog.getOpenFileName(
             self, "Importer des pièces", self._dossier(), "CSV (*.csv)")
         if not chemin:
@@ -956,11 +1075,251 @@ class FenetrePrincipale(QMainWindow):
         if not chemin.lower().endswith(".png"):
             chemin += ".png"
         self._retenir_dossier(chemin)
-        if not self.vue.exporter_image(chemin):
+        image = self._image_du_plan(self.vue.debits_affiches(), 2400)
+        if image is None or not image.save(chemin):
             QMessageBox.warning(self, "Export impossible",
                                 "L'image n'a pas pu être enregistrée.")
         else:
-            self.statusBar().showMessage("Plan exporté : %s" % chemin, 6000)
+            self.statusBar().showMessage(
+                "Plan exporté (%d × %d px) : %s"
+                % (image.width(), image.height(), chemin), 8000)
+
+    def _imprimer(self):
+        """Le plan sur papier, celui qu'on emporte à l'établi.
+
+        On imprime l'IMAGE du plan plutôt que la scène directement : les
+        étiquettes des pièces sont dessinées à taille de pixel fixe (elles
+        doivent rester lisibles à tout zoom), si bien qu'une scène rendue
+        telle quelle sur une imprimante à 1200 points par pouce sortirait
+        avec des noms hauts d'un demi-millimètre.
+        """
+        if self._resultat is None or not self._resultat.debits:
+            QMessageBox.information(self, "Rien à imprimer",
+                                    "Calculez d'abord le débit (F5).")
+            return
+        imprimante = QPrinter(QPrinter.PrinterMode.HighResolution)
+        imprimante.setPageOrientation(QPageLayout.Orientation.Landscape)
+        if QPrintDialog(imprimante, self).exec() != QDialog.DialogCode.Accepted:
+            return
+        peintre = QPainter()
+        if not peintre.begin(imprimante):
+            QMessageBox.warning(self, "Impression impossible",
+                                "L'imprimante n'a pas accepté le document.")
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            pages = self.composer_document(peintre, imprimante)
+        finally:
+            peintre.end()
+            QApplication.restoreOverrideCursor()
+        self.statusBar().showMessage(
+            "Plan envoyé à l'impression (%d page(s))" % pages, 6000)
+
+    def composer_document(self, peintre: QPainter, imprimante) -> int:
+        """Peint toutes les pages et rend leur nombre. Séparé du choix de
+        l'imprimante pour être éprouvé sur un PDF, sans matériel."""
+        pages = self._pages_a_imprimer()
+        largeur = max(1, int(peintre.device().width() * 0.98))
+        for numero, planches in enumerate(pages, 1):
+            if numero > 1:
+                imprimante.newPage()
+            self._dessiner_page(peintre,
+                                self._image_du_plan(planches, largeur),
+                                numero, len(pages), planches)
+        return len(pages)
+
+    def _image_du_plan(self, planches: list, largeur_px: int):
+        """Le plan rendu à ``largeur_px``, sur une vue montée hors écran.
+
+        Deux raisons de ne pas rendre la vue affichée : les tailles de
+        texte doivent être grossies à la mesure de la résolution demandée
+        (sur une page à 1200 points par pouce, des lettres réglées en
+        pixels d'écran sortent à 0,4 mm), ce qui suppose de reconstruire
+        la scène ; et on ne va pas défigurer le plan qu'on regarde pour
+        écrire un fichier.
+        """
+        if not planches:
+            return None
+        vue = vue_plan.VuePlan()
+        vue.couleurs = self.vue.couleurs
+        vue.afficher(planches, self.case_traits.isChecked(),
+                     largeur_prevue=largeur_px,
+                     facteur_texte=max(1.0, largeur_px
+                                       / vue_plan.VuePlan.LARGEUR_LISIBLE))
+        return vue.rendre_image(largeur_px)
+
+    def _pages_a_imprimer(self) -> list:
+        """Les planches affichées réparties en pages.
+
+        Une page tient à peu près 1,4 fois plus large que haute : on y met
+        autant de planches que leur empilement peut en remplir sans
+        écraser le dessin. Tout imprimer sur UNE page marchait pour cinq
+        planches et donnait une bande illisible pour quinze — et un plan
+        qu'on ne lit pas à l'établi n'est pas un plan.
+        """
+        planches = self.vue.debits_affiches()
+        if not planches:
+            return []
+        longueur_max = max(d.planche.longueur for _, d in planches)
+        largeur_max = max(d.planche.largeur for _, d in planches)
+        # 2,2 : la planche, son cartouche et l'interligne qui la suit.
+        par_page = max(1, round(0.62 * longueur_max / (largeur_max * 2.2)))
+        return [planches[i:i + par_page]
+                for i in range(0, len(planches), par_page)]
+
+    def _dessiner_page(self, peintre: QPainter, image=None, numero: int = 1,
+                       total: int = 1, planches: list = None):
+        page = QRectF(0, 0, peintre.device().width(),
+                      peintre.device().height())
+        marge = page.width() * 0.01
+
+        titre = os.path.splitext(os.path.basename(self._chemin))[0] \
+            if self._chemin else "Feuille de débit"
+        police = peintre.font()
+        police.setPointSize(12)
+        police.setBold(True)
+        peintre.setFont(police)
+        hauteur_titre = peintre.fontMetrics().height()
+        peintre.drawText(QRectF(marge, marge, page.width() - 2 * marge,
+                                hauteur_titre),
+                         Qt.AlignmentFlag.AlignLeft, titre)
+        if total > 1:
+            peintre.drawText(QRectF(marge, marge, page.width() - 2 * marge,
+                                    hauteur_titre),
+                             Qt.AlignmentFlag.AlignRight,
+                             "page %d / %d" % (numero, total))
+
+        b = self._resultat.bilan
+        police.setPointSize(9)
+        police.setBold(False)
+        peintre.setFont(police)
+        hauteur_sous = peintre.fontMetrics().height()
+        resume = ("%d/%d pièce(s) posée(s) · rendement %s %% · %d planche(s)"
+                  " entamée(s) dont %d chute(s) · pertes %s m² · chutes"
+                  " créées %d"
+                  % (b.nb_posees, b.nb_demandees, opt._pct(b.rendement),
+                     b.nb_planches_entamees, b.nb_chutes_consommees,
+                     opt._m2(b.surface_perdue),
+                     len(self._resultat.chutes_creees)))
+        peintre.drawText(
+            QRectF(marge, marge + hauteur_titre, page.width() - 2 * marge,
+                   hauteur_sous),
+            Qt.AlignmentFlag.AlignLeft, resume)
+
+        haut = marge + hauteur_titre + hauteur_sous * 1.6
+        if planches is None:
+            planches = self.vue.debits_affiches()
+        cible = QRectF(marge, haut, page.width() - 2 * marge,
+                       page.height() - haut - marge)
+        if image is None:
+            image = self.vue.rendre_image(int(cible.width()))
+        if image is None:
+            return
+        echelle = min(cible.width() / image.width(),
+                      cible.height() / image.height())
+        largeur, hauteur = image.width() * echelle, image.height() * echelle
+        peintre.drawImage(
+            QRectF(cible.left() + (cible.width() - largeur) / 2, cible.top(),
+                   largeur, hauteur), image)
+        self._dessiner_cotes(peintre, planches,
+                             QRectF(cible.left(), cible.top() + hauteur * 1.04,
+                                    cible.width(),
+                                    cible.bottom() - cible.top() - hauteur * 1.04))
+
+    def _dessiner_cotes(self, peintre: QPainter, planches: list,
+                        zone: QRectF):
+        """Sous le plan, les cotes de débit planche par planche.
+
+        Une planche de 4 m sur 150 dessinée en travers d'une A4 laisse la
+        moitié de la page blanche — et les étiquettes du dessin ne portent
+        que le NOM des pièces, jamais leurs cotes quand elles sont
+        étroites. C'est là qu'on met ce qui manque pour scier sans revenir
+        à l'écran."""
+        if not planches or zone.height() <= 0:
+            return
+        police = peintre.font()
+        police.setPointSize(8)
+        peintre.setFont(police)
+        ligne = peintre.fontMetrics().height()
+        if zone.height() < ligne * 3:
+            return                      # pas la place : le dessin prime
+
+        y = zone.top()
+        for numero, debit in planches:
+            lots = {}
+            for pose in debit.poses:
+                cle = (pose.piece.reference, round(pose.dim_x, 1),
+                       round(pose.dim_y, 1))
+                lots[cle] = lots.get(cle, 0) + 1
+            morceaux = ["%s %s × %s%s"
+                        % (reference, opt._mm(dx), opt._mm(dy),
+                           " ×%d" % n if n > 1 else "")
+                        for (reference, dx, dy), n in lots.items()]
+            texte = "%d.  %s" % (numero, "   ·   ".join(morceaux))
+            boite = QRectF(zone.left(), y, zone.width(),
+                           zone.bottom() - y)
+            if boite.height() < ligne:
+                break
+            hauteur = peintre.boundingRect(
+                boite, int(Qt.TextFlag.TextWordWrap), texte).height()
+            peintre.drawText(boite, int(Qt.TextFlag.TextWordWrap), texte)
+            y += hauteur + ligne * 0.35
+
+    def _exporter_fiche(self):
+        """La fiche d'atelier : poses et coupes planche par planche.
+
+        Le cœur produisait déjà ce texte (``Resultat.texte()``) et rien ne
+        le montrait nulle part — c'est pourtant la liste qu'on coche à la
+        scie, pièce après pièce."""
+        if self._resultat is None:
+            QMessageBox.information(self, "Rien à exporter",
+                                    "Calculez d'abord le débit (F5).")
+            return
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Exporter la fiche d'atelier", self._dossier(),
+            "Texte (*.txt)")
+        if not chemin:
+            return
+        if not chemin.lower().endswith(".txt"):
+            chemin += ".txt"
+        titre = os.path.splitext(os.path.basename(self._chemin))[0] \
+            if self._chemin else "Feuille de débit"
+        try:
+            with open(chemin, "w", encoding="utf-8") as f:
+                f.write("%s\n%s\n\n" % (titre, "=" * len(titre)))
+                f.write(self._resultat.texte())
+                f.write("\n")
+        except OSError as erreur:
+            QMessageBox.warning(self, "Export impossible", str(erreur))
+            return
+        self._retenir_dossier(chemin)
+        self.statusBar().showMessage("Fiche d'atelier écrite : %s" % chemin,
+                                     8000)
+
+    def _exporter_csv(self):
+        try:
+            pieces = self.table_pieces.pieces()
+        except ErreurSaisie as erreur:
+            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            return
+        if not pieces:
+            QMessageBox.information(self, "Aucune pièce",
+                                    "Il n'y a rien à exporter.")
+            return
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Exporter les pièces", self._dossier(), "CSV (*.csv)")
+        if not chemin:
+            return
+        if not chemin.lower().endswith(".csv"):
+            chemin += ".csv"
+        try:
+            csv_io.ecrire_pieces(chemin, pieces)
+        except OSError as erreur:
+            QMessageBox.warning(self, "Export impossible", str(erreur))
+            return
+        self._retenir_dossier(chemin)
+        self.statusBar().showMessage(
+            "%d pièce(s) exportée(s) : %s" % (len(pieces), chemin), 8000)
 
     # -- exemples ----------------------------------------------------------------
 
@@ -973,6 +1332,9 @@ class FenetrePrincipale(QMainWindow):
         self._rafraichir_etat()
 
     def _charger_exemple(self):
+        if not self._chargement and not self._confirmer_abandon(
+                "L'exemple va remplacer les pièces et le stock."):
+            return
         self._remplir(
             [opt.Piece("montant", 1750, 60, 18, "sapin", quantite=4),
              opt.Piece("traverse", 560, 60, 18, "sapin", quantite=6),
@@ -992,6 +1354,9 @@ class FenetrePrincipale(QMainWindow):
         de corroyage) sorties du modèle FreeCAD AtelierVolets. Le
         couvre-joint (15 mm) vient d'une autre section, il n'est pas ici.
         """
+        if not self._confirmer_abandon(
+                "L'exemple va remplacer les pièces et le stock."):
+            return
         # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
         # d'épaisseur : les planches sont du brut (30) à raboter à la cote
         # finie (27) — sans cet écart, le stock et les pièces ne se rangent
@@ -1036,7 +1401,19 @@ courante — colonnes séparées par une tabulation ou un point-virgule.<br>
 <p><b>Plan</b><br>
 <b>Ctrl+molette</b> zoome sous la souris, glisser déplace, double-clic
 réajuste. <b>Ctrl+M</b> masque la saisie et laisse tout l'écran au plan.
-<b>Ctrl+E</b> exporte en PNG ce qui est affiché.</p>
+<b>Ctrl+E</b> exporte en PNG ce qui est affiché, <b>Ctrl+P</b> l'imprime
+(paginé si les planches sont nombreuses).</p>
+
+<p><b>Sortir le débit</b><br>
+Fichier → <i>fiche d'atelier</i> écrit en texte la liste des poses et des
+coupes, planche par planche — celle qu'on coche à la scie. Fichier →
+<i>exporter les pièces</i> ressort la feuille de débit au format CSV,
+pour un tableur ou un autre projet.</p>
+
+<p><b>Réglages</b><br>
+Trait de scie, surcotes et seuils de chute sont retenus d'une séance à
+l'autre : ils reviennent pour tout projet neuf. Un projet enregistré
+garde les siens et les réimpose à l'ouverture.</p>
 
 <p><b>Conventions</b><br>
 Tout est en millimètres. La longueur court le long du fil. Une planche
@@ -1059,6 +1436,7 @@ jamais. Les chutes passent avant les planches neuves.</p>""")
             return
         self._reglages.setValue("geometrie", self.saveGeometry())
         self._reglages.setValue("splitter", self._splitter.saveState())
+        self._memoriser_reglages()
         super().closeEvent(evenement)
 
 

@@ -25,9 +25,9 @@ Restent à faire :
   qu'on retrouverait d'un projet à l'autre sans le recopier ;
 - l'import de la liste de pièces depuis la feuille de calcul FreeCAD
   d'un projet (le CSV est le contrat d'échange en attendant) ;
-- un plan imprimable paginé — l'export PNG rend le plan affiché à
-  résolution d'impression, mais rien ne le met en pages ni ne numérote
-  les coupes sur le papier.
+- numéroter les coupes sur le papier : les traits de scie se dessinent
+  dans leur ordre d'exécution, mais leur rang n'est lisible qu'en
+  info-bulle.
 
 ## L'interface
 
@@ -45,12 +45,29 @@ chutes hachurées, fond clair pour la perte.
 | `Suppr` / `Ctrl+Suppr` | vider les cellules / ôter les lignes |
 | `Ctrl+M` | masquer la saisie, tout l'écran au plan |
 | `Ctrl+molette` | zoomer sous la souris (la molette seule fait défiler) |
-| `Ctrl+E` | exporter le plan affiché en PNG |
+| `Ctrl+E` / `Ctrl+P` | exporter le plan affiché en PNG / l'imprimer |
 | `F1` | les repères, dans l'appli |
 
 Les couleurs des pièces ne dépendent que du **nom** de la référence : la
 même pièce garde sa teinte d'une séance à l'autre, et deux références
 d'un même débit n'ont jamais la même.
+
+Trois façons de sortir le débit de l'écran : le **plan** (PNG à
+résolution d'impression, ou impression paginée — une poignée de planches
+par page, pas soixante écrasées sur une, avec les cotes de débit sous le
+dessin), la **fiche d'atelier** (texte : poses et coupes planche par
+planche, à cocher à la scie) et les **pièces en CSV** (le format
+d'échange, désormais dans les deux sens).
+
+Les tailles de texte du plan sont réglées pour un rendu d'environ
+1600 px de large et **grossies à proportion** au-delà : réglées en
+pixels, elles sortaient à 0,4 mm de haut sur une page à 1200 points par
+pouce.
+
+Le trait de scie, les surcotes et les seuils de chute sont **retenus
+d'une séance à l'autre** — ce sont des propriétés de la scie et de
+l'atelier, pas du projet. Un projet enregistré garde les siens et les
+réimpose à son ouverture.
 
 ## Utilisation
 
