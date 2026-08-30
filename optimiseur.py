@@ -93,6 +93,13 @@ class Planche:
 
     ``longueur`` court le long du fil. ``fil = False`` décrit un panneau
     sans fil (MDF, contreplaqué pris comme tel) : rotation libre dedans.
+
+    ``illimite`` : un profil de CATALOGUE (une section qu'on peut acheter),
+    pas des planches déjà en atelier — ``quantite`` ne borne alors plus
+    rien, le solveur en prend autant que le débit en demande. Combiné à
+    plusieurs profils, il choisit lui-même dans lequel tailler chaque
+    pièce ; :meth:`Resultat.achats` compte ensuite, par profil, combien en
+    acheter. Sans effet sur une chute (déjà possédée, jamais à acheter).
     """
 
     reference: str
@@ -103,6 +110,7 @@ class Planche:
     quantite: int = 1
     chute: bool = False
     fil: bool = True
+    illimite: bool = False
 
     @property
     def aire(self) -> float:
@@ -268,6 +276,18 @@ class Bilan:
     rendement: float
 
 
+@dataclass(frozen=True)
+class Achat:
+    """Combien acheter d'un profil de catalogue réellement entamé."""
+
+    reference: str
+    longueur: float
+    largeur: float
+    epaisseur: float
+    matiere: str
+    nombre: int
+
+
 @dataclass
 class Resultat:
     debits: list
@@ -277,6 +297,25 @@ class Resultat:
     @property
     def chutes_creees(self) -> list:
         return [c for d in self.debits for c in d.chutes]
+
+    @property
+    def achats(self) -> list:
+        """Un :class:`Achat` par planche NEUVE réellement entamée — les
+        chutes n'y figurent jamais (déjà en atelier, jamais à acheter).
+        Utile surtout avec des ``Planche(illimite=True)`` : le solveur a
+        choisi lui-même dans quel profil tailler chaque pièce, ceci
+        compte ce qu'il en a réellement pris."""
+        compte, ordre = {}, []
+        for d in self.debits:
+            pl = d.planche
+            if pl.chute:
+                continue
+            if pl.reference not in compte:
+                compte[pl.reference] = 0
+                ordre.append(pl)
+            compte[pl.reference] += 1
+        return [Achat(pl.reference, pl.longueur, pl.largeur, pl.epaisseur,
+                      pl.matiere, compte[pl.reference]) for pl in ordre]
 
     def texte(self) -> str:
         """Résumé lisible, pour la démo et le débogage."""
@@ -290,8 +329,18 @@ class Resultat:
                _m2(b.surface_perdue), len(self.chutes_creees),
                _m2(b.surface_chutes_creees)),
         ]
+        if self.achats:
+            lignes.append("")
+            lignes.append("À acheter :")
+            for a in self.achats:
+                lignes.append(
+                    "  %d × « %s » (%s × %s × %s mm, %s)"
+                    % (a.nombre, a.reference, _mm(a.longueur),
+                       _mm(a.largeur), _mm(a.epaisseur), a.matiere))
         for i, d in enumerate(self.debits, 1):
-            ex = " (ex. %d)" % d.exemplaire if d.planche.quantite > 1 else ""
+            # illimite : quantite ne dit rien du nombre reellement pris
+            plusieurs = d.planche.quantite > 1 or d.planche.illimite
+            ex = " (ex. %d)" % d.exemplaire if plusieurs else ""
             lignes.append("")
             lignes.append(
                 "Planche %d — « %s »%s, %s × %s mm, %s — %d pièce(s), "
@@ -758,8 +807,15 @@ def optimiser(pieces: list, stock: list,
             continue
         unites = [(p, ex) for p in pieces_g
                   for ex in range(1, p.quantite + 1)]
+        # Un profil de catalogue (illimite) n'a pas de nombre d'exemplaires
+        # à respecter : jamais besoin de plus de planches que de pièces à
+        # tailler, la borne reste donc sûre sans grossir inutilement le
+        # rangement à résoudre. Sans effet sur une chute : déjà possédée,
+        # on n'en « achète » jamais plus qu'il n'en existe réellement.
         stock_unites = [(pl, ex) for pl in stock_g
-                        for ex in range(1, pl.quantite + 1)]
+                        for ex in range(1, (len(unites)
+                                            if pl.illimite and not pl.chute
+                                            else pl.quantite) + 1)]
         meilleure = None
         for strat in _strategies(params):
             sol = _resoudre(unites, stock_unites, params, strat)

@@ -31,7 +31,7 @@ TITRE = "Chutier — feuille de débit"
 COLONNES_PIECES = ["Référence", "Longueur", "Largeur", "Épaisseur",
                     "Matière", "Qté", "Fil", "Composable"]
 COLONNES_STOCK = ["Référence", "Longueur", "Largeur", "Épaisseur",
-                   "Matière", "Qté", "Chute", "A un fil"]
+                   "Matière", "Qté", "Chute", "A un fil", "Catalogue"]
 
 FILS_PIECE = [
     (opt.FIL_LONGUEUR, "Longueur"),
@@ -168,7 +168,7 @@ class TableStock(TableEditable):
 
     def ajouter_ligne(self, reference="", longueur="", largeur="",
                       epaisseur="18", matiere="", quantite="1",
-                      chute=False, fil=True):
+                      chute=False, fil=True, illimite=False):
         ligne = self.rowCount()
         self.insertRow(ligne)
         for col, valeur in enumerate(
@@ -181,6 +181,14 @@ class TableStock(TableEditable):
         case_fil = QCheckBox()
         case_fil.setChecked(fil)
         self.setCellWidget(ligne, 7, case_fil)
+        case_illimite = QCheckBox()
+        case_illimite.setChecked(illimite)
+        case_illimite.setToolTip(
+            "Un profil de catalogue (une section qu'on peut acheter),"
+            " pas des planches déjà en atelier — la quantité ne borne"
+            " plus rien, le chutier en prend autant que le débit"
+            " demande, et compte ensuite combien en acheter.")
+        self.setCellWidget(ligne, 8, case_illimite)
 
     def stock(self) -> list:
         resultat = []
@@ -197,9 +205,10 @@ class TableStock(TableEditable):
                                reference)
             chute = self.widget_ligne(ligne, 6).isChecked()
             fil = self.widget_ligne(ligne, 7).isChecked()
+            illimite = self.widget_ligne(ligne, 8).isChecked()
             resultat.append(opt.Planche(reference, longueur, largeur,
                                         epaisseur, matiere, quantite,
-                                        chute, fil))
+                                        chute, fil, illimite))
         return resultat
 
 
@@ -502,6 +511,14 @@ class FenetrePrincipale(QMainWindow):
         self.label_bilan.setWordWrap(True)
         disposition.addWidget(self.label_bilan)
 
+        self.groupe_achats = QGroupBox("À acheter")
+        self.groupe_achats.setVisible(False)
+        mise_achats = QVBoxLayout(self.groupe_achats)
+        self.liste_achats = QListWidget()
+        self.liste_achats.setMaximumHeight(100)
+        mise_achats.addWidget(self.liste_achats)
+        disposition.addWidget(self.groupe_achats)
+
         scission = QSplitter(Qt.Orientation.Horizontal)
         self.liste_planches = QListWidget()
         self.liste_planches.setMinimumWidth(160)
@@ -546,7 +563,7 @@ class FenetrePrincipale(QMainWindow):
             self.table_stock.ajouter_ligne(s.reference, s.longueur,
                                            s.largeur, s.epaisseur,
                                            s.matiere, s.quantite, s.chute,
-                                           s.fil)
+                                           s.fil, s.illimite)
 
     def _remplir_tables(self, pieces, stock):
         self._remplir_pieces(pieces)
@@ -647,10 +664,19 @@ class FenetrePrincipale(QMainWindow):
                opt._m2(b.surface_perdue), len(r.chutes_creees),
                opt._m2(b.surface_chutes_creees)))
 
+        self.liste_achats.clear()
+        for a in r.achats:
+            self.liste_achats.addItem(QListWidgetItem(
+                "%d × « %s » — %s × %s × %s mm, %s"
+                % (a.nombre, a.reference, opt._mm(a.longueur),
+                   opt._mm(a.largeur), opt._mm(a.epaisseur), a.matiere)))
+        self.groupe_achats.setVisible(bool(r.achats))
+
         self.liste_planches.clear()
         for i, debit in enumerate(r.debits, 1):
-            ex = (" (ex. %d)" % debit.exemplaire
-                  if debit.planche.quantite > 1 else "")
+            # illimite : la quantite affichee ne dit rien du nombre pris
+            plusieurs = debit.planche.quantite > 1 or debit.planche.illimite
+            ex = " (ex. %d)" % debit.exemplaire if plusieurs else ""
             texte = ("%d. %s%s — %d pièce(s), rendement %s %%"
                      % (i, debit.planche.reference, ex, len(debit.poses),
                         opt._pct(debit.rendement)))

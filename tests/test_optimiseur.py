@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from optimiseur import (  # noqa: E402
     EPS, FIL_INDIFFERENT, FIL_LARGEUR, FIL_LONGUEUR,
     RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
-    RAISON_TROP_GRANDE, Parametres, Piece, Planche, optimiser,
+    RAISON_TROP_GRANDE, Achat, Parametres, Piece, Planche, optimiser,
     _nombre_de_lames, _plus_large_compatible,
 )
 
@@ -416,6 +416,60 @@ class Divers(unittest.TestCase):
             source = f.read()
         for interdit in ("PySide", "PyQt", "QtWidgets", "QtCore", "QtGui"):
             self.assertNotIn(interdit, source)
+
+
+class ProfilsDeCatalogue(unittest.TestCase):
+    """``Planche(illimite=True)`` : un profil qu'on peut acheter, pas des
+    planches déjà en atelier — le solveur choisit lui-même combien en
+    prendre, ``Resultat.achats`` compte ensuite quoi acheter."""
+
+    def test_achete_juste_ce_qu_il_faut(self):
+        # 5 pieces de 1000, planches de 2400 -> 3 planches (2 par planche)
+        pieces = [Piece("p", 1000, 100, 18, "sapin", quantite=5)]
+        stock = [Planche("2400x100", 2400, 100, 18, "sapin", illimite=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        self.assertEqual(r.achats, [
+            Achat("2400x100", 2400, 100, 18, "sapin", 3)])
+
+    def test_repartit_entre_deux_profils_par_epaisseur(self):
+        # comme un vrai achat (29/08/2026) : 175x65 et 200x30 en catalogue,
+        # une pièce à 50 ne peut venir QUE du 65 ; une à 20, des deux —
+        # mais y aller par le plus mince suffit (moins de gâchis d'épaisseur)
+        pieces = [
+            Piece("epaisse", 1000, 100, 50, "sapin", quantite=2),
+            Piece("fine", 1000, 100, 20, "sapin", quantite=2),
+        ]
+        stock = [
+            Planche("4000x175x65", 4000, 175, 65, "sapin", illimite=True),
+            Planche("4000x200x30", 4000, 200, 30, "sapin", illimite=True),
+        ]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        references = {a.reference for a in r.achats}
+        self.assertIn("4000x175x65", references)          # les 50 n'ont que lui
+        for d in r.debits:
+            for p in d.poses:
+                if p.piece.reference == "epaisse":
+                    self.assertEqual(d.planche.reference, "4000x175x65")
+
+    def test_achats_ignore_les_chutes(self):
+        pieces = [Piece("p", 300, 100, 18, "sapin", quantite=1)]
+        stock = [Planche("chute", 400, 120, 18, "sapin", chute=True),
+                Planche("catalogue", 2400, 200, 18, "sapin", illimite=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(len(r.achats), 0)   # la chute a suffi, rien a acheter
+
+    def test_illimite_sans_effet_sur_une_chute(self):
+        # illimite ne veut rien dire pour une chute : deja possedee, on
+        # n'en achete jamais davantage qu'il n'en existe reellement
+        pieces = [Piece("p", 1000, 100, 18, "sapin", quantite=5)]
+        stock = [Planche("chute", 1000, 100, 18, "sapin", quantite=1,
+                         chute=True, illimite=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 1)
+        self.assertEqual(len(r.non_placees), 1)
+        self.assertEqual(r.non_placees[0].exemplaires, 4)
 
 
 if __name__ == "__main__":

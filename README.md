@@ -68,6 +68,15 @@ print(resultat.texte())               # résumé lisible
   elle logerait déjà telle quelle. `surcote_joint` : largeur perdue à
   chaque collage. Sans effet sur `FIL_LARGEUR` (la largeur n'y est pas
   l'axe qu'on élargirait par collage).
+- Une planche `illimite=True` est un **profil de catalogue** (une
+  section qu'on peut acheter), pas des planches déjà en atelier — sa
+  `quantite` ne borne plus rien, le solveur en prend autant que le
+  débit demande. `Resultat.achats` compte ensuite, par profil,
+  combien en acheter. Sans effet sur une chute (déjà possédée, jamais
+  à acheter). **Le choix entre plusieurs profils illimités reste
+  purement géométrique** (moins de surface neuve d'abord, donc en
+  pratique la plus petite section suffisante) — le coût réel des
+  sections n'entre pour rien dans ce choix.
 - Score d'une solution, dans l'ordre : moins de pièces non placées,
   moins de surface **neuve** entamée (déstockage d'abord), moins de
   pertes, plus grande chute subsistante la plus grande possible.
