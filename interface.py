@@ -429,6 +429,8 @@ class FenetrePrincipale(QMainWindow):
         droite = max(500, self._splitter_central.width() - gauche)
         self._splitter_central.setSizes([gauche, droite])
         self._splitter_resultats.setSizes([220, 780])
+        moitie = max(1, self._splitter_saisie.height() // 2)
+        self._splitter_saisie.setSizes([moitie, moitie])
 
     # -- construction -----------------------------------------------
 
@@ -453,8 +455,11 @@ class FenetrePrincipale(QMainWindow):
         self.table_stock = TableStock()
         self.table_pieces = TablePieces(self.table_stock)
 
-        disposition.addWidget(QLabel("<b>Pièces à débiter</b>"))
-        disposition.addWidget(self.table_pieces, stretch=2)
+        bloc_pieces = QWidget()
+        colonne_pieces = QVBoxLayout(bloc_pieces)
+        colonne_pieces.setContentsMargins(0, 0, 0, 0)
+        colonne_pieces.addWidget(QLabel("<b>Pièces à débiter</b>"))
+        colonne_pieces.addWidget(self.table_pieces, stretch=1)
         ligne_pieces = self._boutons_table(
             self.table_pieces, lambda: self.table_pieces.ajouter_ligne())
         bouton_matiere = QPushButton("Matière → lignes sélectionnées")
@@ -463,12 +468,29 @@ class FenetrePrincipale(QMainWindow):
         bouton_importer = QPushButton("Importer un CSV…")
         bouton_importer.clicked.connect(self._importer_csv)
         ligne_pieces.addWidget(bouton_importer)
-        disposition.addLayout(ligne_pieces)
+        colonne_pieces.addLayout(ligne_pieces)
 
-        disposition.addWidget(QLabel("<b>Stock (planches et chutes)</b>"))
-        disposition.addWidget(self.table_stock, stretch=2)
-        disposition.addLayout(self._boutons_table(
+        bloc_stock = QWidget()
+        colonne_stock = QVBoxLayout(bloc_stock)
+        colonne_stock.setContentsMargins(0, 0, 0, 0)
+        colonne_stock.addWidget(QLabel("<b>Stock (planches et chutes)</b>"))
+        colonne_stock.addWidget(self.table_stock, stretch=1)
+        colonne_stock.addLayout(self._boutons_table(
             self.table_stock, lambda: self.table_stock.ajouter_ligne()))
+
+        # Une table peut avoir bien plus de lignes que l'autre selon le
+        # projet (un long débit, un stock d'une ligne, ou l'inverse) —
+        # un partage fixe gênait toujours l'une des deux (signalé par
+        # Christophe, capture à l'appui, 30/08/2026).
+        scission_saisie = QSplitter(Qt.Orientation.Vertical)
+        scission_saisie.setHandleWidth(9)
+        scission_saisie.setStyleSheet(STYLE_POIGNEE_SPLITTER)
+        scission_saisie.addWidget(bloc_pieces)
+        scission_saisie.addWidget(bloc_stock)
+        scission_saisie.setStretchFactor(0, 1)
+        scission_saisie.setStretchFactor(1, 1)
+        self._splitter_saisie = scission_saisie
+        disposition.addWidget(scission_saisie, stretch=1)
 
         disposition.addWidget(self._groupe_parametres())
 
