@@ -148,6 +148,11 @@ laser_core / task_panels dans LaserAtelier.
 | `vue_plan.py` | le dessin des planches débitées. |
 | `interface.py` | la fenêtre : menus, onglets, actions, fichiers. |
 
+## Licence
+
+LGPL-2.1-or-later, comme le visualiseur G-code de l'atelier — l'interface
+est bâtie sur PySide6 (Qt), le cœur n'a aucune dépendance.
+
 ## Tests
 
 ```bash
