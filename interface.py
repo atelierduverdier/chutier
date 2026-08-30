@@ -10,10 +10,13 @@ et afficher le ``Resultat`` qui en revient.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtCore import Qt, QRectF, QTimer
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPen, QPainter
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QIcon, QImage, QPen, QPainter,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
@@ -28,6 +31,10 @@ import optimiseur as opt
 import projet_io
 
 TITRE = "Chutier — feuille de débit"
+# Chemin absolu : le lanceur .desktop fixe le dossier courant, mais rien
+# d'autre ne le garantit (double-clic depuis un autre dossier, etc.).
+ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "resources", "icone.svg")
 
 COLONNES_PIECES = ["Référence", "Longueur", "Largeur", "Épaisseur",
                     "Matière", "Qté", "Fil", "Composable"]
@@ -920,7 +927,19 @@ class FenetrePrincipale(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # Relie l'appli à chutier.desktop — le WM_CLASS par défaut (basé sur
+    # l'exécutable, "python3" puisqu'on lance via python3 interface.py)
+    # ne correspond à rien, et la barre des tâches retombe sur une icône
+    # générique même quand le lanceur en porte une bonne (signalé par
+    # Christophe, capture à l'appui). setWindowIcon ci-dessous reste la
+    # deuxième ligne de défense, indépendante du lanceur.
+    app.setDesktopFileName("chutier")
+    if os.path.isfile(ICONE):
+        icone = QIcon(ICONE)
+        app.setWindowIcon(icone)
     fenetre = FenetrePrincipale()
+    if os.path.isfile(ICONE):
+        fenetre.setWindowIcon(icone)
     fenetre.show()
     sys.exit(app.exec())
 
