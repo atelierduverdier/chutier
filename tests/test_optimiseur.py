@@ -21,8 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from optimiseur import (  # noqa: E402
     EPS, FIL_INDIFFERENT, FIL_LARGEUR, FIL_LONGUEUR,
-    RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_GRANDE,
-    Parametres, Piece, Planche, optimiser,
+    RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
+    RAISON_TROP_GRANDE, Parametres, Piece, Planche, optimiser,
 )
 
 RAPIDE = Parametres(essais_melanges=0)
@@ -249,7 +249,30 @@ class MatiereEtEpaisseur(unittest.TestCase):
     def test_epaisseur_incompatible(self):
         r = optimiser([Piece("c", 100, 50, 18, "sapin")],
                       [Planche("b", 500, 200, 12, "sapin")], RAPIDE)
-        self.assertEqual(r.non_placees[0].raison, RAISON_INCOMPATIBLE)
+        self.assertEqual(r.non_placees[0].raison, RAISON_TROP_EPAISSE)
+
+    def test_planche_plus_epaisse_convient(self):
+        # le brut se rabote : une planche de 30 fournit une pièce de 18
+        r = optimiser([Piece("c", 100, 50, 18, "sapin")],
+                      [Planche("b", 500, 200, 30, "sapin")], RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 1)
+
+    def test_deux_finitions_sur_le_meme_brut(self):
+        # deux pièces d'épaisseurs différentes, toutes deux plus minces
+        # que le seul brut disponible : rien n'empêche de les tirer de
+        # la même planche, chacune rabotée à sa propre cote ensuite
+        r = optimiser(
+            [Piece("fine", 100, 50, 8, "sapin"),
+             Piece("epaisse", 100, 50, 20, "sapin")],
+            [Planche("b", 500, 200, 30, "sapin")], RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 2)
+        self.assertEqual(len(r.debits), 1)
+
+    def test_trop_epaisse_meme_avec_plusieurs_brut(self):
+        r = optimiser([Piece("c", 100, 50, 50, "sapin")],
+                      [Planche("b1", 500, 200, 18, "sapin"),
+                       Planche("b2", 500, 200, 30, "sapin")], RAPIDE)
+        self.assertEqual(r.non_placees[0].raison, RAISON_TROP_EPAISSE)
 
     def test_matiere_normalisee_et_tolerance(self):
         r = optimiser([Piece("c", 100, 50, 18.05, "  Sapin ")],

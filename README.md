@@ -55,8 +55,12 @@ print(resultat.texte())               # résumé lisible
 - Un reste n'est une chute réutilisable que si son grand côté atteint
   `chute_mini_longueur` et son petit côté `chute_mini_largeur` ; sinon
   il part dans les pertes.
-- Les pièces et le stock sont appariés par **matière + épaisseur** (à
-  `tolerance_epaisseur` près) ; les lots sont résolus séparément.
+- Les pièces et le stock sont appariés par **matière** (lots résolus
+  séparément) ; au sein d'un lot, une planche ne convient à une pièce
+  que si elle est **au moins aussi épaisse** — le brut se rabote,
+  jamais ne s'épaissit. `tolerance_epaisseur` n'absorbe que le bruit de
+  mesure, pas un vrai manque d'épaisseur. Une même planche peut donc
+  fournir des pièces de finitions différentes.
 - La `surcote` (marge de recoupe) s'ajoute aux dimensions débitées ;
   la pièce garde ses cotes nominales.
 - Score d'une solution, dans l'ordre : moins de pièces non placées,

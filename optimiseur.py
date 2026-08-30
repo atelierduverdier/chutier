@@ -50,8 +50,9 @@ _FILS_VALIDES = (FIL_LONGUEUR, FIL_LARGEUR, FIL_INDIFFERENT)
 DELIGNAGE = "delignage"      # trait à y constant, le long du fil
 TRONCONNAGE = "tronconnage"  # trait à x constant, en travers du fil
 
-RAISON_INCOMPATIBLE = "aucune planche compatible (matière / épaisseur)"
+RAISON_INCOMPATIBLE = "aucune planche de cette matière dans le stock"
 RAISON_TROP_GRANDE = "trop grande pour les formats du stock (fil compris)"
+RAISON_TROP_EPAISSE = "aucune planche assez épaisse pour cette pièce"
 RAISON_PLUS_DE_PLACE = "plus de place dans le stock fourni"
 
 
@@ -109,7 +110,11 @@ class Parametres:
     - ``surcote_longueur`` / ``surcote_largeur`` : marge de recoupe
       ajoutée à chaque pièce au débit (les dimensions posées la
       comprennent, la pièce garde ses cotes nominales).
-    - ``tolerance_epaisseur`` : écart admis pour apparier pièce et stock.
+    - ``tolerance_epaisseur`` : marge de mesure sur la règle « la planche
+      doit être au moins aussi épaisse que la pièce » (le brut se rabote
+      à la cote voulue, jamais l'inverse) ; ne sert qu'à absorber le
+      bruit de mesure (18,0 mesuré contre 18,05 demandé), pas à faire
+      passer une pièce plus épaisse que le stock.
     - ``essais_melanges`` : nombre d'ordres de pièces tirés au hasard en
       plus des stratégies déterministes (0 pour s'en passer) ;
       ``graine`` fixe le hasard, le résultat reste reproductible.
@@ -451,10 +456,13 @@ def _poser(o: _Ouverte, i_libre: int, piece: Piece, exemplaire: int,
 
 def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
             strat: _Strategie):
-    """Entame le plus petit stock où la pièce loge (chutes d'abord si la
-    stratégie le demande). Rend l'indice de la planche ouverte, ou None."""
+    """Entame le plus petit stock où la pièce loge, assez épais pour elle
+    (chutes d'abord si la stratégie le demande). Rend l'indice de la
+    planche ouverte, ou None."""
     candidats = []
     for idx, (pl, _ex) in enumerate(dispo):
+        if not _epaisseur_compatible(piece.epaisseur, pl.epaisseur, params):
+            continue
         if any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
                for dx, dy, _ in _orientations(piece, pl, params)):
             prio = 0 if (pl.chute and strat.chutes_d_abord) else 1
@@ -467,10 +475,21 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
     return len(ouvertes) - 1
 
 
+def _logerait_dims(piece: Piece, stock_unites: list,
+                   params: Parametres) -> bool:
+    """La pièce logerait-elle (longueur/largeur/fil) dans au moins un
+    format du stock vierge, épaisseur mise à part ?"""
+    return any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
+               for pl, _ex in stock_unites
+               for dx, dy, _ in _orientations(piece, pl, params))
+
+
 def _logerait_a_neuf(piece: Piece, stock_unites: list,
                      params: Parametres) -> bool:
-    """La pièce logerait-elle dans au moins un format du stock vierge ?"""
-    return any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
+    """La pièce logerait-elle dans au moins un format du stock vierge,
+    assez épais pour elle ?"""
+    return any(_epaisseur_compatible(piece.epaisseur, pl.epaisseur, params)
+               and dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
                for pl, _ex in stock_unites
                for dx, dy, _ in _orientations(piece, pl, params))
 
@@ -491,6 +510,9 @@ def _resoudre(unites: list, stock_unites: list, params: Parametres,
     for piece, exemplaire in ordre:
         choix = None
         for io, o in enumerate(ouvertes):
+            if not _epaisseur_compatible(piece.epaisseur, o.planche.epaisseur,
+                                         params):
+                continue                  # planche déjà ouverte, trop mince
             local = _meilleure_dans(o, piece, params, strat.fit)
             if local is not None:
                 score, ir, dx, dy, piv = local
@@ -500,9 +522,12 @@ def _resoudre(unites: list, stock_unites: list, params: Parametres,
         if choix is None:
             io = _ouvrir(ouvertes, dispo, piece, params, strat)
             if io is None:
-                raison = (RAISON_PLUS_DE_PLACE
-                          if _logerait_a_neuf(piece, stock_unites, params)
-                          else RAISON_TROP_GRANDE)
+                if _logerait_a_neuf(piece, stock_unites, params):
+                    raison = RAISON_PLUS_DE_PLACE
+                elif _logerait_dims(piece, stock_unites, params):
+                    raison = RAISON_TROP_EPAISSE
+                else:
+                    raison = RAISON_TROP_GRANDE
                 cle_np = (piece, raison)
                 non[cle_np] = non.get(cle_np, 0) + 1
                 continue
@@ -561,36 +586,34 @@ def _strategies(params: Parametres):
 
 
 # ---------------------------------------------------------------------------
-# Groupement matière / épaisseur
+# Groupement par matière ; l'épaisseur se vérifie pièce à pièce
 # ---------------------------------------------------------------------------
 
 def _cle_matiere(matiere: str) -> str:
     return " ".join(matiere.split()).casefold()
 
 
-def _canoniser_epaisseurs(valeurs, tolerance: float) -> dict:
-    """Regroupe les épaisseurs voisines (de proche en proche) sur une
-    valeur canonique, pour que 18 et 18,05 tombent dans le même lot."""
-    canon = {}
-    reference = precedente = None
-    for v in sorted(set(valeurs)):
-        if reference is None or v - precedente > tolerance:
-            reference = v
-        canon[v] = reference
-        precedente = v
-    return canon
+def _epaisseur_compatible(epaisseur_piece: float, epaisseur_planche: float,
+                          params: Parametres) -> bool:
+    """La planche peut-elle donner cette pièce ? Le brut se rabote, jamais
+    ne s'épaissit : il doit être au moins aussi épais que la pièce, à la
+    tolérance de mesure (``tolerance_epaisseur``) près. Une planche plus
+    épaisse convient toujours — un même brut peut ainsi fournir des
+    pièces de finitions différentes, chacune rabotée à sa propre cote
+    après le débit en longueur/largeur."""
+    return epaisseur_planche + params.tolerance_epaisseur >= epaisseur_piece - EPS
 
 
-def _grouper(pieces: list, stock: list, params: Parametres) -> dict:
-    canon = _canoniser_epaisseurs(
-        [p.epaisseur for p in pieces] + [s.epaisseur for s in stock],
-        params.tolerance_epaisseur)
+def _grouper(pieces: list, stock: list) -> dict:
+    """Un lot par matière : au sein d'un lot, l'éligibilité d'une planche
+    pour une pièce se décide au débit (dimensions ET épaisseur), pas ici
+    — deux pièces de finitions différentes peuvent venir du même brut."""
     groupes = {}
     for p in pieces:
-        cle = (_cle_matiere(p.matiere), canon[p.epaisseur])
+        cle = _cle_matiere(p.matiere)
         groupes.setdefault(cle, ([], []))[0].append(p)
     for s in stock:
-        cle = (_cle_matiere(s.matiere), canon[s.epaisseur])
+        cle = _cle_matiere(s.matiere)
         groupes.setdefault(cle, ([], []))[1].append(s)
     return groupes
 
@@ -631,7 +654,10 @@ def optimiser(pieces: list, stock: list,
 
     ``pieces`` : liste de :class:`Piece` ; ``stock`` : liste de
     :class:`Planche` (neuves et chutes mêlées). Les lots sont formés par
-    matière + épaisseur (à la tolérance près) et résolus séparément.
+    matière et résolus séparément ; au sein d'un lot, une planche ne
+    convient à une pièce que si elle est au moins aussi épaisse (le brut
+    se rabote, jamais ne s'épaissit) — deux pièces de finitions
+    différentes peuvent donc venir du même brut.
 
     Exemple::
 
@@ -643,7 +669,7 @@ def optimiser(pieces: list, stock: list,
     params = parametres or Parametres()
     _valider(pieces, stock, params)
 
-    groupes = _grouper(pieces, stock, params)
+    groupes = _grouper(pieces, stock)
     debits, non_placees = [], []
     for cle in sorted(groupes):
         pieces_g, stock_g = groupes[cle]
