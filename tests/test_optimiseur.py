@@ -223,14 +223,14 @@ class Epingles(unittest.TestCase):
 
     def test_une_epingle_qui_ne_colle_plus_leve(self):
         premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
-        sans_tablette = [p for p in self.PIECES if p.reference != "tablette"]
+        sapin = [d for d in premier.debits if d.planche.reference == "sapin"][0]
+        posees = {p.piece.reference for p in sapin.poses}
+        sans = [p for p in self.PIECES if p.reference not in posees]
         with self.assertRaises(ValueError) as leve:
-            optimiser(sans_tablette, self.STOCK, RAPIDE,
-                      epingles=[premier.debits[0]])
+            optimiser(sans, self.STOCK, RAPIDE, epingles=[sapin])
         self.assertIn("épingle", str(leve.exception))
         with self.assertRaises(ValueError):
-            optimiser(self.PIECES, self.STOCK[1:], RAPIDE,
-                      epingles=[premier.debits[0]])
+            optimiser(self.PIECES, self.STOCK[1:], RAPIDE, epingles=[sapin])
 
     def test_la_demande_en_plus_se_range_autour(self):
         premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
@@ -267,6 +267,47 @@ class PlancheImposee(unittest.TestCase):
         trop = optimiser([Piece("t", 900, 180, 18, "sapin", planche="chute")],
                          self.STOCK, RAPIDE)
         self.assertEqual(trop.non_placees[0].raison, RAISON_PLANCHE_IMPOSEE)
+
+
+class RechercheLocale(unittest.TestCase):
+    """Vider une planche et replacer ses pièces ailleurs ne peut que
+    faire baisser le score — et ne casse aucun invariant."""
+
+    def _score(self, resultat):
+        b = resultat.bilan
+        return (b.nb_non_placees, round(b.surface_neuve_entamee, 3),
+                round(b.surface_perdue, 3), b.nb_coupes)
+
+    def test_ne_degrade_jamais(self):
+        for graine in range(12):
+            pieces, stock = _instance(graine)
+            sans = optimiser(pieces, stock,
+                             Parametres(essais_melanges=0,
+                                        passes_amelioration=0))
+            avec = optimiser(pieces, stock,
+                             Parametres(essais_melanges=0,
+                                        passes_amelioration=3))
+            self.assertLessEqual(self._score(avec), self._score(sans),
+                                 "graine %d" % graine)
+
+    def test_une_planche_de_trop_disparait(self):
+        """Douze lattes de 500 × 45 dans des planches de 2000 × 100 :
+        deux planches suffisent (4 × 2 par planche = 8, plus 4 dans une
+        troisième… non : 2000/503 = 3 par bande, 2 bandes = 6 par
+        planche, 12 en deux planches). Le glouton par cote les range
+        bien ; on vérifie surtout que la recherche locale n'en rouvre pas
+        une troisième et rend deux planches pleines."""
+        stock = [Planche("p", 2000, 100, 18, "b", 5)]
+        pieces = [Piece("latte", 500, 45, 18, "b", 12)]
+        r = optimiser(pieces, stock, Parametres(essais_melanges=0))
+        self.assertEqual(r.bilan.nb_posees, 12)
+        self.assertEqual(r.bilan.nb_planches_entamees, 2)
+
+    def test_deterministe_avec_amelioration(self):
+        pieces, stock = _instance(5)
+        a = optimiser(pieces, stock, Parametres(essais_melanges=4))
+        b = optimiser(pieces, stock, Parametres(essais_melanges=4))
+        self.assertEqual(a.texte(), b.texte())
 
 
 class Priorite(unittest.TestCase):

@@ -25,7 +25,10 @@ Conventions :
 
 Le solveur est un glouton guillotine (meilleur ajustement) rejoué sous
 plusieurs stratégies (ordres de pièces, règles de découpe, chutes
-d'abord ou non) ; la meilleure solution gagne au score lexicographique :
+d'abord ou non), puis la meilleure solution est travaillée par une
+recherche locale — vider une planche, replacer ses pièces dans les
+trous des autres (:func:`_ameliorer`). La meilleure solution gagne au
+score lexicographique :
   1. le moins de pièces non placées ;
   2. le moins cher, si les prix sont renseignés ;
   3. le moins de bois NEUF entamé (déstockage d'abord) ;
@@ -209,6 +212,10 @@ class Parametres:
       à la circulaire, un plan qui range les pièces de même largeur en
       bandes se scie deux fois plus vite qu'un plan éparpillé de même
       rendement.
+    - ``passes_amelioration`` : nombre de balayages de la recherche
+      locale sur la meilleure solution gloutonne (0 pour s'en passer).
+      Chaque balayage essaie, planche par planche, de la vider et de
+      replacer ses pièces ailleurs ; on garde dès que le score baisse.
     """
 
     trait_de_scie: float = 3.0
@@ -221,6 +228,7 @@ class Parametres:
     essais_melanges: int = 8
     graine: int = 0
     priorite: str = PRIORITE_BOIS
+    passes_amelioration: int = 2
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +514,8 @@ class _Solution:
     debits: list
     non_placees: list
     dispo_restant: list
+    ouvertes: list = field(default_factory=list)   # l'état, pour _ameliorer
+    non: list = field(default_factory=list)        # (piece, exemplaire, raison)
 
 
 @dataclass(frozen=True)
@@ -821,52 +831,60 @@ def _resoudre(unites: list, stock_unites: list, params: Parametres,
 
     ouvertes = []
     dispo = list(stock_unites)
-    non = {}
+    non = []
 
     for piece, exemplaire in ordre:
-        choix = None
-        for io, o in enumerate(ouvertes):
-            if not _epaisseur_compatible(piece.epaisseur, o.planche.epaisseur,
-                                         params):
-                continue                  # planche déjà ouverte, trop mince
-            if not _admise(piece, o.planche):
-                continue
-            local = _meilleure_dans(o, piece, params, strat.fit)
-            if local is not None:
-                score, ir, dx, dy, piv = local
-                cle = (score, io)
-                if choix is None or cle < choix[0]:
-                    choix = (cle, io, ir, dx, dy, piv)
-        if choix is None:
-            io = _ouvrir(ouvertes, dispo, piece, params, strat)
-            if io is None:
-                admises = [(pl, ex) for pl, ex in stock_unites
-                           if _admise(piece, pl)]
-                if piece.planche and not admises:
-                    raison = RAISON_PLANCHE_INCONNUE
-                elif _logerait_a_neuf(piece, admises, params):
-                    raison = (RAISON_PLANCHE_PLEINE if piece.planche
-                              else RAISON_PLUS_DE_PLACE)
-                elif piece.planche:
-                    raison = RAISON_PLANCHE_IMPOSEE
-                elif _logerait_dims(piece, admises, params):
-                    raison = RAISON_TROP_EPAISSE
-                else:
-                    raison = RAISON_TROP_GRANDE
-                cle_np = (piece, raison)
-                non[cle_np] = non.get(cle_np, 0) + 1
-                continue
-            score, ir, dx, dy, piv = _meilleure_dans(ouvertes[io], piece,
-                                                     params, strat.fit)
-            choix = ((score, io), io, ir, dx, dy, piv)
-        _, io, ir, dx, dy, piv = choix
-        _poser(ouvertes[io], ir, piece, exemplaire, dx, dy, piv, params,
-               strat.split)
+        _placer(piece, exemplaire, ouvertes, dispo, non, stock_unites, params,
+                strat)
 
     return _finaliser(ouvertes, dispo, non, params)
 
 
-def _finaliser(ouvertes: list, dispo: list, non: dict,
+def _placer(piece: Piece, exemplaire: int, ouvertes: list, dispo: list,
+            non: list, stock_unites: list, params: Parametres,
+            strat: _Strategie):
+    """Pose un exemplaire dans la meilleure planche ouverte, sinon en
+    ouvre une ; sinon l'inscrit dans ``non`` avec sa raison."""
+    choix = None
+    for io, o in enumerate(ouvertes):
+        if not _epaisseur_compatible(piece.epaisseur, o.planche.epaisseur,
+                                     params):
+            continue                  # planche déjà ouverte, trop mince
+        if not _admise(piece, o.planche):
+            continue
+        local = _meilleure_dans(o, piece, params, strat.fit)
+        if local is not None:
+            score, ir, dx, dy, piv = local
+            cle = (score, io)
+            if choix is None or cle < choix[0]:
+                choix = (cle, io, ir, dx, dy, piv)
+    if choix is None:
+        io = _ouvrir(ouvertes, dispo, piece, params, strat)
+        if io is None:
+            admises = [(pl, ex) for pl, ex in stock_unites
+                       if _admise(piece, pl)]
+            if piece.planche and not admises:
+                raison = RAISON_PLANCHE_INCONNUE
+            elif _logerait_a_neuf(piece, admises, params):
+                raison = (RAISON_PLANCHE_PLEINE if piece.planche
+                          else RAISON_PLUS_DE_PLACE)
+            elif piece.planche:
+                raison = RAISON_PLANCHE_IMPOSEE
+            elif _logerait_dims(piece, admises, params):
+                raison = RAISON_TROP_EPAISSE
+            else:
+                raison = RAISON_TROP_GRANDE
+            non.append((piece, exemplaire, raison))
+            return
+        score, ir, dx, dy, piv = _meilleure_dans(ouvertes[io], piece,
+                                                 params, strat.fit)
+        choix = ((score, io), io, ir, dx, dy, piv)
+    _, io, ir, dx, dy, piv = choix
+    _poser(ouvertes[io], ir, piece, exemplaire, dx, dy, piv, params,
+           strat.split)
+
+
+def _finaliser(ouvertes: list, dispo: list, non: list,
                params: Parametres) -> _Solution:
     debits = []
     for o in ouvertes:
@@ -880,9 +898,78 @@ def _finaliser(ouvertes: list, dispo: list, non: dict,
                                          o.planche.matiere, o.planche.fil))
         debits.append(Debit(o.planche, o.exemplaire, o.poses, chutes,
                             o.coupes))
+    comptes = {}
+    for piece, _ex, raison in non:
+        comptes[(piece, raison)] = comptes.get((piece, raison), 0) + 1
     non_placees = [NonPlacee(p, n, raison)
-                   for (p, raison), n in non.items()]
-    return _Solution(debits, non_placees, dispo)
+                   for (p, raison), n in comptes.items()]
+    return _Solution(debits, non_placees, dispo, ouvertes, list(non))
+
+
+# -- recherche locale : vider une planche, replacer ailleurs -------------------
+
+def _copier(o: _Ouverte) -> _Ouverte:
+    copie = _Ouverte(o.planche, o.exemplaire)
+    copie.libres = list(o.libres)
+    copie.poses = list(o.poses)
+    copie.coupes = list(o.coupes)
+    return copie
+
+
+def _vider_et_replacer(sol: _Solution, k: int, stock_unites: list,
+                       params: Parametres, strat: _Strategie) -> _Solution:
+    """La solution où la planche ``k`` est rendue au stock entière et ses
+    pièces — plus celles restées sans place — reposées une à une dans les
+    trous des autres planches, ou dans une planche rouverte si rien n'y
+    loge. C'est ainsi qu'une planche disparaît : ses pièces tiennent
+    souvent dans ce que les autres laissaient perdre."""
+    videe = sol.ouvertes[k]
+    ouvertes = [_copier(o) for i, o in enumerate(sol.ouvertes) if i != k]
+    dispo = list(sol.dispo_restant) + [(videe.planche, videe.exemplaire)]
+    pool = [(p.piece, p.exemplaire) for p in videe.poses]
+    pool += [(piece, ex) for piece, ex, _raison in sol.non]
+    cle = _CLES_TRI[strat.cle if strat.melange is None else "cote"]
+    pool.sort(key=cle)
+    non = []
+    for piece, exemplaire in pool:
+        _placer(piece, exemplaire, ouvertes, dispo, non, stock_unites, params,
+                strat)
+    return _finaliser(ouvertes, dispo, non, params)
+
+
+def _ameliorer(sol: _Solution, stock_unites: list, params: Parametres,
+               strat: _Strategie) -> _Solution:
+    """Recherche locale sur la meilleure solution gloutonne. À chaque
+    balayage, les planches sont essayées de la moins remplie à la plus
+    remplie ; dès qu'en vider une fait baisser le score, on garde et on
+    poursuit le balayage sur les planches restantes. Déterministe, borné
+    par ``passes_amelioration``."""
+    score = _score_solution(sol, params)
+    for _ in range(params.passes_amelioration):
+        ameliore = False
+        candidates = sorted(
+            ((o.planche, o.exemplaire) for o in sol.ouvertes),
+            key=lambda cle: sum(p.aire for p in _trouver(sol, cle).poses)
+            / max(cle[0].aire, EPS))
+        for cle in candidates:
+            o = _trouver(sol, cle)
+            if o is None:
+                continue                # déjà disparue à un essai précédent
+            essai = _vider_et_replacer(sol, sol.ouvertes.index(o),
+                                       stock_unites, params, strat)
+            score_essai = _score_solution(essai, params)
+            if score_essai < score:
+                sol, score, ameliore = essai, score_essai, True
+        if not ameliore:
+            break
+    return sol
+
+
+def _trouver(sol: _Solution, cle):
+    for o in sol.ouvertes:
+        if (o.planche, o.exemplaire) == cle:
+            return o
+    return None
 
 
 def _score_solution(sol: _Solution, params: Parametres):
@@ -933,7 +1020,8 @@ def _strategies(params: Parametres):
     for _ in range(params.essais_melanges):
         graine = rng.randrange(2 ** 30)
         for fit in ("bssf", "baf"):
-            yield _Strategie("cote", fit, "auto", True, melange=graine)
+            for split in ("auto", "h"):
+                yield _Strategie("cote", fit, split, True, melange=graine)
 
 
 # ---------------------------------------------------------------------------
@@ -1187,7 +1275,8 @@ def _valider(pieces: list, stock: list, params: Parametres):
     if (params.trait_de_scie < 0 or params.chute_mini_longueur < 0
             or params.chute_mini_largeur < 0 or params.surcote_longueur < 0
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
-            or params.surcote_joint < 0 or params.essais_melanges < 0):
+            or params.surcote_joint < 0 or params.essais_melanges < 0
+            or params.passes_amelioration < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
     if params.priorite not in _PRIORITES_VALIDES:
         raise ValueError("paramètres : priorité inconnue « %s » (attendu :"
@@ -1265,9 +1354,10 @@ def optimiser(pieces: list, stock: list,
             sol = _resoudre(unites, stock_unites, params, strat)
             score = _score_solution(sol, params)
             if meilleure is None or score < meilleure[0]:
-                meilleure = (score, sol)
-        debits.extend(meilleure[1].debits)
-        non_placees.extend(meilleure[1].non_placees)
+                meilleure = (score, sol, strat)
+        finale = _ameliorer(meilleure[1], stock_unites, params, meilleure[2])
+        debits.extend(finale.debits)
+        non_placees.extend(finale.non_placees)
 
     if epingles:
         debits = _renumeroter(debits, _decomposer_composables(

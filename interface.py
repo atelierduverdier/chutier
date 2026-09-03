@@ -395,6 +395,10 @@ class FenetrePrincipale(QMainWindow):
         self.spin_essais.setRange(0, 64)
         self.spin_essais.setValue(defauts.essais_melanges)
         self.spin_essais.valueChanged.connect(self._saisie_changee)
+        self.spin_passes = QSpinBox()
+        self.spin_passes.setRange(0, 10)
+        self.spin_passes.setValue(defauts.passes_amelioration)
+        self.spin_passes.valueChanged.connect(self._saisie_changee)
         self.choix_priorite = QComboBox()
         self.choix_priorite.addItem("le bois — moins de pertes",
                                     opt.PRIORITE_BOIS)
@@ -450,6 +454,11 @@ class FenetrePrincipale(QMainWindow):
              " réglées. Plus d'essais range parfois mieux, et calcule plus"
              " longtemps. Le hasard est à graine fixe : mêmes entrées,"
              " même plan."),
+            ("Passes d'amélioration", self.spin_passes,
+             "Après le meilleur rangement, on essaie planche par planche"
+             " de la vider et de replacer ses pièces dans les trous des"
+             " autres — c'est ainsi qu'une planche de trop disparaît."
+             " 0 pour s'en passer."),
         ]))
         colonne.addStretch()
 
@@ -770,7 +779,8 @@ class FenetrePrincipale(QMainWindow):
             tolerance_epaisseur=self.spin_tolerance.value(),
             surcote_joint=self.spin_surcote_joint.value(),
             essais_melanges=self.spin_essais.value(),
-            priorite=self.choix_priorite.currentData())
+            priorite=self.choix_priorite.currentData(),
+            passes_amelioration=self.spin_passes.value())
 
     def _appliquer_parametres(self, p: opt.Parametres):
         for spin, valeur in ((self.spin_trait, p.trait_de_scie),
@@ -780,7 +790,8 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_surcote_largeur, p.surcote_largeur),
                              (self.spin_tolerance, p.tolerance_epaisseur),
                              (self.spin_surcote_joint, p.surcote_joint),
-                             (self.spin_essais, p.essais_melanges)):
+                             (self.spin_essais, p.essais_melanges),
+                             (self.spin_passes, p.passes_amelioration)):
             spin.setValue(valeur)
         self.choix_priorite.setCurrentIndex(
             max(0, self.choix_priorite.findData(p.priorite)))
