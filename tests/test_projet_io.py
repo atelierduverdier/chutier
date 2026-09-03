@@ -36,6 +36,8 @@ class EnregistrerEtLire(unittest.TestCase):
             Planche("catalogue", 4000, 175, 65, "sapin", illimite=True,
                     prix=35.0),
             Planche("chute", 800, 180, 18, "sapin", chute=True),
+            Planche("abimee", 2400, 200, 18, "sapin", recoupe_bouts=30,
+                    defauts=((1200, 0, 80, 200), (600, 140, 60, 40))),
         ]
         parametres = Parametres(trait_de_scie=4.0, tolerance_epaisseur=5.0,
                                 surcote_joint=2.5)

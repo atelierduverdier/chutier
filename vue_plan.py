@@ -169,6 +169,14 @@ class VuePlan(QGraphicsView):
                         " sciure et rebuts sous les minis de chute.")
         scene.addItem(fond)
 
+        # Les défauts déclarés — recoupes de bouts et de rives, zones
+        # écartées — se voient AVANT les pièces : un trou dans le plan
+        # sans explication ferait chercher une erreur de l'optimiseur.
+        for x, y, dx, dy, info in self._zones_ecartees(pl):
+            self._rectangle(scene, numero, x, y, dx, dy, pl.largeur, y_haut,
+                            apparence.PLAN_DEFAUT, None, None, hachure=True,
+                            trait=apparence.PLAN_DEFAUT_TRAIT, info=info)
+
         for pose in debit.poses:
             self._rectangle(
                 scene, numero, pose.x, pose.y, pose.dim_x, pose.dim_y,
@@ -197,6 +205,26 @@ class VuePlan(QGraphicsView):
     def couleur(self, reference: str):
         return self.couleurs.get(reference) or apparence.couleur_piece(reference)
 
+    @staticmethod
+    def _zones_ecartees(pl) -> list:
+        """Les rectangles perdus d'avance : (x, y, dx, dy, info-bulle)."""
+        zones = []
+        if pl.recoupe_bouts > 0:
+            info = "Recoupe de bout : %s mm" % opt._mm(pl.recoupe_bouts)
+            zones.append((0.0, 0.0, pl.recoupe_bouts, pl.largeur, info))
+            zones.append((pl.longueur - pl.recoupe_bouts, 0.0,
+                          pl.recoupe_bouts, pl.largeur, info))
+        if pl.recoupe_rives > 0:
+            info = "Recoupe de rive : %s mm" % opt._mm(pl.recoupe_rives)
+            zones.append((0.0, 0.0, pl.longueur, pl.recoupe_rives, info))
+            zones.append((0.0, pl.largeur - pl.recoupe_rives, pl.longueur,
+                          pl.recoupe_rives, info))
+        for x, y, dx, dy in pl.defauts:
+            zones.append((x, y, dx, dy,
+                          "Défaut écarté : %s × %s en (%s, %s)"
+                          % (opt._mm(dx), opt._mm(dy), opt._mm(x), opt._mm(y))))
+        return zones
+
     def _traits_de_scie(self, scene, debit, y_haut):
         """Les coupes dans leur ordre d'exécution — chaque trait traverse
         de bord à bord le morceau courant, tel qu'on le passera à la scie."""
@@ -217,7 +245,9 @@ class VuePlan(QGraphicsView):
 
     def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
                    y_haut, couleur, etiquette, etiquette_courte,
-                   hachure=False):
+                   hachure=False, trait=None, info=None):
+        """``etiquette`` à ``None`` : un rectangle muet (défaut, recoupe),
+        qui ne porte que son info-bulle ``info``."""
         # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
         # place la sienne en haut-gauche — on retourne y ici, une fois,
         # plutôt que de retourner toute la vue (le texte resterait lisible).
@@ -225,12 +255,15 @@ class VuePlan(QGraphicsView):
         rect = QGraphicsRectItem(x, y_qt, dx, dy)
         if hachure:
             rect.setBrush(QBrush(couleur, Qt.BrushStyle.BDiagPattern))
-            rect.setPen(QPen(apparence.PLAN_CHUTE_TRAIT, 1))
+            rect.setPen(QPen(trait or apparence.PLAN_CHUTE_TRAIT, 1))
         else:
             rect.setBrush(QBrush(couleur))
             rect.setPen(QPen(apparence.PLAN_BORD, 1))
-        rect.setToolTip(etiquette.replace("\n", " "))
+        rect.setToolTip(info if etiquette is None
+                        else etiquette.replace("\n", " "))
         scene.addItem(rect)
+        if etiquette is None:
+            return
 
         # Une planche de menuiserie est souvent longue et étroite (un
         # 150×3000) : la pièce posée peut être trop basse pour ses deux

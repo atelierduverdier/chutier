@@ -87,6 +87,24 @@ class ProprietesGeometriques(unittest.TestCase):
                     self.assertFalse(p.pivotee)
                 if d.planche.fil and p.piece.fil == FIL_LARGEUR:
                     self.assertTrue(p.pivotee)
+            # rien ne se pose sur un défaut ni sur une recoupe — pas même
+            # le trait de scie, qui doit tomber dans le bon bois
+            pl = d.planche
+            ecartees = list(pl.defauts)
+            if pl.recoupe_bouts > EPS:
+                ecartees += [(0, 0, pl.recoupe_bouts, pl.largeur),
+                             (pl.longueur - pl.recoupe_bouts, 0,
+                              pl.recoupe_bouts, pl.largeur)]
+            if pl.recoupe_rives > EPS:
+                ecartees += [(0, 0, pl.longueur, pl.recoupe_rives),
+                             (0, pl.largeur - pl.recoupe_rives, pl.longueur,
+                              pl.recoupe_rives)]
+            for (x, y, w, h) in rects:
+                for (zx, zy, zw, zh) in ecartees:
+                    gx = max(zx - (x + w), x - (zx + zw))
+                    gy = max(zy - (y + h), y - (zy + zh))
+                    self.assertGreaterEqual(max(gx, gy), -tol,
+                                            "posé sur un défaut")
             # chutes au-dessus des minis
             for c in d.chutes:
                 self.assertGreaterEqual(max(c.dim_x, c.dim_y),
@@ -124,6 +142,31 @@ class ProprietesGeometriques(unittest.TestCase):
         pieces, stock = _instance(100)
         self._verifier(optimiser(pieces, stock, params), pieces, params)
 
+    def test_instances_avec_defauts(self):
+        """Recoupes et zones tirées au hasard : les invariants tiennent,
+        et rien ne se pose dessus."""
+        for graine in range(12):
+            pieces, stock = _instance(graine)
+            rng = random.Random(1000 + graine)
+            abimees = []
+            for pl in stock:
+                zones = []
+                for _ in range(rng.randint(0, 2)):
+                    dx = float(rng.randrange(20, 120, 10))
+                    dy = float(rng.randrange(20, 80, 10))
+                    x = float(rng.randrange(0, int(pl.longueur - dx), 10))
+                    y = float(rng.randrange(0, int(pl.largeur - dy), 10))
+                    zones.append((x, y, dx, dy))
+                abimees.append(Planche(
+                    pl.reference, pl.longueur, pl.largeur, pl.epaisseur,
+                    pl.matiere, pl.quantite, pl.chute,
+                    recoupe_bouts=float(rng.choice([0, 0, 20, 40])),
+                    recoupe_rives=float(rng.choice([0, 0, 5, 10])),
+                    defauts=tuple(zones)))
+            for params in (RAPIDE, Parametres(essais_melanges=2)):
+                self._verifier(optimiser(pieces, abimees, params), pieces,
+                               params)
+
     def test_trait_de_scie_nul(self):
         params = Parametres(trait_de_scie=0.0, essais_melanges=0)
         pieces, stock = _instance(7)
@@ -139,6 +182,78 @@ class ProprietesGeometriques(unittest.TestCase):
                         18, "bois", quantite=rng.randint(1, 3))
                   for i in range(30)]
         self._verifier(optimiser(pieces, stock, RAPIDE), pieces, RAPIDE)
+
+
+class Defauts(unittest.TestCase):
+    """Ce que la planche a de moins que son rectangle."""
+
+    def test_les_recoupes_retirent_de_la_place(self):
+        # 800 de long, 30 à ôter à chaque bout, trait 3 : il reste 734.
+        stock = [Planche("p", 800, 100, 18, "b", recoupe_bouts=30)]
+        court = optimiser([Piece("x", 734, 100, 18, "b")], stock, RAPIDE)
+        self.assertEqual(court.bilan.nb_posees, 1)
+        self.assertEqual(court.debits[0].poses[0].x, 33.0)
+        long_ = optimiser([Piece("x", 735, 100, 18, "b")], stock, RAPIDE)
+        self.assertEqual(long_.bilan.nb_posees, 0)
+        self.assertEqual(long_.non_placees[0].raison, RAISON_TROP_GRANDE)
+
+    def test_les_recoupes_sont_des_coupes(self):
+        stock = [Planche("p", 800, 100, 18, "b", recoupe_bouts=30,
+                         recoupe_rives=5)]
+        r = optimiser([Piece("x", 200, 50, 18, "b")], stock, RAPIDE)
+        coupes = r.debits[0].coupes
+        self.assertEqual([(c.sens, c.position) for c in coupes[:4]],
+                         [("tronconnage", 30), ("tronconnage", 767.0),
+                          ("delignage", 5), ("delignage", 92.0)])
+
+    def test_un_noeud_traversant_coupe_la_planche_en_deux(self):
+        stock = [Planche("p", 1000, 100, 18, "b", defauts=((480, 0, 40, 100),))]
+        r = optimiser([Piece("x", 477, 100, 18, "b", 2)], stock, RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 2)
+        xs = sorted(p.x for p in r.debits[0].poses)
+        self.assertEqual(xs, [0.0, 523.0])
+        trop = optimiser([Piece("x", 478, 100, 18, "b", 2)], stock, RAPIDE)
+        self.assertEqual(trop.bilan.nb_posees, 0)
+
+    def test_un_noeud_de_rive_laisse_le_reste(self):
+        """Un nœud de 40 × 30 en haut d'une planche de 1000 × 100 : un
+        brin pleine longueur de 67 passe encore dessous."""
+        stock = [Planche("p", 1000, 100, 18, "b", defauts=((500, 70, 40, 30),))]
+        r = optimiser([Piece("x", 1000, 67, 18, "b")], stock, RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 1)
+        self.assertEqual(r.debits[0].poses[0].y, 0.0)
+        # le trait tombe hors du nœud : à 67, la lame mange [67, 70]
+        self.assertTrue(any(c.sens == "delignage" and c.position == 67.0
+                            for c in r.debits[0].coupes))
+
+    def test_planche_trouee_passe_a_la_suivante(self):
+        """Une planche dont le rectangle logeait la pièce, mais pas une
+        fois le nœud écarté, ne doit pas bloquer le débit : on entame la
+        suivante."""
+        stock = [Planche("trouee", 1000, 100, 18, "b",
+                         defauts=((500, 0, 40, 100),)),
+                 Planche("saine", 1000, 100, 18, "b")]
+        r = optimiser([Piece("x", 900, 100, 18, "b")], stock, RAPIDE)
+        self.assertEqual(r.bilan.nb_posees, 1)
+        self.assertEqual(r.debits[0].planche.reference, "saine")
+
+    def test_validation(self):
+        with self.assertRaises(ValueError):
+            optimiser([Piece("x", 10, 10, 18, "b")],
+                      [Planche("p", 100, 100, 18, "b", recoupe_bouts=50)])
+        with self.assertRaises(ValueError):
+            optimiser([Piece("x", 10, 10, 18, "b")],
+                      [Planche("p", 100, 100, 18, "b",
+                               defauts=((90, 0, 20, 10),))])
+        with self.assertRaises(ValueError):
+            optimiser([Piece("x", 10, 10, 18, "b")],
+                      [Planche("p", 100, 100, 18, "b", defauts=((1, 2, 3),))])
+
+    def test_les_zones_relues_en_listes_redeviennent_des_tuples(self):
+        a = Planche("p", 100, 100, 18, "b", defauts=[[1, 2, 3, 4]])
+        b = Planche("p", 100, 100, 18, "b", defauts=((1.0, 2.0, 3.0, 4.0),))
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
 
 
 class CasExacts(unittest.TestCase):

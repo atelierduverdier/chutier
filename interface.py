@@ -920,6 +920,10 @@ class FenetrePrincipale(QMainWindow):
             self.legende.addItem(QListWidgetItem(
                 apparence.pastille(apparence.PLAN_CHUTE, hachure=True),
                 "chute réutilisable"))
+        if any(debit.planche.a_des_defauts for _, debit in debits):
+            self.legende.addItem(QListWidgetItem(
+                apparence.pastille(apparence.PLAN_DEFAUT, hachure=True),
+                "défaut écarté"))
         self.legende.addItem(QListWidgetItem(
             apparence.pastille(apparence.PLAN_PAPIER), "perte"))
 
@@ -1446,8 +1450,10 @@ class FenetrePrincipale(QMainWindow):
              opt.Piece("taquet", 120, 40, 18, "sapin", quantite=8,
                        fil=opt.FIL_INDIFFERENT)],
             [opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin", quantite=4),
-             opt.Planche("chute étagère", 800, 180, 18, "sapin", chute=True),
-             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)]
+             opt.Planche("chute étagère", 800, 180, 18, "sapin", chute=True,
+                         defauts=((740, 0, 60, 180),)),
+             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True,
+                         recoupe_bouts=15)]
             + self._atelier_frais(),
             opt.Parametres())
         if not self._chargement:

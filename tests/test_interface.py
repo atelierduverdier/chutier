@@ -203,6 +203,35 @@ class Tables(unittest.TestCase):
         self.pieces.remplir(avec)
         self.assertEqual(self.pieces.pieces(), avec)
 
+    def test_la_colonne_defauts_fait_l_aller_retour(self):
+        stock = [opt.Planche("abimee", 2400, 200, 18, "sapin",
+                             recoupe_bouts=30, recoupe_rives=5.5,
+                             defauts=((1200, 0, 80, 200), (600, 140, 60, 40)))]
+        self.stock.remplir(stock)
+        self.assertEqual(self.stock.texte(0, 11),
+                         "bouts 30 ; rives 5.5 ; 1200-1280 ; 600,140,60,40")
+        self.assertEqual(self.stock.stock(), stock)
+
+    def test_la_syntaxe_des_defauts(self):
+        lu = tsa.lire_defauts("Bout 20; R 4 ; 100 à 150 ; 10 20 30 40", "", 90)
+        self.assertEqual(lu, {"recoupe_bouts": 20.0, "recoupe_rives": 4.0,
+                              "defauts": ((100.0, 0.0, 50.0, 90.0),
+                                          (10.0, 20.0, 30.0, 40.0))})
+        self.assertEqual(tsa.lire_defauts("", "", 90),
+                         {"recoupe_bouts": 0.0, "recoupe_rives": 0.0,
+                          "defauts": ()})
+        with self.assertRaises(tsa.ErreurSaisie) as leve:
+            tsa.lire_defauts("noeud à 300", "« p »", 90)
+        self.assertIn("noeud à 300", str(leve.exception))
+
+    def test_un_defaut_illisible_se_signale_a_la_frappe(self):
+        self.stock.remplir(STOCK)
+        self.stock.item(0, 11).setText("n'importe quoi")
+        self.assertNotEqual(self.stock.item(0, 11).background().color().alpha(),
+                            0)
+        with self.assertRaises(tsa.ErreurSaisie):
+            self.stock.stock()
+
     def test_les_matieres_du_stock_alimentent_les_pieces(self):
         self.stock.remplir(STOCK)
         self.assertEqual(self.stock.matieres(), ["sapin"])
@@ -387,6 +416,21 @@ class Fenetre(unittest.TestCase):
         self.f.case_traits.setChecked(True)
         self.assertGreater(len(self.f.vue.scene().items()), avant)
         self.f.case_traits.setChecked(False)
+
+    def test_les_defauts_se_dessinent_et_se_legendent(self):
+        self.f.choix_vue.setCurrentIndex(0)
+        libelles = [self.f.legende.item(i).text()
+                    for i in range(self.f.legende.count())]
+        self.assertIn("défaut écarté", libelles)
+        infos = [it.toolTip() for it in self.f.vue.scene().items()]
+        self.assertTrue(any(i.startswith("Défaut écarté") for i in infos))
+        # les recoupes se dessinent aux deux bouts et sur les deux rives
+        zones = self.f.vue._zones_ecartees(
+            opt.Planche("p", 1000, 100, 18, "b", recoupe_bouts=20,
+                        recoupe_rives=5))
+        self.assertEqual([z[:4] for z in zones],
+                         [(0.0, 0.0, 20, 100), (980, 0.0, 20, 100),
+                          (0.0, 0.0, 1000, 5), (0.0, 95, 1000, 5)])
 
     def test_la_legende_nomme_chaque_reference_posee(self):
         self.f.choix_vue.setCurrentIndex(0)

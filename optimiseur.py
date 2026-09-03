@@ -113,6 +113,20 @@ class Planche:
     fichier retrouvé d'un projet à l'autre), pas dans le projet. Sans
     effet sur le débit : c'est la persistance qui s'en sert pour savoir
     où réécrire la ligne.
+
+    Les défauts du bois — ce que la planche a de moins que son rectangle :
+
+    - ``recoupe_bouts`` : millimètres à ôter à CHAQUE bout (fendu, sale,
+      pas d'équerre). Le trait de scie tombe juste au-delà, dans le bon
+      bois : la zone déclarée est perdue en entier.
+    - ``recoupe_rives`` : idem sur CHAQUE rive (flache, rive brute à
+      dresser). Une flache d'un seul côté se déclare plutôt en zone.
+    - ``defauts`` : zones à écarter, ``((x, y, dx, dy), …)`` dans les
+      coordonnées de la planche — un nœud, une fente, une poche de
+      résine. Chacune est retirée par des coupes guillotine AVANT de poser
+      la moindre pièce (deux traits en travers, puis deux le long dans la
+      bande, ou l'inverse selon la stratégie) ; ce qui l'entoure reste
+      disponible, la zone part aux pertes.
     """
 
     reference: str
@@ -126,10 +140,26 @@ class Planche:
     illimite: bool = False
     prix: float = 0.0
     atelier: bool = False
+    recoupe_bouts: float = 0.0
+    recoupe_rives: float = 0.0
+    defauts: tuple = ()
+
+    def __post_init__(self):
+        # Relu d'un JSON, ``defauts`` arrive en listes : on le remet en
+        # tuples, sans quoi la planche n'est plus hachable (elle sert de
+        # clé pour décompter les exemplaires entamés) ni égale à elle-même.
+        object.__setattr__(self, "defauts",
+                           tuple(tuple(float(v) for v in zone)
+                                 for zone in self.defauts))
 
     @property
     def aire(self) -> float:
         return self.longueur * self.largeur
+
+    @property
+    def a_des_defauts(self) -> bool:
+        return bool(self.defauts or self.recoupe_bouts > EPS
+                    or self.recoupe_rives > EPS)
 
 
 @dataclass(frozen=True)
@@ -504,6 +534,137 @@ def _couper(o: _Ouverte, sens: str, position: float, de: float, a: float):
     o.coupes.append(Coupe(sens, position, de, a, len(o.coupes) + 1))
 
 
+# -- défauts du bois : recoupes et zones à écarter -----------------------------
+
+def _dims_utiles(pl: Planche, params: Parametres):
+    """(longueur, largeur) qui restent une fois les bouts et les rives
+    recoupés, traits de scie compris — ce dans quoi une pièce doit loger
+    pour qu'on entame cette planche. Les zones de défaut ne sont pas
+    comptées ici : elles ne bornent pas un rectangle, elles le trouent."""
+    trait = params.trait_de_scie
+    lg = pl.longueur - (2 * (pl.recoupe_bouts + trait)
+                        if pl.recoupe_bouts > EPS else 0.0)
+    la = pl.largeur - (2 * (pl.recoupe_rives + trait)
+                       if pl.recoupe_rives > EPS else 0.0)
+    return lg, la
+
+
+def _intersection(r: _Rect, zone) -> "_Rect | None":
+    x, y, dx, dy = zone
+    x0, y0 = max(r.x, x), max(r.y, y)
+    x1, y1 = min(r.x + r.w, x + dx), min(r.y + r.h, y + dy)
+    if x1 - x0 <= EPS or y1 - y0 <= EPS:
+        return None
+    return _Rect(x0, y0, x1 - x0, y1 - y0)
+
+
+def _autour_en_travers(r: _Rect, d: _Rect, trait: float):
+    """Retire ``d`` de ``r`` en tronçonnant d'abord (deux traits en
+    travers, de bord à bord), puis en délignant la bande du milieu. Rend
+    (rectangles gardés, coupes) — les coupes en ``(sens, position, de,
+    a)``, dans l'ordre où on les passe. Le trait de scie tombe TOUJOURS
+    hors de la zone, dans le bon bois : ce qui est déclaré défaut est
+    perdu en entier, jamais rogné d'un trait."""
+    rects, coupes = [], []
+    ml, mr = r.x, r.x + r.w
+    if d.x - trait > r.x + EPS:
+        coupes.append((TRONCONNAGE, d.x - trait, r.y, r.y + r.h))
+        rects.append(_Rect(r.x, r.y, d.x - trait - r.x, r.h))
+        ml = d.x
+    if d.x + d.w + trait < r.x + r.w - EPS:
+        coupes.append((TRONCONNAGE, d.x + d.w, r.y, r.y + r.h))
+        rects.append(_Rect(d.x + d.w + trait, r.y,
+                           r.x + r.w - (d.x + d.w + trait), r.h))
+        mr = d.x + d.w
+    if d.y - trait > r.y + EPS:
+        coupes.append((DELIGNAGE, d.y - trait, ml, mr))
+        rects.append(_Rect(ml, r.y, mr - ml, d.y - trait - r.y))
+    if d.y + d.h + trait < r.y + r.h - EPS:
+        coupes.append((DELIGNAGE, d.y + d.h, ml, mr))
+        rects.append(_Rect(ml, d.y + d.h + trait, mr - ml,
+                           r.y + r.h - (d.y + d.h + trait)))
+    return rects, coupes
+
+
+def _autour_en_long(r: _Rect, d: _Rect, trait: float):
+    """Même chose en délignant d'abord (deux traits le long, de bord à
+    bord), puis en tronçonnant la bande du milieu — l'ordre qui garde des
+    brins pleine longueur de part et d'autre d'une fente."""
+    rects, coupes = [], []
+    mb, mh = r.y, r.y + r.h
+    if d.y - trait > r.y + EPS:
+        coupes.append((DELIGNAGE, d.y - trait, r.x, r.x + r.w))
+        rects.append(_Rect(r.x, r.y, r.w, d.y - trait - r.y))
+        mb = d.y
+    if d.y + d.h + trait < r.y + r.h - EPS:
+        coupes.append((DELIGNAGE, d.y + d.h, r.x, r.x + r.w))
+        rects.append(_Rect(r.x, d.y + d.h + trait, r.w,
+                           r.y + r.h - (d.y + d.h + trait)))
+        mh = d.y + d.h
+    if d.x - trait > r.x + EPS:
+        coupes.append((TRONCONNAGE, d.x - trait, mb, mh))
+        rects.append(_Rect(r.x, mb, d.x - trait - r.x, mh - mb))
+    if d.x + d.w + trait < r.x + r.w - EPS:
+        coupes.append((TRONCONNAGE, d.x + d.w, mb, mh))
+        rects.append(_Rect(d.x + d.w + trait, mb,
+                           r.x + r.w - (d.x + d.w + trait), mh - mb))
+    return rects, coupes
+
+
+def _retirer_zone(o: _Ouverte, zone, trait: float, split: str):
+    """Écarte une zone de défaut de tous les rectangles libres qu'elle
+    touche, par des coupes guillotine. ``split`` choisit l'ordre des
+    traits : « v » tronçonne d'abord, « h » déligne d'abord, « auto »
+    garde l'ordre qui laisse le plus grand rectangle d'un seul tenant."""
+    for r in list(o.libres):
+        d = _intersection(r, zone)
+        if d is None:
+            continue
+        o.libres.remove(r)
+        travers = _autour_en_travers(r, d, trait)
+        long_ = _autour_en_long(r, d, trait)
+        if split == "v":
+            rects, coupes = travers
+        elif split == "h":
+            rects, coupes = long_
+        else:
+            def merite(choix):
+                aires = sorted((x.aire for x in choix[0]), reverse=True)
+                return (aires[0] if aires else 0.0,
+                        sum(a * a for a in aires))
+            rects, coupes = max((travers, long_), key=merite)
+        for sens, position, de, a in coupes:
+            _couper(o, sens, position, de, a)
+        for x in rects:
+            _liberer(o, x.x, x.y, x.w, x.h)
+
+
+def _preparer(o: _Ouverte, params: Parametres, split: str):
+    """Applique les défauts de la planche AVANT toute pose : recoupe des
+    bouts (deux tronçonnages), des rives (deux délignages), puis chaque
+    zone à écarter. Une planche sans défaut ressort intacte."""
+    pl = o.planche
+    if not pl.a_des_defauts:
+        return
+    trait = params.trait_de_scie
+    x0, x1 = 0.0, pl.longueur
+    y0, y1 = 0.0, pl.largeur
+    if pl.recoupe_bouts > EPS:
+        _couper(o, TRONCONNAGE, pl.recoupe_bouts, y0, y1)
+        _couper(o, TRONCONNAGE, pl.longueur - pl.recoupe_bouts - trait, y0, y1)
+        x0 = pl.recoupe_bouts + trait
+        x1 = pl.longueur - pl.recoupe_bouts - trait
+    if pl.recoupe_rives > EPS:
+        _couper(o, DELIGNAGE, pl.recoupe_rives, x0, x1)
+        _couper(o, DELIGNAGE, pl.largeur - pl.recoupe_rives - trait, x0, x1)
+        y0 = pl.recoupe_rives + trait
+        y1 = pl.largeur - pl.recoupe_rives - trait
+    o.libres = []
+    _liberer(o, x0, y0, x1 - x0, y1 - y0)
+    for zone in pl.defauts:
+        _retirer_zone(o, zone, trait, split)
+
+
 def _liberer(o: _Ouverte, x: float, y: float, w: float, h: float):
     if w > EPS and h > EPS:
         o.libres.append(_Rect(x, y, w, h))
@@ -559,7 +720,8 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
     for idx, (pl, _ex) in enumerate(dispo):
         if not _epaisseur_compatible(piece.epaisseur, pl.epaisseur, params):
             continue
-        if any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
+        lg, la = _dims_utiles(pl, params)
+        if any(dx <= lg + EPS and dy <= la + EPS
                for dx, dy, _ in _orientations(piece, pl, params)):
             prio = 0 if (pl.chute and strat.chutes_d_abord) else 1
             if pl.chute:
@@ -569,19 +731,27 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
                 gaspillage = (0.0 if pl.prix > 0
                              else max(0.0, pl.epaisseur - piece.epaisseur))
             candidats.append((prio, cout, gaspillage, pl.aire, idx))
-    if not candidats:
-        return None
     candidats.sort()
-    pl, ex = dispo.pop(candidats[0][4])
-    ouvertes.append(_Ouverte(pl, ex))
-    return len(ouvertes) - 1
+    for *_, idx in candidats:
+        pl, ex = dispo[idx]
+        o = _Ouverte(pl, ex)
+        # Les défauts se retirent à l'ouverture : une planche trouée d'un
+        # nœud peut ne plus loger la pièce qui entrait dans son rectangle
+        # — on passe alors à la candidate suivante.
+        _preparer(o, params, strat.split)
+        if _meilleure_dans(o, piece, params, strat.fit) is not None:
+            dispo.pop(idx)
+            ouvertes.append(o)
+            return len(ouvertes) - 1
+    return None
 
 
 def _logerait_dims(piece: Piece, stock_unites: list,
                    params: Parametres) -> bool:
     """La pièce logerait-elle (longueur/largeur/fil) dans au moins un
     format du stock vierge, épaisseur mise à part ?"""
-    return any(dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
+    return any(dx <= _dims_utiles(pl, params)[0] + EPS
+               and dy <= _dims_utiles(pl, params)[1] + EPS
                for pl, _ex in stock_unites
                for dx, dy, _ in _orientations(piece, pl, params))
 
@@ -591,7 +761,8 @@ def _logerait_a_neuf(piece: Piece, stock_unites: list,
     """La pièce logerait-elle dans au moins un format du stock vierge,
     assez épais pour elle ?"""
     return any(_epaisseur_compatible(piece.epaisseur, pl.epaisseur, params)
-               and dx <= pl.longueur + EPS and dy <= pl.largeur + EPS
+               and dx <= _dims_utiles(pl, params)[0] + EPS
+               and dy <= _dims_utiles(pl, params)[1] + EPS
                for pl, _ex in stock_unites
                for dx, dy, _ in _orientations(piece, pl, params))
 
@@ -831,6 +1002,24 @@ def _valider(pieces: list, stock: list, params: Parametres):
         if s.quantite < 1:
             raise ValueError("planche « %s » : quantité invalide (%r)"
                              % (s.reference, s.quantite))
+        if s.recoupe_bouts < 0 or s.recoupe_rives < 0:
+            raise ValueError("planche « %s » : recoupe négative"
+                             % s.reference)
+        if (2 * s.recoupe_bouts >= s.longueur - EPS
+                or 2 * s.recoupe_rives >= s.largeur - EPS):
+            raise ValueError("planche « %s » : les recoupes mangent toute"
+                             " la planche" % s.reference)
+        for zone in s.defauts:
+            if len(zone) != 4:
+                raise ValueError("planche « %s » : une zone de défaut se"
+                                 " donne en x, y, longueur, largeur"
+                                 % s.reference)
+            x, y, dx, dy = zone
+            if (dx <= EPS or dy <= EPS or x < -EPS or y < -EPS
+                    or x + dx > s.longueur + EPS or y + dy > s.largeur + EPS):
+                raise ValueError("planche « %s » : zone de défaut %s hors"
+                                 " de la planche ou vide"
+                                 % (s.reference, tuple(_mm(v) for v in zone)))
     if (params.trait_de_scie < 0 or params.chute_mini_longueur < 0
             or params.chute_mini_largeur < 0 or params.surcote_longueur < 0
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
