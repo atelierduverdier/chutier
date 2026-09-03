@@ -88,12 +88,35 @@ def _planches(brut: list, quoi: str) -> list:
 # -- le projet ---------------------------------------------------------------
 
 def enregistrer(chemin: str, pieces: list, stock: list,
-                parametres: "opt.Parametres") -> None:
+                parametres: "opt.Parametres", epingles: list = ()) -> None:
+    """``epingles`` : les :class:`~optimiseur.Debit` épinglés — le plan
+    qu'on a validé à l'œil doit survivre à la fermeture."""
     _ecrire_atomique(chemin, {
         "pieces": [dataclasses.asdict(p) for p in pieces],
         "stock": [dataclasses.asdict(s) for s in stock],
         "parametres": dataclasses.asdict(parametres),
+        "epingles": [dataclasses.asdict(d) for d in epingles],
     })
+
+
+def _debit(brut: dict) -> "opt.Debit":
+    return opt.Debit(
+        opt.Planche(**brut["planche"]), int(brut["exemplaire"]),
+        [opt.Pose(**dict(p, piece=opt.Piece(**p["piece"])))
+         for p in brut["poses"]],
+        [opt.ChuteCreee(**c) for c in brut.get("chutes", [])],
+        [opt.Coupe(**c) for c in brut.get("coupes", [])])
+
+
+def lire_epingles(chemin: str) -> list:
+    """Les débits épinglés d'un projet — vide pour un projet d'avant les
+    épingles. Lève ``ValueError`` s'ils sont mal formés."""
+    donnees = _lire_json(chemin, "fichier de projet")
+    try:
+        return [_debit(d) for d in donnees.get("epingles", [])]
+    except (KeyError, TypeError) as erreur:
+        raise ValueError("épingles du projet mal formées : %s" % erreur) \
+            from erreur
 
 
 def lire(chemin: str):

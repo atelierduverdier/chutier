@@ -389,6 +389,72 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class EpinglesEtPlancheImposee(unittest.TestCase):
+
+    def test_epingler_garde_la_planche_au_recalcul(self):
+        f = _fenetre()
+        fixe = f._resultat.debits[1]
+        f._epingler(2)
+        self.assertEqual(f._epingles, [fixe])
+        self.assertEqual(f.vue.epinglees, {1})
+        repris = f._resultat.debits[0]
+        self.assertEqual([(p.piece.reference, p.x, p.y) for p in repris.poses],
+                         [(p.piece.reference, p.x, p.y) for p in fixe.poses])
+        self.assertIn("ÉPINGLÉE", "".join(
+            it.text() for it in f.vue.scene().items()
+            if hasattr(it, "text")))
+        f._desepingler(1)
+        self.assertEqual(f._epingles, [])
+        self.assertEqual(f.vue.epinglees, set())
+
+    def test_une_epingle_perimee_se_relache_sans_bloquer(self):
+        f = _fenetre()
+        f._epingler(1)
+        f.table_pieces.item(0, 1).setText("1700")      # le montant change
+        with mock.patch.object(interface.QMessageBox, "warning") as boite:
+            f._calculer()
+        boite.assert_not_called()
+        self.assertEqual(f._epingles, [])
+        self.assertTrue(f._a_jour)
+
+    def test_les_epingles_survivent_a_l_enregistrement(self):
+        f = _fenetre()
+        f._epingler(1)
+        chemin = os.path.join(_JETABLE, "epingle.json")
+        f._chemin = chemin
+        f._enregistrer()
+        g = _fenetre()
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(chemin, "")):
+            g._ouvrir()
+        self.assertEqual(g._epingles, f._epingles)
+        self.assertEqual(g.vue.epinglees, {1})
+
+    def test_imposer_une_planche_depuis_le_plan(self):
+        f = _fenetre()
+        f._imposer_planche("tablette", "chute étagère")
+        tablettes = [p for p in f.table_pieces.pieces()
+                     if p.reference == "tablette"]
+        self.assertEqual([p.planche for p in tablettes], ["chute étagère"])
+        # une seule tablette y loge : les deux autres sont non placées,
+        # avec la raison qui le dit
+        self.assertEqual(f._resultat.bilan.nb_non_placees, 2)
+        self.assertEqual(f._resultat.non_placees[0].raison,
+                         opt.RAISON_PLANCHE_PLEINE)
+        f._imposer_planche("tablette", "")
+        self.assertEqual(f._resultat.bilan.nb_non_placees, 0)
+
+    def test_la_colonne_planche_fait_l_aller_retour(self):
+        stock = tsa.TableStock()
+        stock.remplir(STOCK)
+        self.assertEqual(stock.references(),
+                         ["sapin 2400x200", "chute etagere"])
+        pieces = tsa.TablePieces(stock.matieres, stock.references)
+        avec = [opt.Piece("t", 560, 180, 18, "sapin", planche="chute etagere")]
+        pieces.remplir(avec)
+        self.assertEqual(pieces.pieces(), avec)
+
+
 class Fenetre(unittest.TestCase):
 
     @classmethod

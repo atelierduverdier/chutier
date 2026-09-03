@@ -27,8 +27,9 @@ from PySide6.QtWidgets import (
 
 import optimiseur as opt
 
-TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS = (
-    "texte", "nombre", "entier", "choix", "booleen", "matiere", "defauts")
+TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS, PLANCHE = (
+    "texte", "nombre", "entier", "choix", "booleen", "matiere", "defauts",
+    "planche")
 
 ROLE_VALEUR = Qt.ItemDataRole.UserRole + 1
 
@@ -193,27 +194,36 @@ class DelegateChoix(QStyledItemDelegate):
         modele.setData(index, editeur.currentData(), ROLE_VALEUR)
 
 
-class DelegateMatiere(QStyledItemDelegate):
-    """Les matières déjà connues du stock, relues à l'ouverture du menu —
-    une liste figée à la création de la ligne serait périmée dès le stock
-    modifié. Éditable : une matière neuve se tape directement."""
+class DelegateListe(QStyledItemDelegate):
+    """Un texte libre, avec sous la main une liste relue à l'ouverture du
+    menu — les matières connues du stock, ou ses références. Une liste
+    figée à la création de la ligne serait périmée dès le stock modifié.
+    Éditable : une valeur neuve se tape directement."""
 
-    def __init__(self, matieres_connues, parent=None):
+    def __init__(self, source, parent=None, vide=""):
         super().__init__(parent)
-        self._matieres = matieres_connues
+        self._source = source
+        self._vide = vide
 
     def createEditor(self, parent, option, index):
         combo = QComboBox(parent)
         combo.setEditable(True)
-        combo.addItems(self._matieres())
+        if self._vide:
+            combo.addItem(self._vide, "")
+        combo.addItems(self._source())
         return combo
 
     def setEditorData(self, editeur, index):
         editeur.setCurrentText(index.data(Qt.ItemDataRole.DisplayRole) or "")
 
     def setModelData(self, editeur, modele, index):
-        modele.setData(index, editeur.currentText().strip(),
-                       Qt.ItemDataRole.DisplayRole)
+        texte = editeur.currentText().strip()
+        if self._vide and texte == self._vide:
+            texte = ""
+        modele.setData(index, texte, Qt.ItemDataRole.DisplayRole)
+
+
+DelegateMatiere = DelegateListe
 
 
 class DelegateBooleen(QStyledItemDelegate):
@@ -584,11 +594,27 @@ class TablePieces(TableEditable):
                 " reconstituer en collant plusieurs lames côte à côte"
                 " (ou en tenon-rainure) plutôt que de rester non placée.",
                 False),
+        Colonne("Planche", "planche", PLANCHE,
+                "Imposer la ligne de stock où tailler cette pièce (sa"
+                " référence) — vide, le chutier choisit. Se remplit aussi"
+                " d'un clic droit sur la pièce, dans le plan.", ""),
     )
 
-    def __init__(self, matieres_connues):
+    COLONNE_PLANCHE = 8
+
+    def __init__(self, matieres_connues, references_stock=lambda: []):
         super().__init__()
-        self.setItemDelegateForColumn(4, DelegateMatiere(matieres_connues, self))
+        self.setItemDelegateForColumn(4, DelegateListe(matieres_connues, self))
+        self.setItemDelegateForColumn(
+            self.COLONNE_PLANCHE,
+            DelegateListe(references_stock, self, vide="(au choix)"))
+
+    def imposer_planche(self, reference_piece: str, reference_planche: str):
+        """Écrit ``reference_planche`` sur toutes les lignes de la pièce
+        nommée — l'effet du clic droit sur le plan."""
+        for ligne in self.lignes_utiles():
+            if self.texte(ligne, 0) == reference_piece:
+                self.item(ligne, self.COLONNE_PLANCHE).setText(reference_planche)
 
     def pieces(self) -> list:
         return [opt.Piece(**self.valeurs_ligne(l)) for l in self.lignes_utiles()]
@@ -668,7 +694,7 @@ class TableStock(TableEditable):
 
     def __init__(self):
         super().__init__()
-        self.setItemDelegateForColumn(4, DelegateMatiere(self.matieres, self))
+        self.setItemDelegateForColumn(4, DelegateListe(self.matieres, self))
 
     def stock(self) -> list:
         return [opt.Planche(**self.valeurs_ligne(l))
@@ -677,6 +703,17 @@ class TableStock(TableEditable):
     def matieres(self) -> list:
         return sorted({self.texte(l, 4) for l in range(self.rowCount())
                        if self.texte(l, 4)})
+
+    def references(self) -> list:
+        """Les références du stock, dans l'ordre de la table — ce qu'une
+        pièce peut s'imposer comme planche."""
+        vues, refs = set(), []
+        for l in self.lignes_utiles():
+            ref = self.texte(l, 0)
+            if ref not in vues:
+                vues.add(ref)
+                refs.append(ref)
+        return refs
 
     def resume(self) -> str:
         try:

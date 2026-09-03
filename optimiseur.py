@@ -39,6 +39,7 @@ Tout est déterministe : mêmes entrées, même graine → même résultat.
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from dataclasses import dataclass, field
 
@@ -58,6 +59,9 @@ RAISON_INCOMPATIBLE = "aucune planche de cette matière dans le stock"
 RAISON_TROP_GRANDE = "trop grande pour les formats du stock (fil compris)"
 RAISON_TROP_EPAISSE = "aucune planche assez épaisse pour cette pièce"
 RAISON_PLUS_DE_PLACE = "plus de place dans le stock fourni"
+RAISON_PLANCHE_INCONNUE = "sa planche imposée n'est pas dans le stock"
+RAISON_PLANCHE_IMPOSEE = "sa planche imposée ne peut pas la recevoir"
+RAISON_PLANCHE_PLEINE = "plus de place sur sa planche imposée"
 
 PRIORITE_BOIS = "bois"   # moins de pertes d'abord, puis moins de coupes
 PRIORITE_SCIE = "scie"   # moins de coupes d'abord, puis moins de pertes
@@ -79,6 +83,11 @@ class Piece:
     sens du fil ne change pas d'une lame à l'autre) ; sans effet sur une
     pièce ``FIL_LARGEUR``, ni sur une pièce qui logerait déjà telle
     quelle (moins de joints, plus solide).
+
+    ``planche`` : la référence d'une ligne de stock où tailler cette
+    pièce, imposée — vide, le chutier choisit. C'est le geste « non, pas
+    celle-là, prends-la dans la chute du fond » ; le reste du plan se
+    recalcule autour.
     """
 
     reference: str
@@ -89,6 +98,7 @@ class Piece:
     quantite: int = 1
     fil: str = FIL_LONGUEUR
     composable: bool = False
+    planche: str = ""
 
     @property
     def aire(self) -> float:
@@ -509,6 +519,13 @@ _CLES_TRI = {
 }
 
 
+def _admise(piece: Piece, planche: Planche) -> bool:
+    """La pièce accepte-t-elle cette planche ? Toujours, sauf si elle en
+    impose une autre par sa référence."""
+    return (not piece.planche
+            or _cle_matiere(piece.planche) == _cle_matiere(planche.reference))
+
+
 def _orientations(piece: Piece, planche: Planche, params: Parametres):
     """Les couples (dim_x, dim_y, pivotee) permis par le fil, surcote
     comprise. La surcote suit la pièce : elle pivote avec elle."""
@@ -736,6 +753,8 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
     for idx, (pl, _ex) in enumerate(dispo):
         if not _epaisseur_compatible(piece.epaisseur, pl.epaisseur, params):
             continue
+        if not _admise(piece, pl):
+            continue
         lg, la = _dims_utiles(pl, params)
         if any(dx <= lg + EPS and dy <= la + EPS
                for dx, dy, _ in _orientations(piece, pl, params)):
@@ -802,6 +821,8 @@ def _resoudre(unites: list, stock_unites: list, params: Parametres,
             if not _epaisseur_compatible(piece.epaisseur, o.planche.epaisseur,
                                          params):
                 continue                  # planche déjà ouverte, trop mince
+            if not _admise(piece, o.planche):
+                continue
             local = _meilleure_dans(o, piece, params, strat.fit)
             if local is not None:
                 score, ir, dx, dy, piv = local
@@ -811,9 +832,16 @@ def _resoudre(unites: list, stock_unites: list, params: Parametres,
         if choix is None:
             io = _ouvrir(ouvertes, dispo, piece, params, strat)
             if io is None:
-                if _logerait_a_neuf(piece, stock_unites, params):
-                    raison = RAISON_PLUS_DE_PLACE
-                elif _logerait_dims(piece, stock_unites, params):
+                admises = [(pl, ex) for pl, ex in stock_unites
+                           if _admise(piece, pl)]
+                if piece.planche and not admises:
+                    raison = RAISON_PLANCHE_INCONNUE
+                elif _logerait_a_neuf(piece, admises, params):
+                    raison = (RAISON_PLANCHE_PLEINE if piece.planche
+                              else RAISON_PLUS_DE_PLACE)
+                elif piece.planche:
+                    raison = RAISON_PLANCHE_IMPOSEE
+                elif _logerait_dims(piece, admises, params):
                     raison = RAISON_TROP_EPAISSE
                 else:
                     raison = RAISON_TROP_GRANDE
@@ -1001,7 +1029,109 @@ def _decomposer_composables(pieces: list, stock: list,
         for i in range(1, n + 1):
             resultat.append(Piece(
                 "%s (lame %d/%d)" % (p.reference, i, n), p.longueur,
-                largeur_lame, p.epaisseur, p.matiere, p.quantite, p.fil))
+                largeur_lame, p.epaisseur, p.matiere, p.quantite, p.fil,
+                planche=p.planche))
+    return resultat
+
+
+# ---------------------------------------------------------------------------
+# Épingles : des débits repris tels quels
+# ---------------------------------------------------------------------------
+
+def _meme(objet):
+    """L'identité d'une pièce ou d'une planche, quantité mise à part :
+    c'est à elle qu'on reconnaît, dans la saisie courante, ce qu'une
+    épingle désigne."""
+    return dataclasses.replace(objet, quantite=1)
+
+
+def _appliquer_epingles(pieces: list, stock: list, epingles: list):
+    """Retire de la demande et du stock ce que les débits épinglés
+    consomment déjà. Rend (pièces restantes, stock restant, débits
+    fixés) — les débits fixés pointant sur les objets de la saisie
+    COURANTE, pour que le reste de la chaîne (décompte des planches
+    entamées, achats) les reconnaisse.
+
+    Lève ``ValueError`` si une épingle ne colle plus à la saisie : sa
+    planche a disparu du stock, une de ses pièces de la liste, ou il n'y
+    en a plus assez d'exemplaires. Une épingle ne se rattrape pas à peu
+    près : c'est le plan qu'on a validé à l'œil, ou rien."""
+    pieces_par = {}
+    for p in pieces:
+        pieces_par.setdefault(_meme(p), []).append(p)
+    stock_par = {}
+    for pl in stock:
+        stock_par.setdefault(_meme(pl), []).append(pl)
+    besoin_pieces, besoin_stock, fixes = {}, {}, []
+    for d in epingles:
+        cle_pl = _meme(d.planche)
+        if cle_pl not in stock_par:
+            raise ValueError("épingle : la planche « %s » n'est plus dans"
+                             " le stock" % d.planche.reference)
+        planche = stock_par[cle_pl][0]
+        if not planche.illimite:
+            besoin_stock[cle_pl] = besoin_stock.get(cle_pl, 0) + 1
+        poses = []
+        for pose in d.poses:
+            cle_p = _meme(pose.piece)
+            if cle_p not in pieces_par:
+                raise ValueError("épingle : la pièce « %s » n'est plus dans"
+                                 " la liste, ou plus aux mêmes cotes"
+                                 % pose.piece.reference)
+            besoin_pieces[cle_p] = besoin_pieces.get(cle_p, 0) + 1
+            poses.append(dataclasses.replace(pose, piece=pieces_par[cle_p][0]))
+        fixes.append(Debit(planche, d.exemplaire, poses, list(d.chutes),
+                           list(d.coupes)))
+
+    restantes = []
+    for p in pieces:
+        cle = _meme(p)
+        pris = min(besoin_pieces.get(cle, 0), p.quantite)
+        besoin_pieces[cle] = besoin_pieces.get(cle, 0) - pris
+        if p.quantite - pris > 0:
+            restantes.append(dataclasses.replace(p, quantite=p.quantite - pris))
+    for cle, reste in besoin_pieces.items():
+        if reste > 0:
+            raise ValueError("épingle : plus assez d'exemplaires de « %s »"
+                             " (%d de plus que la liste n'en compte)"
+                             % (cle.reference, reste))
+    restant = []
+    for pl in stock:
+        cle = _meme(pl)
+        pris = min(besoin_stock.get(cle, 0), pl.quantite)
+        besoin_stock[cle] = besoin_stock.get(cle, 0) - pris
+        if pl.quantite - pris > 0:
+            restant.append(dataclasses.replace(pl, quantite=pl.quantite - pris))
+    for cle, reste in besoin_stock.items():
+        if reste > 0:
+            raise ValueError("épingle : plus assez d'exemplaires de la"
+                             " planche « %s »" % cle.reference)
+    return restantes, restant, fixes
+
+
+def _renumeroter(debits: list, pieces: list, stock: list) -> list:
+    """Après un débit à épingles, deux numérotations se chevauchent :
+    les exemplaires de pièces (« montant 1/4 ») et de planches (« ex. 2 »)
+    des débits fixés, et ceux du reste, reparti de 1. On renumérote tout
+    à la suite, et chaque pose retrouve la pièce de la saisie ENTIÈRE
+    (celle du solveur avait sa quantité amputée des exemplaires
+    épinglés)."""
+    pieces_par = {_meme(p): p for p in pieces}
+    stock_par = {_meme(pl): pl for pl in stock}
+    compte_pieces, compte_planches, resultat = {}, {}, []
+    for d in debits:
+        cle_pl = _meme(d.planche)
+        compte_planches[cle_pl] = compte_planches.get(cle_pl, 0) + 1
+        poses = []
+        for pose in d.poses:
+            cle = _meme(pose.piece)
+            compte_pieces[cle] = compte_pieces.get(cle, 0) + 1
+            poses.append(dataclasses.replace(
+                pose, piece=pieces_par.get(cle, pose.piece),
+                exemplaire=compte_pieces[cle]))
+        resultat.append(Debit(stock_par.get(cle_pl, d.planche),
+                              compte_planches[cle_pl], poses, d.chutes,
+                              d.coupes))
     return resultat
 
 
@@ -1058,7 +1188,8 @@ def _valider(pieces: list, stock: list, params: Parametres):
 
 
 def optimiser(pieces: list, stock: list,
-              parametres: "Parametres | None" = None) -> Resultat:
+              parametres: "Parametres | None" = None,
+              epingles: list = ()) -> Resultat:
     """Calcule la feuille de débit.
 
     ``pieces`` : liste de :class:`Piece` ; ``stock`` : liste de
@@ -1071,6 +1202,12 @@ def optimiser(pieces: list, stock: list,
     (:func:`_decomposer_composables`) ; le solveur ne voit ensuite que
     des pièces ordinaires.
 
+    ``epingles`` : des :class:`Debit` d'un calcul précédent à reprendre
+    TELS QUELS — la planche qu'on a validée à l'œil. Leurs pièces et
+    leur planche sortent de la demande, le reste se recalcule autour ;
+    ils ouvrent la liste des débits rendus. Lève ``ValueError`` si une
+    épingle ne colle plus à la saisie (planche ou pièce disparue).
+
     Exemple::
 
         stock = [Planche("sapin", 2400, 200, 18, "sapin", quantite=4)]
@@ -1080,10 +1217,12 @@ def optimiser(pieces: list, stock: list,
     """
     params = parametres or Parametres()
     _valider(pieces, stock, params)
+    pieces_saisies, stock_saisi = list(pieces), list(stock)
     pieces = _decomposer_composables(pieces, stock, params)
+    pieces, stock, debits = _appliquer_epingles(pieces, stock, list(epingles))
 
     groupes = _grouper(pieces, stock)
-    debits, non_placees = [], []
+    non_placees = []
     for cle in sorted(groupes):
         pieces_g, stock_g = groupes[cle]
         if not pieces_g:
@@ -1122,6 +1261,9 @@ def optimiser(pieces: list, stock: list,
         debits.extend(meilleure[1].debits)
         non_placees.extend(meilleure[1].non_placees)
 
+    if epingles:
+        debits = _renumeroter(debits, _decomposer_composables(
+            pieces_saisies, stock_saisi, params), stock_saisi)
     return Resultat(debits, non_placees, _bilan(debits, non_placees))
 
 

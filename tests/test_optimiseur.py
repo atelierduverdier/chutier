@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from optimiseur import (  # noqa: E402
     EPS, FIL_INDIFFERENT, FIL_LARGEUR, FIL_LONGUEUR,
     RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
-    RAISON_TROP_GRANDE, PRIORITE_BOIS, PRIORITE_SCIE, Achat, Parametres,
+    RAISON_TROP_GRANDE, RAISON_PLANCHE_IMPOSEE, RAISON_PLANCHE_INCONNUE,
+    RAISON_PLANCHE_PLEINE, PRIORITE_BOIS, PRIORITE_SCIE, Achat, Parametres,
     Piece, Planche, optimiser, _nombre_de_lames, _plus_large_compatible,
 )
 
@@ -182,6 +183,90 @@ class ProprietesGeometriques(unittest.TestCase):
                         18, "bois", quantite=rng.randint(1, 3))
                   for i in range(30)]
         self._verifier(optimiser(pieces, stock, RAPIDE), pieces, RAPIDE)
+
+
+class Epingles(unittest.TestCase):
+    """Un débit épinglé est repris tel quel ; ses pièces et sa planche
+    sortent de la demande ; le reste se recalcule autour."""
+
+    PIECES = [Piece("montant", 1750, 60, 18, "sapin", 4),
+              Piece("traverse", 560, 60, 18, "sapin", 6),
+              Piece("tablette", 560, 180, 18, "sapin", 3),
+              Piece("taquet", 120, 40, 18, "sapin", 8, FIL_INDIFFERENT)]
+    STOCK = [Planche("sapin", 2400, 200, 18, "sapin", 4),
+             Planche("chute", 800, 180, 18, "sapin", chute=True)]
+
+    def test_l_epingle_ouvre_la_liste_telle_quelle(self):
+        premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
+        fixe = premier.debits[1]
+        second = optimiser(self.PIECES, self.STOCK, RAPIDE, epingles=[fixe])
+        repris = second.debits[0]
+        self.assertEqual([(p.piece.reference, p.x, p.y) for p in repris.poses],
+                         [(p.piece.reference, p.x, p.y) for p in fixe.poses])
+        self.assertEqual(repris.coupes, fixe.coupes)
+        self.assertEqual(second.bilan.nb_posees, premier.bilan.nb_posees)
+        self.assertEqual(second.bilan.nb_non_placees, 0)
+
+    def test_les_exemplaires_se_renumerotent_sans_doublon(self):
+        premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
+        second = optimiser(self.PIECES, self.STOCK, RAPIDE,
+                           epingles=[premier.debits[0]])
+        poses = [(p.piece.reference, p.exemplaire)
+                 for d in second.debits for p in d.poses]
+        self.assertEqual(len(poses), len(set(poses)))
+        for d in second.debits:
+            for p in d.poses:
+                self.assertLessEqual(p.exemplaire, p.piece.quantite)
+                self.assertIn(p.piece, self.PIECES)     # la pièce ENTIÈRE
+        planches = [(d.planche, d.exemplaire) for d in second.debits]
+        self.assertEqual(len(planches), len(set(planches)))
+
+    def test_une_epingle_qui_ne_colle_plus_leve(self):
+        premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
+        sans_tablette = [p for p in self.PIECES if p.reference != "tablette"]
+        with self.assertRaises(ValueError) as leve:
+            optimiser(sans_tablette, self.STOCK, RAPIDE,
+                      epingles=[premier.debits[0]])
+        self.assertIn("épingle", str(leve.exception))
+        with self.assertRaises(ValueError):
+            optimiser(self.PIECES, self.STOCK[1:], RAPIDE,
+                      epingles=[premier.debits[0]])
+
+    def test_la_demande_en_plus_se_range_autour(self):
+        premier = optimiser(self.PIECES, self.STOCK, RAPIDE)
+        plus = self.PIECES + [Piece("cale", 200, 50, 18, "sapin", 2)]
+        second = optimiser(plus, self.STOCK, RAPIDE,
+                           epingles=[premier.debits[0]])
+        self.assertEqual(second.bilan.nb_demandees, 23)
+        self.assertEqual(second.bilan.nb_non_placees, 0)
+
+
+class PlancheImposee(unittest.TestCase):
+
+    STOCK = [Planche("sapin", 2400, 200, 18, "sapin", 4),
+             Planche("chute", 800, 180, 18, "sapin", chute=True)]
+
+    def test_la_piece_va_ou_on_lui_dit(self):
+        r = optimiser([Piece("t", 560, 180, 18, "sapin", planche="sapin")],
+                      self.STOCK, RAPIDE)
+        self.assertEqual(r.debits[0].planche.reference, "sapin")
+
+    def test_reference_a_la_casse_pres(self):
+        r = optimiser([Piece("t", 560, 180, 18, "sapin", planche=" Chute ")],
+                      self.STOCK, RAPIDE)
+        self.assertEqual(r.debits[0].planche.reference, "chute")
+
+    def test_raisons(self):
+        pleine = optimiser([Piece("t", 560, 180, 18, "sapin", 2,
+                                  planche="chute")], self.STOCK, RAPIDE)
+        self.assertEqual(pleine.non_placees[0].raison, RAISON_PLANCHE_PLEINE)
+        inconnue = optimiser([Piece("t", 560, 180, 18, "sapin",
+                                    planche="rien")], self.STOCK, RAPIDE)
+        self.assertEqual(inconnue.non_placees[0].raison,
+                         RAISON_PLANCHE_INCONNUE)
+        trop = optimiser([Piece("t", 900, 180, 18, "sapin", planche="chute")],
+                         self.STOCK, RAPIDE)
+        self.assertEqual(trop.non_placees[0].raison, RAISON_PLANCHE_IMPOSEE)
 
 
 class Priorite(unittest.TestCase):

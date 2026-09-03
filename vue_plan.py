@@ -63,7 +63,10 @@ class VuePlan(QGraphicsView):
         self._etiquettes = []
         self._cadres = {}          # numero -> QGraphicsRectItem du contour
         self._zones = {}           # numero -> QRectF de la planche en scène
+        self._poses = {}           # QGraphicsRectItem -> (numero, Pose)
         self._selection = None
+        self.epinglees = set()     # numéros des planches épinglées
+        self.au_menu = None        # rappel (numero, pose|None, position)
         self._zoom_manuel = False
         self._traits_visibles = False
         self._facteur_texte = 1.0
@@ -98,6 +101,7 @@ class VuePlan(QGraphicsView):
         self._etiquettes = []
         self._cadres = {}
         self._zones = {}
+        self._poses = {}
         self._selection = None
         if not self._debits:
             scene.setSceneRect(QRectF())
@@ -140,11 +144,12 @@ class VuePlan(QGraphicsView):
         plusieurs = pl.quantite > 1 or pl.illimite
         exemplaire = " (ex. %d)" % debit.exemplaire if plusieurs else ""
         libelle = ("%d.  %s%s   —   %s × %s × %s mm, %s%s   —   %d pièce(s),"
-                   " rendement %s %%"
+                   " rendement %s %%%s"
                    % (numero, pl.reference, exemplaire, opt._mm(pl.longueur),
                       opt._mm(pl.largeur), opt._mm(pl.epaisseur), pl.matiere,
                       " [%s]" % marque if marque else "",
-                      len(debit.poses), opt._pct(debit.rendement)))
+                      len(debit.poses), opt._pct(debit.rendement),
+                      "   —   ÉPINGLÉE" if numero in self.epinglees else ""))
         texte = QGraphicsSimpleTextItem(libelle)
         police = QFont()
         police.setPointSize(10)
@@ -178,12 +183,13 @@ class VuePlan(QGraphicsView):
                             trait=apparence.PLAN_DEFAUT_TRAIT, info=info)
 
         for pose in debit.poses:
-            self._rectangle(
+            rect = self._rectangle(
                 scene, numero, pose.x, pose.y, pose.dim_x, pose.dim_y,
                 pl.largeur, y_haut, self.couleur(pose.piece.reference),
                 "%s\n%s × %s" % (pose.piece.reference, opt._mm(pose.dim_x),
                                  opt._mm(pose.dim_y)),
                 pose.piece.reference)
+            self._poses[rect] = (numero, pose)
 
         for chute in debit.chutes:
             self._rectangle(
@@ -201,6 +207,17 @@ class VuePlan(QGraphicsView):
         cadre.setZValue(10)
         scene.addItem(cadre)
         self._cadres[numero] = cadre
+        if numero in self.epinglees:
+            # Un liseré pointillé sur toute la planche : elle ne bougera
+            # plus au prochain calcul, il faut que ça se voie.
+            epingle = QGraphicsRectItem(zone)
+            stylo = QPen(apparence.PLAN_BORD, max(pl.longueur, 1) / 300)
+            stylo.setStyle(Qt.PenStyle.DashLine)
+            epingle.setPen(stylo)
+            epingle.setZValue(9)
+            epingle.setToolTip("Planche épinglée : reprise telle quelle au"
+                               " prochain calcul (clic droit pour relâcher).")
+            scene.addItem(epingle)
 
     def couleur(self, reference: str):
         return self.couleurs.get(reference) or apparence.couleur_piece(reference)
@@ -263,7 +280,7 @@ class VuePlan(QGraphicsView):
                         else etiquette.replace("\n", " "))
         scene.addItem(rect)
         if etiquette is None:
-            return
+            return rect
 
         # Une planche de menuiserie est souvent longue et étroite (un
         # 150×3000) : la pièce posée peut être trop basse pour ses deux
@@ -287,6 +304,7 @@ class VuePlan(QGraphicsView):
             cote_hors = "dessus"
         self._etiquettes.append(
             (complet, court, hors, cote_hors, dx, dy, x + dx / 2, numero))
+        return rect
 
     def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
                       cote="dedans"):
@@ -339,6 +357,13 @@ class VuePlan(QGraphicsView):
                 return numero
         return None
 
+    def pose_sous(self, position):
+        """(numéro, Pose) de la pièce sous un point de la vue, ou None."""
+        for item in self.items(position):
+            if item in self._poses:
+                return self._poses[item]
+        return None
+
     def mousePressEvent(self, evenement):
         numero = self.planche_sous(evenement.position().toPoint())
         if numero is not None and numero != self._selection:
@@ -346,6 +371,19 @@ class VuePlan(QGraphicsView):
             if callable(getattr(self, "au_clic_planche", None)):
                 self.au_clic_planche(numero)
         super().mousePressEvent(evenement)
+
+    def contextMenuEvent(self, evenement):
+        """Clic droit : la fenêtre bâtit le menu (épingler la planche,
+        imposer une planche à la pièce) — la vue ne sait que ce qu'il y
+        a sous la souris."""
+        position = evenement.pos()
+        numero = self.planche_sous(position)
+        if numero is None or not callable(self.au_menu):
+            super().contextMenuEvent(evenement)
+            return
+        trouvee = self.pose_sous(position)
+        pose = trouvee[1] if trouvee else None
+        self.au_menu(numero, pose, evenement.globalPos())
 
     # -- zoom -------------------------------------------------------------
 

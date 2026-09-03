@@ -23,7 +23,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
+    QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
     QToolButton, QVBoxLayout, QWidget,
 )
@@ -112,6 +112,7 @@ class FenetrePrincipale(QMainWindow):
         self.setWindowTitle(TITRE)
         self.resize(1500, 900)
         self._resultat = None
+        self._epingles = []        # Debit repris tels quels au calcul
         self._chemin = None
         self._modifie = False
         self._a_jour = False
@@ -229,6 +230,10 @@ class FenetrePrincipale(QMainWindow):
             "&Calculer le débit", self._calculer, "F5",
             ("system-run", "media-playback-start", "view-refresh"),
             "Recalculer la feuille de débit (F5)")
+        self.a_desepingler = self._acte(
+            "Tout &désépingler", self._tout_desepingler, None, None,
+            "Relâcher toutes les planches épinglées : le prochain calcul"
+            " repart de zéro")
         self.a_saisie = QAction("Masquer la &saisie", self)
         self.a_saisie.setCheckable(True)
         self.a_saisie.setShortcut(QKeySequence("Ctrl+M"))
@@ -268,6 +273,7 @@ class FenetrePrincipale(QMainWindow):
 
         debit = menu.addMenu("&Débit")
         debit.addAction(self.a_calculer)
+        debit.addAction(self.a_desepingler)
         debit.addSeparator()
         debit.addAction(self.a_saisie)
 
@@ -295,7 +301,8 @@ class FenetrePrincipale(QMainWindow):
 
     def _onglets_saisie(self) -> QWidget:
         self.table_stock = tsa.TableStock()
-        self.table_pieces = tsa.TablePieces(self.table_stock.matieres)
+        self.table_pieces = tsa.TablePieces(self.table_stock.matieres,
+                                            self.table_stock.references)
 
         self.onglets_saisie = QTabWidget()
         self.onglets_saisie.setDocumentMode(True)
@@ -540,6 +547,7 @@ class FenetrePrincipale(QMainWindow):
         self.vue = vue_plan.VuePlan()
         self.vue.setMinimumWidth(300)
         self.vue.au_clic_planche = self._planche_cliquee
+        self.vue.au_menu = self._menu_du_plan
         scission.addWidget(self.vue)
         scission.setStretchFactor(0, 0)
         scission.setStretchFactor(1, 1)
@@ -568,7 +576,8 @@ class FenetrePrincipale(QMainWindow):
 
         colonne.addWidget(apparence.discret(
             "Ctrl+molette : zoomer — glisser : déplacer — double-clic :"
-            " ajuster — clic sur une planche : la sélectionner."))
+            " ajuster — clic sur une planche : la sélectionner — clic"
+            " droit : épingler la planche, imposer une planche à la pièce."))
         return page
 
     def _page_achats(self) -> QWidget:
@@ -617,6 +626,8 @@ class FenetrePrincipale(QMainWindow):
         la liste d'achats sa ligne et la légende ses pastilles — un projet
         neuf s'ouvrait avec le bilan du précédent."""
         self._resultat = None
+        self._epingles = []
+        self.vue.epinglees = set()
         self._a_jour = False
         self.bilan.vider()
         self.vue.afficher([])
@@ -788,7 +799,20 @@ class FenetrePrincipale(QMainWindow):
             stock = self.table_stock.stock()
             if not pieces:
                 raise ErreurSaisie("aucune pièce à débiter")
-            resultat = opt.optimiser(pieces, stock, self._parametres_actuels())
+            parametres = self._parametres_actuels()
+            try:
+                resultat = opt.optimiser(pieces, stock, parametres,
+                                         epingles=self._epingles)
+            except ValueError as erreur:
+                if not self._epingles or not str(erreur).startswith("épingle"):
+                    raise
+                # Une épingle qui ne colle plus (pièce ou planche changée)
+                # ne doit pas bloquer le calcul : on la relâche, on le
+                # dit, et on recalcule libre.
+                self.statusBar().showMessage(
+                    "Épingles relâchées — %s" % erreur, 10000)
+                self._epingles = []
+                resultat = opt.optimiser(pieces, stock, parametres)
         except (ErreurSaisie, ValueError) as erreur:
             plainte = str(erreur)
         finally:
@@ -877,6 +901,9 @@ class FenetrePrincipale(QMainWindow):
         # changeant de mode.
         self.vue.couleurs = apparence.palette_pieces(
             {pose.piece.reference for d in r.debits for pose in d.poses})
+        # Les débits épinglés ouvrent la liste, dans l'ordre où ils ont
+        # été donnés — c'est leur rang qui les marque sur le plan.
+        self.vue.epinglees = set(range(1, len(self._epingles) + 1))
 
         self.liste_planches.blockSignals(True)
         self.liste_planches.clear()
@@ -953,6 +980,76 @@ class FenetrePrincipale(QMainWindow):
         self.liste_planches.blockSignals(True)
         self.liste_planches.setCurrentRow(numero - 1)
         self.liste_planches.blockSignals(False)
+
+    # -- épingles et planches imposées --------------------------------------------
+
+    def _menu_du_plan(self, numero, pose, position):
+        """Le clic droit sur le plan : épingler / relâcher la planche, et
+        pour une pièce, la tailler ailleurs — les deux façons de dire au
+        chutier « pas comme ça » sans tricher sur les quantités."""
+        if self._resultat is None:
+            return
+        menu = QMenu(self)
+        debit = self._resultat.debits[numero - 1]
+        if numero in self.vue.epinglees:
+            menu.addAction("Relâcher la planche %d" % numero,
+                           lambda: self._desepingler(numero))
+        else:
+            menu.addAction("Épingler la planche %d — la garder telle quelle"
+                           % numero, lambda: self._epingler(numero))
+        if pose is not None:
+            menu.addSeparator()
+            sous = menu.addMenu("Tailler « %s » dans…" % pose.piece.reference)
+            for reference in self.table_stock.references():
+                action = sous.addAction(reference)
+                action.setCheckable(True)
+                action.setChecked(reference == pose.piece.planche)
+                action.triggered.connect(
+                    lambda _=False, r=reference, p=pose.piece.reference:
+                    self._imposer_planche(p, r))
+            if pose.piece.planche:
+                sous.addSeparator()
+                sous.addAction("Laisser le chutier choisir",
+                               lambda p=pose.piece.reference:
+                               self._imposer_planche(p, ""))
+        menu.exec(position)
+        del debit
+
+    def _epingler(self, numero):
+        if self._resultat is None or not self._a_jour:
+            QMessageBox.information(
+                self, "Plan périmé",
+                "Recalculez (F5) avant d'épingler : la planche affichée ne"
+                " correspond plus à la saisie.")
+            return
+        debit = self._resultat.debits[numero - 1]
+        if debit in self._epingles:
+            return
+        self._epingles.append(debit)
+        self._modifie = True
+        self._calculer()
+
+    def _desepingler(self, numero):
+        # Les épingles ouvrent la liste des débits, dans leur ordre : le
+        # numéro affiché est leur rang. (Comparer les objets ne marche
+        # pas : le calcul renumérote et rebâtit chaque débit.)
+        if self._resultat is None or numero > len(self._epingles):
+            return
+        del self._epingles[numero - 1]
+        self._modifie = True
+        self._calculer()
+
+    def _tout_desepingler(self):
+        if not self._epingles:
+            return
+        self._epingles = []
+        self._modifie = True
+        if self._resultat is not None:
+            self._calculer()
+
+    def _imposer_planche(self, reference_piece, reference_planche):
+        self.table_pieces.imposer_planche(reference_piece, reference_planche)
+        self._calculer()
 
     # -- chutes au stock -------------------------------------------------------
 
@@ -1109,6 +1206,7 @@ class FenetrePrincipale(QMainWindow):
             return
         try:
             pieces, stock, parametres = projet_io.lire(chemin)
+            epingles = projet_io.lire_epingles(chemin)
         except (OSError, ValueError) as erreur:
             QMessageBox.warning(self, "Ouverture impossible", str(erreur))
             return
@@ -1121,6 +1219,7 @@ class FenetrePrincipale(QMainWindow):
         self._modifie = False
         self._retenir_dossier(chemin)
         self._rafraichir_etat()
+        self._epingles = epingles
         if self.table_pieces.lignes_utiles():
             self._calculer()
         else:
@@ -1133,7 +1232,8 @@ class FenetrePrincipale(QMainWindow):
             stock = self.table_stock.stock()
             projet_io.enregistrer(self._chemin, self.table_pieces.pieces(),
                                   [s for s in stock if not s.atelier],
-                                  self._parametres_actuels())
+                                  self._parametres_actuels(),
+                                  epingles=self._epingles)
         except (OSError, ErreurSaisie) as erreur:
             QMessageBox.warning(self, "Enregistrement impossible", str(erreur))
             return
@@ -1529,6 +1629,13 @@ courante — colonnes séparées par une tabulation ou un point-virgule.<br>
 réajuste. <b>Ctrl+M</b> masque la saisie et laisse tout l'écran au plan.
 <b>Ctrl+E</b> exporte en PNG ce qui est affiché, <b>Ctrl+P</b> l'imprime
 (paginé si les planches sont nombreuses).</p>
+
+<p><b>Corriger le plan</b><br>
+Clic droit sur une planche : <i>l'épingler</i> — elle est reprise telle
+quelle au prochain calcul, le reste se range autour. Clic droit sur une
+pièce : <i>la tailler dans…</i> une autre ligne de stock (la colonne
+<i>Planche</i> des pièces dit la même chose). Aucun des deux ne triche
+sur les quantités.</p>
 
 <p><b>Sortir le débit</b><br>
 Fichier → <i>fiche d'atelier</i> écrit en texte la liste des poses et des

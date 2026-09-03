@@ -95,6 +95,26 @@ class EnregistrerEtLire(unittest.TestCase):
             self.assertNotIn(interdit, source)
 
 
+class Epingles(unittest.TestCase):
+
+    def test_aller_retour(self):
+        import optimiseur as opt
+        pieces = [Piece("montant", 1750, 60, 18, "sapin", 4)]
+        stock = [Planche("sapin", 2400, 200, 18, "sapin", 2)]
+        resultat = opt.optimiser(pieces, stock, Parametres(essais_melanges=0))
+        chemin = _chemin_temp()
+        projet_io.enregistrer(chemin, pieces, stock, Parametres(),
+                              epingles=resultat.debits)
+        relues = projet_io.lire_epingles(chemin)
+        self.assertEqual(relues, resultat.debits)
+
+    def test_projet_d_avant_les_epingles(self):
+        chemin = _chemin_temp()
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write('{"pieces": [], "stock": []}')
+        self.assertEqual(projet_io.lire_epingles(chemin), [])
+
+
 class Atelier(unittest.TestCase):
     """Le fichier commun : lu absent comme vide, écrit marqué atelier."""
 
