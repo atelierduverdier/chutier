@@ -19,17 +19,21 @@ existent tous les deux, et se lancent par :
 python3 interface.py
 ```
 
-Restent à faire :
+Reste à faire : l'import de la liste de pièces depuis la feuille de
+calcul FreeCAD d'un projet (le CSV est le contrat d'échange en
+attendant).
 
-- un stock de chutes qui vive **hors projet** : aujourd'hui le stock est
-  enregistré dans le projet, et « Ranger ces chutes au stock » remet
-  l'atelier à jour dans la saisie courante ; il manque le fichier commun
-  qu'on retrouverait d'un projet à l'autre sans le recopier ;
-- l'import de la liste de pièces depuis la feuille de calcul FreeCAD
-  d'un projet (le CSV est le contrat d'échange en attendant) ;
-- numéroter les coupes sur le papier : les traits de scie se dessinent
-  dans leur ordre d'exécution, mais leur rang n'est lisible qu'en
-  info-bulle.
+## L'atelier
+
+Le stock commun vit dans un fichier à part,
+`~/.local/share/chutier/atelier.json` (déplaçable par la variable
+`CHUTIER_ATELIER`). Dans l'onglet Stock, les lignes cochées **Atelier**
+y vivent ; les autres appartiennent au projet. « Ranger ces chutes au
+stock » y écrit **aussitôt** — une chute existe sur l'étagère que le
+projet soit enregistré ou non ; le reste s'y écrit à l'enregistrement, à
+la fermeture, et avant tout Nouveau / Ouvrir, qui relisent ensuite le
+fichier. Un atelier garni ouvre l'application sur lui, feuille de pièces
+blanche ; l'exemple ne sert qu'à la découverte.
 
 ## L'interface
 
@@ -48,18 +52,36 @@ chutes hachurées, fond clair pour la perte.
 | `Ctrl+M` | masquer la saisie, tout l'écran au plan |
 | `Ctrl+molette` | zoomer sous la souris (la molette seule fait défiler) |
 | `Ctrl+E` / `Ctrl+P` | exporter le plan affiché en PNG / l'imprimer |
+| clic droit sur le plan | épingler la planche, tailler la pièce ailleurs |
 | `F1` | les repères, dans l'appli |
 
 Les couleurs des pièces ne dépendent que du **nom** de la référence : la
 même pièce garde sa teinte d'une séance à l'autre, et deux références
 d'un même débit n'ont jamais la même.
 
-Trois façons de sortir le débit de l'écran : le **plan** (PNG à
+Quatre façons de sortir le débit de l'écran : le **plan** (PNG à
 résolution d'impression, ou impression paginée — une poignée de planches
 par page, pas soixante écrasées sur une, avec les cotes de débit sous le
-dessin), la **fiche d'atelier** (texte : poses et coupes planche par
-planche, à cocher à la scie) et les **pièces en CSV** (le format
-d'échange, désormais dans les deux sens).
+dessin ; avec « Traits de scie » coché, chaque trait porte son numéro
+d'ordre), la **fiche d'atelier** (texte : poses et coupes numérotées
+planche par planche, à cocher à la scie), les **étiquettes** (une par
+pièce — référence, cotes, planche, exemplaire, couleur du plan — 24 par
+page A4 en 70 × 37 mm, à coller sur le bois) et les **pièces en CSV** (le
+format d'échange, dans les deux sens).
+
+**Corriger le plan sans tricher sur les quantités** : clic droit sur une
+planche pour l'**épingler** — elle est reprise telle quelle au prochain
+calcul, le reste se range autour (les épingles s'enregistrent avec le
+projet) ; clic droit sur une pièce pour la **tailler dans** une autre
+ligne de stock (la colonne Planche des pièces dit la même chose).
+
+**Les défauts du bois** se déclarent dans la colonne Défauts du stock,
+termes séparés par « ; » : `bouts 30` (30 mm à ôter à chaque bout),
+`rives 8` (sur chaque rive), `1200-1280` (un nœud traversant, de 1200 à
+1280 mm du bout gauche), `600,140,60,40` (une zone x, y, longueur,
+largeur). Elles sont écartées par des coupes guillotine avant toute
+pose, le trait de scie tombant hors du défaut, et se hachurent sur le
+plan.
 
 Les tailles de texte du plan sont réglées pour un rendu d'environ
 1600 px de large et **grossies à proportion** au-delà : réglées en
@@ -130,9 +152,25 @@ print(resultat.texte())               # résumé lisible
   le moins de rabotage perdu qui décide (une pièce à 20 préfère un
   brut à 30 plutôt qu'un brut à 65, même si sa surface est plus
   grande), la plus petite surface ne tranchant qu'à égalité.
+- Une planche déclare ses défauts : `recoupe_bouts`, `recoupe_rives`
+  (mm à ôter à chaque bout / sur chaque rive) et `defauts`, des zones
+  `(x, y, dx, dy)` écartées par des coupes guillotine à l'ouverture de
+  la planche. La zone déclarée est perdue en entier, le trait tombe dans
+  le bon bois.
+- Une pièce peut imposer sa planche par la référence d'une ligne de
+  stock (`Piece.planche`) ; `optimiser(..., epingles=[Debit])` reprend
+  des débits tels quels, retire leurs pièces et leur planche de la
+  demande, et renumérote le tout à la suite.
 - Score d'une solution, dans l'ordre : moins de pièces non placées,
-  moins de surface **neuve** entamée (déstockage d'abord), moins de
-  pertes, plus grande chute subsistante la plus grande possible.
+  moins cher (si les prix sont renseignés), moins de bois **neuf**
+  entamé (déstockage d'abord), moins de pertes puis moins de coupes —
+  ou l'inverse quand `Parametres.priorite` vaut `PRIORITE_SCIE` —,
+  enfin des chutes subsistantes concentrées (somme des carrés : une
+  grande plutôt que trois moyennes).
+- Le solveur rejoue un glouton sous une soixantaine de stratégies, puis
+  travaille la meilleure par recherche locale (`passes_amelioration`
+  balayages : vider une planche, replacer ses pièces dans les trous des
+  autres).
 - **Déterministe** : mêmes entrées, même `graine` → même résultat.
 
 ## Règle de couches
@@ -169,6 +207,8 @@ l'autre, que « ranger les chutes au stock » ne perde ni n'invente de
 bois. Que le plan se **lise**, en revanche, se juge sur capture.
 
 Propriétés vérifiées sur instances aléatoires à graine fixe (bornes,
-chevauchements, trait de scie entre toute paire de rectangles,
-conservation planche = pièces + chutes + pertes, comptabilité des
-exemplaires) et cas exacts calculés à la main.
+chevauchements, trait de scie entre toute paire de rectangles, rien de
+posé sur un défaut, conservation planche = pièces + chutes + pertes,
+comptabilité des exemplaires, la recherche locale ne dégrade jamais, la
+priorité « scie » ne coupe jamais plus que la priorité « bois ») et cas
+exacts calculés à la main.
