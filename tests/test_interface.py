@@ -334,6 +334,18 @@ class Fenetre(unittest.TestCase):
         self.assertEqual(f.table_stock.stock(), [])
         self.assertIsNone(f._resultat)
 
+    def test_une_fenetre_neuve_n_est_pas_modifiee(self):
+        """L'accueil chargeait l'exemple puis appliquait les réglages
+        mémorisés — après que ``_remplir`` eut relâché le drapeau de
+        chargement. La fenêtre s'ouvrait « ● Projet non enregistré » sans
+        qu'on ait rien touché, et tout geste demandant confirmation
+        d'abandon posait sa boîte modale — ce qui figeait aussi la suite
+        de tests, sans écran pour cliquer."""
+        f = _fenetre()
+        self.assertFalse(f._modifie)
+        f._charger_exemple_volets()      # sans dialogue, donc sans blocage
+        self.assertEqual(len(f._resultat.debits), 5)
+
     def test_masquer_la_saisie_laisse_tout_au_plan(self):
         self.f.a_saisie.setChecked(True)
         self.assertEqual(self.f._splitter.sizes()[0], 0)

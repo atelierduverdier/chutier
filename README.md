@@ -1,5 +1,7 @@
 # Chutier — feuille de débit et stock de chutes
 
+*[🇬🇧 English version](README.en.md)*
+
 Optimiseur de débit pour l'atelier : il place des pièces rectangulaires
 dans un stock de planches **et de chutes**, en coupes guillotine (chaque
 trait traverse le morceau de bord à bord, comme à la scie circulaire),

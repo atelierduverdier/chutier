@@ -21,12 +21,11 @@ from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QPageLayout, QPainter
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
-    QApplication, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
-    QLabel,
-    QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
-    QSpinBox, QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
+    QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 import apparence
@@ -1324,11 +1323,19 @@ class FenetrePrincipale(QMainWindow):
     # -- exemples ----------------------------------------------------------------
 
     def _remplir(self, pieces, stock, parametres):
+        # On RESTAURE l'état de chargement, on ne le remet pas à faux :
+        # l'accueil charge l'exemple sous chargement, puis applique les
+        # réglages mémorisés — qui, le drapeau tombé trop tôt, marquaient
+        # la fenêtre modifiée avant toute frappe. Une fenêtre neuve
+        # s'ouvrait « ● Projet non enregistré », et tout geste qui demande
+        # confirmation d'abandon (un exemple, un import) posait sa boîte
+        # de dialogue là où rien n'avait changé.
+        precedent = self._chargement
         self._chargement = True
         self.table_stock.remplir(stock)
         self.table_pieces.remplir(pieces)
         self._appliquer_parametres(parametres)
-        self._chargement = False
+        self._chargement = precedent
         self._rafraichir_etat()
 
     def _charger_exemple(self):
