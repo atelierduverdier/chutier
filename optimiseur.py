@@ -27,9 +27,13 @@ Le solveur est un glouton guillotine (meilleur ajustement) rejoué sous
 plusieurs stratégies (ordres de pièces, règles de découpe, chutes
 d'abord ou non) ; la meilleure solution gagne au score lexicographique :
   1. le moins de pièces non placées ;
-  2. le moins de surface de planches NEUVES entamées (déstockage d'abord) ;
-  3. le moins de pertes (sciure + rebuts sous les minis de chute) ;
-  4. la plus grande chute subsistante la plus grande possible.
+  2. le moins cher, si les prix sont renseignés ;
+  3. le moins de bois NEUF entamé (déstockage d'abord) ;
+  4. le moins de pertes (sciure + rebuts sous les minis de chute) ;
+  5. le moins de coupes — ou l'inverse de 4 et 5 quand la priorité est
+     donnée au temps de scie (``Parametres.priorite``) ;
+  6. des chutes subsistantes concentrées : une grande plutôt que trois
+     moyennes de même surface.
 Tout est déterministe : mêmes entrées, même graine → même résultat.
 """
 
@@ -54,6 +58,10 @@ RAISON_INCOMPATIBLE = "aucune planche de cette matière dans le stock"
 RAISON_TROP_GRANDE = "trop grande pour les formats du stock (fil compris)"
 RAISON_TROP_EPAISSE = "aucune planche assez épaisse pour cette pièce"
 RAISON_PLUS_DE_PLACE = "plus de place dans le stock fourni"
+
+PRIORITE_BOIS = "bois"   # moins de pertes d'abord, puis moins de coupes
+PRIORITE_SCIE = "scie"   # moins de coupes d'abord, puis moins de pertes
+_PRIORITES_VALIDES = (PRIORITE_BOIS, PRIORITE_SCIE)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +193,12 @@ class Parametres:
     - ``essais_melanges`` : nombre d'ordres de pièces tirés au hasard en
       plus des stratégies déterministes (0 pour s'en passer) ;
       ``graine`` fixe le hasard, le résultat reste reproductible.
+    - ``priorite`` : entre deux plans qui placent tout dans le même bois
+      neuf, ``PRIORITE_BOIS`` (défaut) garde celui qui perd le moins de
+      matière, ``PRIORITE_SCIE`` celui qui demande le moins de coupes —
+      à la circulaire, un plan qui range les pièces de même largeur en
+      bandes se scie deux fois plus vite qu'un plan éparpillé de même
+      rendement.
     """
 
     trait_de_scie: float = 3.0
@@ -196,6 +210,7 @@ class Parametres:
     surcote_joint: float = 3.0
     essais_melanges: int = 8
     graine: int = 0
+    priorite: str = PRIORITE_BOIS
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +334,7 @@ class Bilan:
     surface_chutes_creees: float
     surface_perdue: float
     rendement: float
+    nb_coupes: int = 0
 
 
 @dataclass(frozen=True)
@@ -373,9 +389,9 @@ class Resultat:
         lignes = [
             "Feuille de débit — %d/%d pièce(s) posée(s), rendement %s %%"
             % (b.nb_posees, b.nb_demandees, _pct(b.rendement)),
-            "Stock entamé : %d planche(s) dont %d chute(s) · pertes %s m² · "
-            "chutes créées : %d (%s m²)"
-            % (b.nb_planches_entamees, b.nb_chutes_consommees,
+            "Stock entamé : %d planche(s) dont %d chute(s) · %d coupe(s) · "
+            "pertes %s m² · chutes créées : %d (%s m²)"
+            % (b.nb_planches_entamees, b.nb_chutes_consommees, b.nb_coupes,
                _m2(b.surface_perdue), len(self.chutes_creees),
                _m2(b.surface_chutes_creees)),
         ]
@@ -833,7 +849,7 @@ def _finaliser(ouvertes: list, dispo: list, non: dict,
     return _Solution(debits, non_placees, dispo)
 
 
-def _score_solution(sol: _Solution):
+def _score_solution(sol: _Solution, params: Parametres):
     """Le score lexicographique documenté en tête de module (plus petit
     = meilleur). Arrondis pour que les égalités flottantes en soient.
 
@@ -848,17 +864,27 @@ def _score_solution(sol: _Solution):
     faisait gagner à tort le brut le plus épais dès qu'il était un peu
     moins large qu'un brut plus mince pourtant suffisant (signalé par
     Christophe : une pièce à 11,5 tirée d'un 65 alors qu'un 32 suffisait
-    largement, sans aucun prix pour trancher)."""
+    largement, sans aucun prix pour trancher).
+
+    Les chutes subsistantes comptent par la somme de leurs CARRÉS : « la
+    plus grande chute » ne distinguait pas une grande de trois moyennes
+    de même surface totale — or une grande resservira, trois moyennes
+    encombrent."""
     nb_non = sum(n.exemplaires for n in sol.non_placees)
     cout = sum(d.planche.prix for d in sol.debits if not d.planche.chute)
     neuve = sum(d.planche.aire * d.planche.epaisseur for d in sol.debits
                if not d.planche.chute)
-    perte = sum(d.perte * d.planche.epaisseur for d in sol.debits)
+    perte = round(sum(d.perte * d.planche.epaisseur for d in sol.debits), 3)
+    coupes = sum(len(d.coupes) for d in sol.debits)
     subsistantes = [c.aire for d in sol.debits for c in d.chutes]
     subsistantes += [pl.aire for pl, _ex in sol.dispo_restant if pl.chute]
-    plus_grande = max(subsistantes, default=0.0)
-    return (nb_non, round(cout, 2), round(neuve, 3), round(perte, 3),
-            -round(plus_grande, 3))
+    concentration = round(sum(a * a for a in subsistantes), 3)
+    if params.priorite == PRIORITE_SCIE:
+        milieu = (coupes, perte)
+    else:
+        milieu = (perte, coupes)
+    return (nb_non, round(cout, 2), round(neuve, 3)) + milieu \
+        + (-concentration,)
 
 
 def _strategies(params: Parametres):
@@ -1025,6 +1051,10 @@ def _valider(pieces: list, stock: list, params: Parametres):
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
             or params.surcote_joint < 0 or params.essais_melanges < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
+    if params.priorite not in _PRIORITES_VALIDES:
+        raise ValueError("paramètres : priorité inconnue « %s » (attendu :"
+                         " %s)" % (params.priorite,
+                                   ", ".join(_PRIORITES_VALIDES)))
 
 
 def optimiser(pieces: list, stock: list,
@@ -1086,7 +1116,7 @@ def optimiser(pieces: list, stock: list,
         meilleure = None
         for strat in _strategies(params):
             sol = _resoudre(unites, stock_unites, params, strat)
-            score = _score_solution(sol)
+            score = _score_solution(sol, params)
             if meilleure is None or score < meilleure[0]:
                 meilleure = (score, sol)
         debits.extend(meilleure[1].debits)
@@ -1113,6 +1143,7 @@ def _bilan(debits: list, non_placees: list) -> Bilan:
         surface_chutes_creees=sum(d.surface_chutes for d in debits),
         surface_perdue=sum(d.perte for d in debits),
         rendement=surface_pieces / entamee if entamee > EPS else 0.0,
+        nb_coupes=sum(len(d.coupes) for d in debits),
     )
 
 

@@ -381,6 +381,12 @@ class FenetrePrincipale(QMainWindow):
         self.spin_essais.setRange(0, 64)
         self.spin_essais.setValue(defauts.essais_melanges)
         self.spin_essais.valueChanged.connect(self._saisie_changee)
+        self.choix_priorite = QComboBox()
+        self.choix_priorite.addItem("le bois — moins de pertes",
+                                    opt.PRIORITE_BOIS)
+        self.choix_priorite.addItem("le temps de scie — moins de coupes",
+                                    opt.PRIORITE_SCIE)
+        self.choix_priorite.currentIndexChanged.connect(self._saisie_changee)
 
         page = QWidget()
         colonne = QVBoxLayout(page)
@@ -420,6 +426,11 @@ class FenetrePrincipale(QMainWindow):
              " pièce composable — sans effet sur les autres."),
         ]))
         colonne.addWidget(self._groupe_reglage("Le calcul", [
+            ("Privilégier", self.choix_priorite,
+             "Entre deux plans qui placent tout dans le même bois neuf :"
+             " garder celui qui perd le moins de matière, ou celui qui"
+             " demande le moins de coupes — à la circulaire, des pièces de"
+             " même largeur rangées en bandes se scient bien plus vite."),
             ("Essais de mélange", self.spin_essais,
              "Ordres de pièces tirés au hasard en plus des stratégies"
              " réglées. Plus d'essais range parfois mieux, et calcule plus"
@@ -740,7 +751,8 @@ class FenetrePrincipale(QMainWindow):
             surcote_largeur=self.spin_surcote_largeur.value(),
             tolerance_epaisseur=self.spin_tolerance.value(),
             surcote_joint=self.spin_surcote_joint.value(),
-            essais_melanges=self.spin_essais.value())
+            essais_melanges=self.spin_essais.value(),
+            priorite=self.choix_priorite.currentData())
 
     def _appliquer_parametres(self, p: opt.Parametres):
         for spin, valeur in ((self.spin_trait, p.trait_de_scie),
@@ -752,6 +764,8 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_surcote_joint, p.surcote_joint),
                              (self.spin_essais, p.essais_melanges)):
             spin.setValue(valeur)
+        self.choix_priorite.setCurrentIndex(
+            max(0, self.choix_priorite.findData(p.priorite)))
 
     def _calculer_si_pieces(self):
         """Le calcul d'accueil : sur un atelier garni, la feuille de
@@ -805,7 +819,7 @@ class FenetrePrincipale(QMainWindow):
             "dont %d chute(s)" % b.nb_chutes_consommees
             if b.nb_chutes_consommees else "aucune chute écoulée")
         self.bilan.pertes.poser("%s m²" % opt._m2(b.surface_perdue),
-                                "sciure et rebuts")
+                                "sciure et rebuts · %d coupe(s)" % b.nb_coupes)
         self.bilan.chutes.poser(
             "%d" % len(r.chutes_creees),
             "%s m² à ranger" % opt._m2(b.surface_chutes_creees)

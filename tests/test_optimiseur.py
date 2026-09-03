@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from optimiseur import (  # noqa: E402
     EPS, FIL_INDIFFERENT, FIL_LARGEUR, FIL_LONGUEUR,
     RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
-    RAISON_TROP_GRANDE, Achat, Parametres, Piece, Planche, optimiser,
-    _nombre_de_lames, _plus_large_compatible,
+    RAISON_TROP_GRANDE, PRIORITE_BOIS, PRIORITE_SCIE, Achat, Parametres,
+    Piece, Planche, optimiser, _nombre_de_lames, _plus_large_compatible,
 )
 
 RAPIDE = Parametres(essais_melanges=0)
@@ -182,6 +182,41 @@ class ProprietesGeometriques(unittest.TestCase):
                         18, "bois", quantite=rng.randint(1, 3))
                   for i in range(30)]
         self._verifier(optimiser(pieces, stock, RAPIDE), pieces, RAPIDE)
+
+
+class Priorite(unittest.TestCase):
+    """Bois ou temps de scie : même jeu de candidates, même trio de
+    tête (non placées, coût, bois neuf) — la priorité ne fait que choisir
+    entre pertes et coupes."""
+
+    def test_la_scie_ne_coupe_jamais_plus_que_le_bois(self):
+        for graine in range(12):
+            pieces, stock = _instance(graine)
+            bois = optimiser(pieces, stock,
+                             Parametres(essais_melanges=0,
+                                        priorite=PRIORITE_BOIS))
+            scie = optimiser(pieces, stock,
+                             Parametres(essais_melanges=0,
+                                        priorite=PRIORITE_SCIE))
+            self.assertEqual(bois.bilan.nb_posees, scie.bilan.nb_posees)
+            self.assertAlmostEqual(bois.bilan.surface_neuve_entamee,
+                                   scie.bilan.surface_neuve_entamee)
+            self.assertLessEqual(scie.bilan.nb_coupes, bois.bilan.nb_coupes)
+            self.assertLessEqual(round(bois.bilan.surface_perdue, 3),
+                                 round(scie.bilan.surface_perdue, 3))
+
+    def test_le_bilan_compte_les_coupes(self):
+        r = optimiser([Piece("x", 100, 50, 18, "b", 2)],
+                      [Planche("p", 300, 100, 18, "b")], RAPIDE)
+        self.assertEqual(r.bilan.nb_coupes,
+                         sum(len(d.coupes) for d in r.debits))
+        self.assertGreater(r.bilan.nb_coupes, 0)
+
+    def test_priorite_inconnue(self):
+        with self.assertRaises(ValueError):
+            optimiser([Piece("x", 10, 10, 18, "b")],
+                      [Planche("p", 100, 100, 18, "b")],
+                      Parametres(priorite="vite"))
 
 
 class Defauts(unittest.TestCase):
