@@ -91,6 +91,13 @@ class Piece:
     pièce, imposée — vide, le chutier choisit. C'est le geste « non, pas
     celle-là, prends-la dans la chute du fond » ; le reste du plan se
     recalcule autour.
+
+    ``contour`` : une forme quelconque à découper à la CNC, en points
+    ``((x, y), …)`` mm, coin bas-gauche de sa boîte en (0, 0) ; alors
+    ``longueur`` et ``largeur`` sont sa boîte englobante. Un lot qui
+    compte une seule pièce à contour est IMBRIQUÉ (module
+    ``imbrication``, sur shapely) au lieu d'être débité en guillotine :
+    les rectangles du lot y participent comme des polygones.
     """
 
     reference: str
@@ -102,10 +109,27 @@ class Piece:
     fil: str = FIL_LONGUEUR
     composable: bool = False
     planche: str = ""
+    contour: tuple = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "contour",
+                           tuple((float(x), float(y)) for x, y in self.contour))
 
     @property
     def aire(self) -> float:
+        if self.contour:
+            return abs(_aire_polygone(self.contour))
         return self.longueur * self.largeur
+
+
+def _aire_polygone(points) -> float:
+    aire = 0.0
+    n = len(points)
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        aire += x1 * y2 - x2 * y1
+    return aire / 2.0
 
 
 @dataclass(frozen=True)
@@ -216,6 +240,12 @@ class Parametres:
       locale sur la meilleure solution gloutonne (0 pour s'en passer).
       Chaque balayage essaie, planche par planche, de la vider et de
       replacer ses pièces ailleurs ; on garde dès que le score baisse.
+    - Pour l'imbrication de contours (CNC) : ``ecart_contours``, la
+      distance minimale entre deux contours (diamètre de fraise + jeu) ;
+      ``marge_bord``, la distance au bord de la planche ; ``pas_rotation``
+      en degrés, les orientations essayées pour une pièce à fil
+      indifférent (90 : quatre orientations ; 45 : huit ; 15 : vingt-
+      quatre, plus lent).
     """
 
     trait_de_scie: float = 3.0
@@ -229,6 +259,9 @@ class Parametres:
     graine: int = 0
     priorite: str = PRIORITE_BOIS
     passes_amelioration: int = 2
+    ecart_contours: float = 8.0
+    marge_bord: float = 5.0
+    pas_rotation: int = 90
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +275,11 @@ class Pose:
     ``dim_x`` / ``dim_y`` sont les dimensions réellement débitées
     (surcote comprise) ; ``pivotee`` vaut True si la longueur de la
     pièce est posée sur y.
+
+    Une pose imbriquée porte en plus son ``contour`` en coordonnées de
+    la planche (déjà tourné de ``angle`` degrés et déplacé) ; ``x``,
+    ``y``, ``dim_x``, ``dim_y`` sont alors sa boîte englobante, et
+    ``aire`` celle du polygone, pas de la boîte.
     """
 
     piece: Piece
@@ -251,9 +289,17 @@ class Pose:
     dim_x: float
     dim_y: float
     pivotee: bool
+    contour: tuple = ()
+    angle: float = 0.0
+
+    def __post_init__(self):
+        object.__setattr__(self, "contour",
+                           tuple((float(x), float(y)) for x, y in self.contour))
 
     @property
     def aire(self) -> float:
+        if self.contour:
+            return abs(_aire_polygone(self.contour))
         return self.dim_x * self.dim_y
 
 
@@ -309,6 +355,11 @@ class Debit:
     poses: list = field(default_factory=list)
     chutes: list = field(default_factory=list)
     coupes: list = field(default_factory=list)
+
+    @property
+    def imbriquee(self) -> bool:
+        """Débitée à la CNC (contours imbriqués) plutôt qu'à la scie."""
+        return any(p.contour for p in self.poses)
 
     @property
     def surface(self) -> float:
@@ -432,13 +483,19 @@ class Resultat:
             lignes.append("")
             lignes.append(
                 "Planche %d — « %s »%s, %s × %s mm, %s — %d pièce(s), "
-                "%d coupe(s), perte %s m²"
+                "%s, perte %s m²"
                 % (i, d.planche.reference, ex, _mm(d.planche.longueur),
                    _mm(d.planche.largeur),
                    "chute du stock" if d.planche.chute else "neuve",
-                   len(d.poses), len(d.coupes), _m2(d.perte)))
+                   len(d.poses),
+                   "imbriquée pour la CNC" if d.imbriquee
+                   else "%d coupe(s)" % len(d.coupes), _m2(d.perte)))
             for p in d.poses:
-                pivot = ", pivotée" if p.pivotee else ""
+                if p.contour:
+                    pivot = (", tournée de %s°" % _mm(p.angle)
+                             if abs(p.angle) > EPS else "")
+                else:
+                    pivot = ", pivotée" if p.pivotee else ""
                 lignes.append(
                     "  pièce « %s » (%d/%d) : %s × %s en (%s, %s)%s"
                     % (p.piece.reference, p.exemplaire, p.piece.quantite,
@@ -1240,6 +1297,9 @@ def _valider(pieces: list, stock: list, params: Parametres):
         if p.longueur <= EPS or p.largeur <= EPS or p.epaisseur < 0:
             raise ValueError("pièce « %s » : dimensions invalides"
                              % p.reference)
+        if p.contour and len(p.contour) < 3:
+            raise ValueError("pièce « %s » : un contour demande au moins"
+                             " trois points" % p.reference)
         if p.quantite < 1:
             raise ValueError("pièce « %s » : quantité invalide (%r)"
                              % (p.reference, p.quantite))
@@ -1276,8 +1336,12 @@ def _valider(pieces: list, stock: list, params: Parametres):
             or params.chute_mini_largeur < 0 or params.surcote_longueur < 0
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
             or params.surcote_joint < 0 or params.essais_melanges < 0
-            or params.passes_amelioration < 0):
+            or params.passes_amelioration < 0 or params.ecart_contours < 0
+            or params.marge_bord < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
+    if not 1 <= params.pas_rotation <= 180 or 360 % params.pas_rotation:
+        raise ValueError("paramètres : le pas de rotation doit diviser 360"
+                         " (90, 45, 30, 15…)")
     if params.priorite not in _PRIORITES_VALIDES:
         raise ValueError("paramètres : priorité inconnue « %s » (attendu :"
                          " %s)" % (params.priorite,
@@ -1349,6 +1413,21 @@ def optimiser(pieces: list, stock: list,
                         for ex in range(1, (len(unites)
                                             if pl.illimite and not pl.chute
                                             else pl.quantite) + 1)]
+        if any(p.contour for p in pieces_g):
+            # Un seul contour dans le lot, et tout le lot s'imbrique : les
+            # rectangles y participent comme des polygones. Import
+            # paresseux — le cœur reste sans dépendance tant qu'aucune
+            # forme n'est demandée.
+            try:
+                import imbrication
+            except ImportError as erreur:
+                raise ValueError(
+                    "l'imbrication de contours demande shapely"
+                    " (paquet python-shapely) : %s" % erreur) from erreur
+            finale = imbrication.imbriquer(unites, stock_unites, params)
+            debits.extend(finale.debits)
+            non_placees.extend(finale.non_placees)
+            continue
         meilleure = None
         for strat in _strategies(params):
             sol = _resoudre(unites, stock_unites, params, strat)

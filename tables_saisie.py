@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
 
 import optimiseur as opt
 
-TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS, PLANCHE = (
+TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS, PLANCHE, CONTOUR = (
     "texte", "nombre", "entier", "choix", "booleen", "matiere", "defauts",
-    "planche")
+    "planche", "contour")
 
 ROLE_VALEUR = Qt.ItemDataRole.UserRole + 1
 
@@ -138,6 +138,12 @@ def lire_defauts(texte: str, ou: str, largeur: float) -> dict:
                            " exemple : %s)" % (ou, terme, SYNTAXE_DEFAUTS))
     return {"recoupe_bouts": bouts, "recoupe_rives": rives,
             "defauts": tuple(zones)}
+
+
+def texte_contour(contour) -> str:
+    """« ◇ 24 pts » : la cellule dit qu'il y a une forme, pas laquelle —
+    c'est le plan qui la montre."""
+    return "◇ %d pts" % len(contour) if contour else ""
 
 
 def texte_defauts(planche) -> str:
@@ -301,6 +307,8 @@ class TableEditable(QTableWidget):
             return bool(item.data(ROLE_VALEUR)) != bool(descripteur.defaut)
         if descripteur.genre == CHOIX:
             return item.data(ROLE_VALEUR) != descripteur.defaut
+        if descripteur.genre == CONTOUR:
+            return bool(item.data(ROLE_VALEUR))
         texte = item.text().strip()
         if descripteur.genre in (NOMBRE, ENTIER):
             try:
@@ -391,6 +399,9 @@ class TableEditable(QTableWidget):
                 # ligne, donne sa hauteur à une bande « 1200-1280 »
                 valeurs.update(lire_defauts(self.texte(ligne, i), ou,
                                             valeurs.get("largeur", 0.0)))
+            elif colonne.genre == CONTOUR:
+                valeurs[colonne.cle] = tuple(item.data(ROLE_VALEUR) or ()) \
+                    if item else ()
             else:
                 valeurs[colonne.cle] = self.texte(ligne, i)
         return valeurs
@@ -424,6 +435,14 @@ class TableEditable(QTableWidget):
                 cle = valeur if valeur in libelles else colonne.defaut
                 item.setData(ROLE_VALEUR, cle)
                 item.setText(libelles.get(cle, ""))
+            elif colonne.genre == CONTOUR:
+                # Le contour vit dans la donnée de la cellule, pas dans son
+                # texte : il ne se tape pas, il s'importe d'un SVG.
+                contour = tuple(tuple(p) for p in (valeur or ()))
+                item.setData(ROLE_VALEUR, contour)
+                item.setText(texte_contour(contour))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled
+                              | Qt.ItemFlag.ItemIsSelectable)
             elif colonne.genre in (NOMBRE, ENTIER):
                 item.setText(texte_nombre(valeur if valeur is not None else ""))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight
@@ -460,7 +479,8 @@ class TableEditable(QTableWidget):
                 if item is None:
                     continue
                 copie[colonne.cle] = (item.data(ROLE_VALEUR)
-                                      if colonne.genre in (BOOLEEN, CHOIX)
+                                      if colonne.genre in (BOOLEEN, CHOIX,
+                                                           CONTOUR)
                                       else item.text())
             self.poser_ligne(cible, copie)
         self.selectRow(lignes[-1] + 1)
@@ -535,6 +555,8 @@ class TableEditable(QTableWidget):
             return
         if descripteur.genre == BOOLEEN:
             item.setData(ROLE_VALEUR, _vers_booleen(texte))
+        elif descripteur.genre == CONTOUR:
+            return                      # un contour ne se colle pas
         elif descripteur.genre == CHOIX:
             for cle, libelle in descripteur.choix:
                 if texte.casefold() in (cle.casefold(), libelle.casefold()):
@@ -625,10 +647,17 @@ class TablePieces(TableEditable):
                 "Imposer la ligne de stock où tailler cette pièce (sa"
                 " référence) — vide, le chutier choisit. Se remplit aussi"
                 " d'un clic droit sur la pièce, dans le plan.", ""),
+        Colonne("Contour", "contour", CONTOUR,
+                "Une forme quelconque à découper à la CNC, importée d'un"
+                " SVG (Fichier → Importer des contours). Longueur et"
+                " largeur sont alors sa boîte englobante. Dès qu'une pièce"
+                " d'une matière a un contour, toute cette matière est"
+                " imbriquée à la fraise au lieu d'être sciée.", ()),
     )
 
     COLONNE_PLANCHE = 8
-    AVANCEES = (7, 8)                # Composable, Planche
+    COLONNE_CONTOUR = 9
+    AVANCEES = (7, 8, 9)             # Composable, Planche, Contour
 
     def __init__(self, matieres_connues, references_stock=lambda: []):
         super().__init__()
@@ -654,12 +683,15 @@ class TablePieces(TableEditable):
             return "⚠ %s" % erreur
         if not pieces:
             return "Aucune pièce — ajoutez une ligne, collez un tableau" \
-                   " (Ctrl+V) ou importez un CSV."
+                   " (Ctrl+V), importez un CSV ou des contours SVG."
         exemplaires = sum(p.quantite for p in pieces)
         matieres = sorted({p.matiere for p in pieces if p.matiere})
         surface = sum(p.aire * p.quantite for p in pieces)
-        return ("%d référence(s), %d exemplaire(s) · %s · surface des"
+        contours = sum(1 for p in pieces if p.contour)
+        return ("%d référence(s), %d exemplaire(s)%s · %s · surface des"
                 " pièces %s m²" % (len(pieces), exemplaires,
+                            " dont %d contour(s) à imbriquer" % contours
+                            if contours else "",
                             ", ".join(matieres) or "matière non renseignée",
                             opt._m2(surface)))
 

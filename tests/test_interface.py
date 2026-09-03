@@ -468,6 +468,77 @@ class EpinglesEtPlancheImposee(unittest.TestCase):
         self.assertEqual(pieces.pieces(), avec)
 
 
+SVG_FORMES = """<svg xmlns="http://www.w3.org/2000/svg" width="300mm"
+ height="200mm" viewBox="0 0 300 200">
+<path id="equerre" d="M 10 10 L 90 10 L 90 30 L 30 30 L 30 90 L 10 90 Z"/>
+<circle id="rondelle" cx="200" cy="100" r="25"/></svg>"""
+
+
+class Contours(unittest.TestCase):
+    """Des formes quelconques, importées d'un SVG, imbriquées à la CNC."""
+
+    def _svg(self):
+        chemin = os.path.join(_JETABLE, "formes.svg")
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write(SVG_FORMES)
+        return chemin
+
+    def test_l_import_ajoute_des_pieces_a_contour(self):
+        f = _fenetre()
+        avant = len(f.table_pieces.pieces())
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(self._svg(), "")):
+            f._importer_contours()
+        pieces = f.table_pieces.pieces()
+        self.assertEqual(len(pieces), avant + 2)
+        equerre = [p for p in pieces if p.reference == "equerre"][0]
+        self.assertEqual(len(equerre.contour), 6)
+        self.assertEqual(equerre.matiere, "sapin")     # celle du stock
+        self.assertEqual(equerre.fil, opt.FIL_INDIFFERENT)
+        self.assertAlmostEqual(equerre.longueur, 80, places=3)
+        self.assertEqual(f.table_pieces.texte(avant, 9), "◇ 6 pts")
+        self.assertFalse(f.table_pieces.isColumnHidden(9))
+
+    def test_le_lot_a_contour_s_imbrique_et_se_dessine(self):
+        f = _fenetre()
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(self._svg(), "")):
+            f._importer_contours()
+        f._calculer()
+        self.assertTrue(any(d.imbriquee for d in f._resultat.debits))
+        polygones = [it for it in f.vue.scene().items()
+                     if isinstance(it, interface.vue_plan.QGraphicsPolygonItem)]
+        self.assertGreaterEqual(len(polygones), 2)
+
+    def test_le_contour_survit_au_projet_et_a_la_duplication(self):
+        f = _fenetre()
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(self._svg(), "")):
+            f._importer_contours()
+        f.table_pieces.selectRow(f.table_pieces.rowCount() - 1)
+        f.table_pieces.dupliquer_selection()
+        pieces = f.table_pieces.pieces()
+        self.assertEqual(pieces[-1].contour, pieces[-2].contour)
+        chemin = os.path.join(_JETABLE, "contours.json")
+        f._chemin = chemin
+        f._enregistrer()
+        relues, _, _ = projet_io.lire(chemin)
+        self.assertEqual(relues, pieces)
+
+    def test_l_export_svg_ecrit_une_planche_par_fichier(self):
+        f = _fenetre()
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(self._svg(), "")):
+            f._importer_contours()
+        f._calculer()
+        base = os.path.join(_JETABLE, "decoupe")
+        with _dialogue_repond(base + ".svg"):
+            f._exporter_svg()
+        fichiers = sorted(n for n in os.listdir(_JETABLE)
+                          if n.startswith("decoupe"))
+        self.assertEqual(len(fichiers), len(f.vue.debits_affiches()))
+
+
 class Fenetre(unittest.TestCase):
 
     @classmethod

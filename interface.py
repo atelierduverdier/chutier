@@ -16,6 +16,7 @@ import dataclasses
 import json
 import os
 import sys
+from xml.etree.ElementTree import ParseError as ET_ParseError
 
 from PySide6.QtCore import QEvent, QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import (
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 import apparence
+import contours_svg
 import csv_io
 import optimiseur as opt
 import projet_io
@@ -192,6 +194,16 @@ class FenetrePrincipale(QMainWindow):
             "&Importer des pièces (CSV)…", self._importer_csv, "Ctrl+I",
             ("document-import", "document-open"),
             "Charger une liste de pièces produite par un autre projet")
+        self.a_contours = self._acte(
+            "Importer des &contours (SVG)…", self._importer_contours, None,
+            ("document-import", "document-open"),
+            "Ajouter des formes quelconques à découper à la CNC : chaque"
+            " tracé fermé du SVG devient une pièce à imbriquer")
+        self.a_exporter_svg = self._acte(
+            "Exporter la découpe (S&VG)…", self._exporter_svg, None,
+            ("document-export",),
+            "Une planche imbriquée en SVG à l'échelle 1, contours des pièces"
+            " et de la planche — ce qu'on passe à la chaîne CNC")
         self.a_exporter = self._acte(
             "E&xporter le plan (image)…", self._exporter_image, "Ctrl+E",
             ("document-export", "image-x-generic"),
@@ -273,6 +285,9 @@ class FenetrePrincipale(QMainWindow):
         fichier.addSeparator()
         fichier.addAction(self.a_importer)
         fichier.addAction(self.a_exporter_csv)
+        fichier.addSeparator()
+        fichier.addAction(self.a_contours)
+        fichier.addAction(self.a_exporter_svg)
         fichier.addSeparator()
         fichier.addAction(self.a_atelier)
         fichier.addSeparator()
@@ -434,6 +449,15 @@ class FenetrePrincipale(QMainWindow):
         self.spin_essais.setRange(0, 64)
         self.spin_essais.setValue(defauts.essais_melanges)
         self.spin_essais.valueChanged.connect(self._saisie_changee)
+        self.spin_ecart = self._spin(defauts.ecart_contours, 0, 50)
+        self.spin_marge_bord = self._spin(defauts.marge_bord, 0, 100)
+        self.choix_rotation = QComboBox()
+        for pas, libelle in ((90, "4 orientations (90°)"),
+                             (45, "8 orientations (45°)"),
+                             (30, "12 orientations (30°)"),
+                             (15, "24 orientations (15°) — lent")):
+            self.choix_rotation.addItem(libelle, pas)
+        self.choix_rotation.currentIndexChanged.connect(self._saisie_changee)
         self.spin_passes = QSpinBox()
         self.spin_passes.setRange(0, 10)
         self.spin_passes.setValue(defauts.passes_amelioration)
@@ -482,6 +506,19 @@ class FenetrePrincipale(QMainWindow):
              "Largeur perdue à chaque collage entre deux lames d'une"
              " pièce composable — sans effet sur les autres."),
         ]))
+        colonne.addWidget(self._groupe_reglage("La CNC (contours imbriqués)", [
+            ("Écart entre contours (mm)", self.spin_ecart,
+             "Diamètre de fraise plus un jeu : la distance minimale entre"
+             " deux pièces imbriquées. Ne joue que pour les matières qui"
+             " comptent au moins un contour."),
+            ("Marge au bord (mm)", self.spin_marge_bord,
+             "Distance entre un contour et le bord de la planche — pour"
+             " la bride, ou une rive douteuse."),
+            ("Orientations", self.choix_rotation,
+             "Les angles essayés pour une pièce à fil indifférent (ou sur"
+             " un panneau sans fil). Plus d'orientations imbriquent parfois"
+             " mieux, et calculent d'autant plus longtemps."),
+        ]))
         colonne.addWidget(self._groupe_reglage("Le calcul", [
             ("Privilégier", self.choix_priorite,
              "Entre deux plans qui placent tout dans le même bois neuf :"
@@ -492,7 +529,8 @@ class FenetrePrincipale(QMainWindow):
              "Ordres de pièces tirés au hasard en plus des stratégies"
              " réglées. Plus d'essais range parfois mieux, et calcule plus"
              " longtemps. Le hasard est à graine fixe : mêmes entrées,"
-             " même plan."),
+             " même plan. L'imbrication de contours, cent fois plus"
+             " coûteuse, n'en prend qu'un quart."),
             ("Passes d'amélioration", self.spin_passes,
              "Après le meilleur rangement, on essaie planche par planche"
              " de la vider et de replacer ses pièces dans les trous des"
@@ -848,7 +886,10 @@ class FenetrePrincipale(QMainWindow):
             surcote_joint=self.spin_surcote_joint.value(),
             essais_melanges=self.spin_essais.value(),
             priorite=self.choix_priorite.currentData(),
-            passes_amelioration=self.spin_passes.value())
+            passes_amelioration=self.spin_passes.value(),
+            ecart_contours=self.spin_ecart.value(),
+            marge_bord=self.spin_marge_bord.value(),
+            pas_rotation=self.choix_rotation.currentData())
 
     def _appliquer_parametres(self, p: opt.Parametres):
         for spin, valeur in ((self.spin_trait, p.trait_de_scie),
@@ -859,10 +900,14 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_tolerance, p.tolerance_epaisseur),
                              (self.spin_surcote_joint, p.surcote_joint),
                              (self.spin_essais, p.essais_melanges),
-                             (self.spin_passes, p.passes_amelioration)):
+                             (self.spin_passes, p.passes_amelioration),
+                             (self.spin_ecart, p.ecart_contours),
+                             (self.spin_marge_bord, p.marge_bord)):
             spin.setValue(valeur)
         self.choix_priorite.setCurrentIndex(
             max(0, self.choix_priorite.findData(p.priorite)))
+        self.choix_rotation.setCurrentIndex(
+            max(0, self.choix_rotation.findData(p.pas_rotation)))
 
     def _calculer_si_pieces(self):
         """Le calcul d'accueil : sur un atelier garni, la feuille de
@@ -1362,6 +1407,92 @@ class FenetrePrincipale(QMainWindow):
         self.table_pieces.setFocus()
         self._saisie_changee()
 
+    def _importer_contours(self):
+        """Chaque tracé fermé du SVG devient une pièce à contour, AJOUTÉE
+        à la liste (l'import CSV, lui, remplace : c'est une feuille de
+        débit entière ; ici ce sont des formes qu'on vient chercher)."""
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Importer des contours", self._dossier(), "SVG (*.svg)")
+        if not chemin:
+            return
+        try:
+            formes, avertissements = contours_svg.formes_depuis_svg(chemin)
+        except (OSError, ValueError, ET_ParseError) as erreur:
+            QMessageBox.warning(self, "Import impossible", str(erreur))
+            return
+        if not formes:
+            QMessageBox.information(
+                self, "Aucun contour",
+                "Le fichier ne contient aucun tracé fermé.\n%s"
+                % "\n".join(avertissements))
+            return
+        self._ajouter_contours(formes)
+        self._retenir_dossier(chemin)
+        self.table_pieces.setFocus()
+        self._saisie_changee()
+        message = "%d contour(s) importé(s)" % len(formes)
+        if avertissements:
+            QMessageBox.information(self, "Contours importés",
+                                    message + "\n\n" + "\n".join(avertissements))
+        else:
+            self.statusBar().showMessage(message, 8000)
+
+    def _ajouter_contours(self, formes):
+        """Les formes entrent avec la matière et l'épaisseur de la première
+        ligne du stock — le plus souvent la bonne, et une cellule à
+        corriger vaut mieux qu'une cellule vide. Fil indifférent : une
+        forme découpée à la CNC tourne comme on veut, sauf à dire le
+        contraire."""
+        try:
+            stock = self.table_stock.stock()
+        except ErreurSaisie:
+            stock = []
+        matiere = stock[0].matiere if stock else ""
+        epaisseur = stock[0].epaisseur if stock else 18
+        self._chargement = True
+        # Les lignes vides de fin s'effacent : une forme y prend place.
+        for ligne in reversed(range(self.table_pieces.rowCount())):
+            if not self.table_pieces.texte(ligne, 0):
+                self.table_pieces.removeRow(ligne)
+        for forme in formes:
+            self.table_pieces.ajouter_ligne(
+                reference=forme["nom"], longueur=forme["longueur"],
+                largeur=forme["largeur"], epaisseur=epaisseur,
+                matiere=matiere, quantite=1, fil=opt.FIL_INDIFFERENT,
+                contour=forme["contour"])
+        self._chargement = False
+
+    def _exporter_svg(self):
+        """Une planche par fichier, à l'échelle 1 : c'est ce que la CNC
+        attend, pas un plan d'ensemble."""
+        if self._resultat is None or not self._resultat.debits:
+            QMessageBox.information(self, "Rien à exporter",
+                                    "Calculez d'abord le débit (F5).")
+            return
+        planches = self.vue.debits_affiches()
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Exporter la découpe (une planche par fichier)",
+            self._dossier(), "SVG (*.svg)")
+        if not chemin:
+            return
+        if chemin.lower().endswith(".svg"):
+            chemin = chemin[:-4]
+        titre = os.path.splitext(os.path.basename(self._chemin))[0] \
+            if self._chemin else "Feuille de débit"
+        ecrits = []
+        try:
+            for numero, debit in planches:
+                nom = ("%s.svg" % chemin if len(planches) == 1
+                       else "%s-planche-%d.svg" % (chemin, numero))
+                contours_svg.ecrire_svg(nom, debit, numero, titre)
+                ecrits.append(nom)
+        except OSError as erreur:
+            QMessageBox.warning(self, "Export impossible", str(erreur))
+            return
+        self._retenir_dossier(ecrits[0])
+        self.statusBar().showMessage(
+            "%d fichier(s) SVG écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)
+
     def _exporter_image(self):
         if self._resultat is None or not self._resultat.debits:
             QMessageBox.information(
@@ -1688,8 +1819,13 @@ class FenetrePrincipale(QMainWindow):
             coupes = ["%d %s %s" % (
                 c.ordre, "↕" if c.sens == opt.TRONCONNAGE else "↔",
                 opt._mm(c.position)) for c in debit.coupes]
-            if coupes and not ecrire("coupes :  " + "   ·   ".join(coupes),
-                                     police):
+            if debit.imbriquee:
+                if not ecrire("découpe CNC : contours imbriqués, à exporter"
+                              " en SVG (Fichier → Exporter la découpe)",
+                              police):
+                    break
+            elif coupes and not ecrire("coupes :  " + "   ·   ".join(coupes),
+                                       police):
                 break
             y += ligne * 0.5
         if planches[0][1].coupes:
@@ -1857,6 +1993,14 @@ quelle au prochain calcul, le reste se range autour. Clic droit sur une
 pièce : <i>la tailler dans…</i> une autre ligne de stock (la colonne
 <i>Planche</i> des pièces dit la même chose). Aucun des deux ne triche
 sur les quantités.</p>
+
+<p><b>La CNC</b><br>
+Fichier → <i>importer des contours</i> ajoute aux pièces chaque tracé
+fermé d'un SVG (Inkscape, FreeCAD…). Dès qu'une matière compte un
+contour, tout ce lot est <i>imbriqué</i> à la fraise au lieu d'être
+scié : écart entre contours et marge au bord dans les réglages.
+Fichier → <i>exporter la découpe</i> sort chaque planche imbriquée en
+SVG à l'échelle 1, pour la chaîne CNC.</p>
 
 <p><b>Sortir le débit</b><br>
 Fichier → <i>fiche d'atelier</i> écrit en texte la liste des poses et des

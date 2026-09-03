@@ -23,6 +23,31 @@ Reste à faire : l'import de la liste de pièces depuis la feuille de
 calcul FreeCAD d'un projet (le CSV est le contrat d'échange en
 attendant).
 
+## La CNC : des formes quelconques, imbriquées
+
+Fichier → **Importer des contours (SVG)** ajoute aux pièces chaque
+tracé fermé du fichier (Inkscape, FreeCAD… ; un tracé contenu dans un
+autre du même élément est un trou, ignoré). Une pièce à contour garde
+ses cotes de boîte englobante dans la table, et la colonne Contour dit
+« ◇ 24 pts ». Dès qu'une matière compte **un** contour, tout ce lot est
+**imbriqué** à la fraise au lieu d'être scié : les rectangles y
+participent comme des polygones, sur les mêmes planches et chutes, avec
+les mêmes défauts. Réglages « La CNC » : écart entre contours (diamètre
+de fraise + jeu), marge au bord, nombre d'orientations essayées pour une
+pièce à fil indifférent. Fichier → **Exporter la découpe (SVG)** sort
+chaque planche imbriquée en SVG à l'échelle 1 (mm), contour de la
+planche et chemins fermés des pièces, pour la chaîne CNC.
+
+Le moteur (`imbrication.py`, sur `shapely`) est un glouton bas-gauche :
+les positions candidates sont les contacts sommet à sommet entre la
+pièce et ce qui est déjà posé, élargi de l'écart, chacun projeté au sol
+et au mur ; la plus basse puis la plus à gauche qui ne recouvre rien
+gagne. Rejoué sous plusieurs ordres de pièces, le meilleur au score du
+chutier. Ce qui reste est compté chute pour les deux bandes
+rectangulaires (à droite, au-dessus) qui passent les minis, perte pour
+le reste — le chutier range des rectangles. Compter une à quelques
+secondes par dizaine de pièces.
+
 ## L'atelier
 
 Le stock commun vit dans un fichier à part,
@@ -176,6 +201,10 @@ print(resultat.texte())               # résumé lisible
   travaille la meilleure par recherche locale (`passes_amelioration`
   balayages : vider une planche, replacer ses pièces dans les trous des
   autres).
+- Une pièce à `contour` (points mm, coin bas-gauche en (0, 0)) fait
+  imbriquer tout son lot ; sa pose porte alors le contour tourné et
+  déplacé, en coordonnées de la planche, et son aire est celle du
+  polygone. Pas de coupes sur une planche imbriquée.
 - **Déterministe** : mêmes entrées, même `graine` → même résultat.
 
 ## Règle de couches
@@ -186,7 +215,9 @@ laser_core / task_panels dans LaserAtelier.
 
 | Module | Rôle |
 |---|---|
-| `optimiseur.py` | toute la géométrie et le solveur. Aucune dépendance. |
+| `optimiseur.py` | toute la géométrie et le solveur guillotine. Aucune dépendance. |
+| `imbrication.py` | l'imbrication de contours pour la CNC. Dépend de `shapely`, importé par le cœur seulement quand un contour est demandé. Sans Qt. |
+| `contours_svg.py` | lecture des tracés SVG (parseur repris de LaserAtelier), écriture de la découpe. Sans dépendance. |
 | `csv_io.py`, `projet_io.py` | échange CSV, projet JSON. Sans Qt. |
 | `apparence.py` | couleurs, tuiles de bilan. Connaît Qt, pas le débit. |
 | `tables_saisie.py` | les deux tables et leurs délégués. |
@@ -196,7 +227,8 @@ laser_core / task_panels dans LaserAtelier.
 ## Licence
 
 LGPL-2.1-or-later, comme le visualiseur G-code de l'atelier — l'interface
-est bâtie sur PySide6 (Qt), le cœur n'a aucune dépendance.
+est bâtie sur PySide6 (Qt), le cœur n'a aucune dépendance ; l'imbrication
+de contours demande `shapely` (paquet `python-shapely`).
 
 ## Tests
 

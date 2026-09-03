@@ -15,15 +15,30 @@ feuille qu'on imprime et qu'on emporte à l'établi.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QFont, QImage, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QFont, QImage, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsItem, QGraphicsPolygonItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView,
 )
 
 import apparence
 import optimiseur as opt
+
+
+def _centre_de_gravite(points):
+    aire, cx, cy = 0.0, 0.0, 0.0
+    n = len(points)
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        d = x1 * y2 - x2 * y1
+        aire += d
+        cx += (x1 + x2) * d
+        cy += (y1 + y2) * d
+    if abs(aire) < 1e-9:
+        return points[0]
+    return cx / (3 * aire), cy / (3 * aire)
 
 
 class VuePlan(QGraphicsView):
@@ -118,16 +133,30 @@ class VuePlan(QGraphicsView):
         # tombait à huit pixels, illisible.
         echelle_prevue = (largeur_prevue or max(self.viewport().width(), 400)) \
             / longueur_max
-        hauteur_texte = min(max(self._CARTOUCHE_PX * self._facteur_texte
-                                / echelle_prevue,
-                                largeur_max * 0.12),
-                            largeur_max * 0.55)
-        # Le titre se pose EN HAUT de sa bande : le reste de la bande
-        # reçoit les étiquettes qui débordent par le haut de la planche
-        # (celles des pièces au ras du bord), qui sinon s'écrivent par
-        # dessus le titre.
-        bande = hauteur_texte * 2.2
-        interligne = hauteur_texte * 1.4
+
+        def tailles(echelle):
+            # Pas de plancher proportionnel à la largeur : sur un panneau
+            # de 600 × 400 il faisait un titre de 48 mm, plus haut qu'une
+            # pièce.
+            h = min(self._CARTOUCHE_PX * self._facteur_texte / echelle,
+                    largeur_max * 0.55)
+            # Le titre se pose EN HAUT de sa bande : le reste de la bande
+            # reçoit les étiquettes qui débordent par le haut de la planche
+            # (celles des pièces au ras du bord), qui sinon s'écrivent par
+            # dessus le titre.
+            return h, h * 2.2, h * 1.4
+
+        hauteur_texte, bande, interligne = tailles(echelle_prevue)
+        if largeur_prevue is None:
+            # Deux panneaux de 600 × 400 empilés : la vue est bridée par la
+            # HAUTEUR, pas la largeur, et l'échelle réelle est bien plus
+            # petite que prévu — le titre sortait à quatre pixels. Une
+            # seconde passe à l'échelle de la hauteur.
+            hauteur_scene = sum(d.planche.largeur + bande + interligne
+                                for _, d in self._debits)
+            echelle_h = max(self.viewport().height(), 300) / max(hauteur_scene, 1)
+            if echelle_h < echelle_prevue:
+                hauteur_texte, bande, interligne = tailles(echelle_h)
 
         y = 0.0
         for numero, debit in self._debits:
@@ -189,7 +218,7 @@ class VuePlan(QGraphicsView):
                 pl.largeur, y_haut, self.couleur(pose.piece.reference),
                 "%s\n%s × %s" % (pose.piece.reference, opt._mm(pose.dim_x),
                                  opt._mm(pose.dim_y)),
-                pose.piece.reference)
+                pose.piece.reference, contour=pose.contour)
             self._poses[rect] = (numero, pose)
 
         for chute in debit.chutes:
@@ -309,14 +338,21 @@ class VuePlan(QGraphicsView):
 
     def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
                    y_haut, couleur, etiquette, etiquette_courte,
-                   hachure=False, trait=None, info=None):
+                   hachure=False, trait=None, info=None, contour=()):
         """``etiquette`` à ``None`` : un rectangle muet (défaut, recoupe),
-        qui ne porte que son info-bulle ``info``."""
+        qui ne porte que son info-bulle ``info``. ``contour`` : une pose
+        imbriquée se dessine par son polygone, l'étiquette se règle sur
+        sa boîte."""
         # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
         # place la sienne en haut-gauche — on retourne y ici, une fois,
         # plutôt que de retourner toute la vue (le texte resterait lisible).
         y_qt = y_haut + largeur_planche - y - dy
-        rect = QGraphicsRectItem(x, y_qt, dx, dy)
+        if contour:
+            rect = QGraphicsPolygonItem(QPolygonF(
+                [QPointF(px, y_haut + largeur_planche - py)
+                 for px, py in contour]))
+        else:
+            rect = QGraphicsRectItem(x, y_qt, dx, dy)
         if hachure:
             # Chute : hachure simple. Défaut écarté : croisillon — de loin,
             # deux hachures de même sens se confondaient.
@@ -341,9 +377,22 @@ class VuePlan(QGraphicsView):
         # « montant ». Les variantes sont préparées ; _visibilite choisit
         # celle qui loge sous le zoom courant, ou aucune (l'info-bulle
         # reste), et règle la taille du texte sur la hauteur de la pièce.
-        dedans = [self._texte_centre(scene, chaine, x, y_qt, dx, dy)
-                  for chaine in (etiquette, etiquette.replace("\n", "  ·  "),
-                                 etiquette_courte)]
+        if contour:
+            # Une forme imbriquée : son nom seul, au centre de gravité du
+            # polygone (le centre de la boîte tombe dans l'échancrure d'une
+            # équerre, et deux équerres emboîtées y écrivaient l'une sur
+            # l'autre). Le budget de place est réduit : la boîte est plus
+            # large que la forme.
+            cx, cy = _centre_de_gravite(contour)
+            dedans = [self._texte_centre(scene, etiquette_courte, cx - dx * 0.3,
+                                         y_haut + largeur_planche - cy - dy * 0.3,
+                                         dx * 0.6, dy * 0.6)]
+            dx, dy = dx * 0.6, dy * 0.6
+        else:
+            dedans = [self._texte_centre(scene, chaine, x, y_qt, dx, dy)
+                      for chaine in (etiquette,
+                                     etiquette.replace("\n", "  ·  "),
+                                     etiquette_courte)]
         hors, cote_hors = None, None
         if y < 0.5:
             # Pièce au ras du bord bas : rien n'occupe l'en-dessous, et

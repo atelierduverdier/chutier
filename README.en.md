@@ -22,6 +22,30 @@ python3 interface.py
 Remaining task: importing the parts list from a project's FreeCAD
 spreadsheet (the CSV is the exchange contract in the meantime).
 
+## CNC: arbitrary shapes, nested
+
+File → **Import contours (SVG)** adds to the parts every closed path of
+the file (Inkscape, FreeCAD…; a path contained in another one of the
+same element is a hole, ignored). A part with a contour keeps its
+bounding-box dimensions in the table, and the Contour column says
+"◇ 24 pts". As soon as a material has **one** contour, that whole lot is
+**nested** for the router instead of being sawn: rectangles take part as
+polygons, on the same boards and offcuts, with the same defects.
+Settings "La CNC": gap between contours (bit diameter + clearance),
+margin to the edge, number of orientations tried for a part with free
+grain. File → **Export the cut (SVG)** writes every nested board as an
+SVG at scale 1 (mm), board outline and closed paths of the parts, for
+the CNC chain.
+
+The engine (`imbrication.py`, on `shapely`) is a bottom-left greedy:
+candidate positions are vertex-to-vertex contacts between the part and
+what is already placed, grown by the gap, each projected to the floor
+and to the wall; the lowest then leftmost one that overlaps nothing
+wins. Replayed under several part orders, the best by the chutier's
+score. What remains counts as offcut for the two rectangular strips (to
+the right, above) that pass the minima, waste for the rest — the chutier
+stores rectangles. Expect one to a few seconds per ten parts.
+
 ## The workshop
 
 The shared stock lives in its own file,
@@ -168,6 +192,10 @@ print(resultat.texte())               # résumé lisible
 - The solver replays a greedy under some sixty strategies, then works
   the best one by local search (`passes_amelioration` sweeps: empty a
   board, place its pieces back in the holes of the others).
+- A part with a `contour` (mm points, bottom-left corner at (0, 0))
+  makes its whole lot nested; its placement then carries the rotated
+  and translated contour in board coordinates, and its area is the
+  polygon's. No cuts on a nested board.
 - **Deterministic**: same inputs, same `graine` → same result.
 
 ## Layer Rule
@@ -178,7 +206,9 @@ interface calls the core, never the reverse — same sharing as laser_core
 
 | Module | Role |
 |---|---|
-| `optimiseur.py` | all geometry and solver. No dependencies. |
+| `optimiseur.py` | all geometry and the guillotine solver. No dependencies. |
+| `imbrication.py` | contour nesting for CNC. Depends on `shapely`, imported by the core only when a contour is requested. Without Qt. |
+| `contours_svg.py` | reading SVG paths (parser taken from LaserAtelier), writing the cut. No dependencies. |
 | `csv_io.py`, `projet_io.py` | CSV exchange, project JSON. Without Qt. |
 | `apparence.py` | colors, summary tiles. Knows Qt, not cutting. |
 | `tables_saisie.py` | the two tables and their delegates. |
@@ -188,7 +218,8 @@ interface calls the core, never the reverse — same sharing as laser_core
 ## License
 
 LGPL-2.1-or-later, like the G-code viewer of the workshop — the
-interface is built on PySide6 (Qt), the core has no dependencies.
+interface is built on PySide6 (Qt), the core has no dependencies;
+contour nesting requires `shapely` (`python-shapely` package).
 
 ## Tests
 
