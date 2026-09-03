@@ -67,6 +67,7 @@ class VuePlan(QGraphicsView):
         self._selection = None
         self.epinglees = set()     # numéros des planches épinglées
         self.au_menu = None        # rappel (numero, pose|None, position)
+        self.message_vide = ""     # ce qu'on écrit quand il n'y a rien
         self._zoom_manuel = False
         self._traits_visibles = False
         self._facteur_texte = 1.0
@@ -289,6 +290,23 @@ class VuePlan(QGraphicsView):
         numero.setTransform(numero.transform().translate(*decalage))
         scene.addItem(numero)
 
+    def drawForeground(self, peintre, rect):
+        super().drawForeground(peintre, rect)
+        if self._debits or not self.message_vide:
+            return
+        # Un rectangle gris muet fait chercher une panne ; un plan vide
+        # dit quoi faire. Dessiné en coordonnées de la fenêtre, pas de
+        # la scène, pour ignorer le zoom.
+        peintre.save()
+        peintre.resetTransform()
+        police = QFont()
+        police.setPointSizeF(11)
+        peintre.setFont(police)
+        peintre.setPen(QPen(apparence.encre_marge(self)))
+        peintre.drawText(self.viewport().rect(),
+                         int(Qt.AlignmentFlag.AlignCenter), self.message_vide)
+        peintre.restore()
+
     def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
                    y_haut, couleur, etiquette, etiquette_courte,
                    hachure=False, trait=None, info=None):
@@ -300,7 +318,11 @@ class VuePlan(QGraphicsView):
         y_qt = y_haut + largeur_planche - y - dy
         rect = QGraphicsRectItem(x, y_qt, dx, dy)
         if hachure:
-            rect.setBrush(QBrush(couleur, Qt.BrushStyle.BDiagPattern))
+            # Chute : hachure simple. Défaut écarté : croisillon — de loin,
+            # deux hachures de même sens se confondaient.
+            motif = (Qt.BrushStyle.DiagCrossPattern if trait
+                     else Qt.BrushStyle.BDiagPattern)
+            rect.setBrush(QBrush(couleur, motif))
             rect.setPen(QPen(trait or apparence.PLAN_CHUTE_TRAIT, 1))
         else:
             rect.setBrush(QBrush(couleur))
@@ -382,8 +404,10 @@ class VuePlan(QGraphicsView):
         dessin désignent ainsi toujours la même planche."""
         for num, cadre in self._cadres.items():
             if num == numero:
+                # Fin : un cadre épais couvrait le liseré pointillé d'une
+                # planche épinglée.
                 stylo = QPen(apparence.ORANGE,
-                             max(self.scene().sceneRect().width(), 1) / 250)
+                             max(self.scene().sceneRect().width(), 1) / 600)
                 cadre.setPen(stylo)
             else:
                 cadre.setPen(QPen(Qt.PenStyle.NoPen))

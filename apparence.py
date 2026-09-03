@@ -119,7 +119,9 @@ def pastille(couleur: QColor, hachure: bool = False, taille: int = 14) -> QIcon:
                             else Qt.BrushStyle.SolidPattern))
     if hachure:
         peintre.fillRect(0, 0, taille, taille, PLAN_PAPIER)
-        peintre.setBrush(QBrush(couleur, Qt.BrushStyle.BDiagPattern))
+        peintre.setBrush(QBrush(couleur, Qt.BrushStyle.DiagCrossPattern
+                                if couleur == PLAN_DEFAUT
+                                else Qt.BrushStyle.BDiagPattern))
     peintre.setPen(QPen(PLAN_BORD, 1))
     peintre.drawRect(0, 0, taille - 1, taille - 1)
     peintre.end()
@@ -156,6 +158,15 @@ STYLE_POIGNEE = """
     QSplitter::handle { background: palette(mid); }
     QSplitter::handle:hover { background: palette(highlight); }
 """
+
+# Le geste principal de la barre d'outils, dans l'orange de l'atelier —
+# le seul bouton coloré de l'interface, pour qu'on le trouve sans lire.
+STYLE_ACCENT = """
+    QToolButton { background: %s; color: #1a1e23; font-weight: bold;
+                  padding: 4px 12px; border-radius: 4px; border: none; }
+    QToolButton:hover { background: %s; }
+    QToolButton:pressed { background: %s; }
+""" % (ORANGE.name(), ORANGE.lighter(110).name(), ORANGE.darker(115).name())
 
 
 def separateur() -> QFrame:

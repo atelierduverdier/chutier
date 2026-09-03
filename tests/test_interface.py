@@ -27,7 +27,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
-from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtCore import QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QPageLayout, QPainter  # noqa: E402
 from PySide6.QtPrintSupport import QPrinter  # noqa: E402
@@ -40,9 +39,12 @@ _JETABLE = tempfile.mkdtemp(prefix="chutier-tests-")
 # l'exemple, celui que les tests connaissent.
 _ATELIER = os.path.join(_JETABLE, "atelier", "atelier.json")
 os.environ["CHUTIER_ATELIER"] = _ATELIER
-QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
-                  _JETABLE)
+# Les réglages Qt aussi — par la variable d'environnement, PAS par
+# QSettings.setPath : sur Linux, celui-ci ne détournait rien, et la suite
+# écrivait depuis le début dans ~/.config/AtelierDuVerdier/Chutier.conf
+# (le dernier dossier ouvert y pointait sur /tmp/chutier-tests-…, et la
+# géométrie de la fenêtre y était celle d'un test). Vu le 03/09/2026.
+os.environ["XDG_CONFIG_HOME"] = _JETABLE
 
 APP = QApplication.instance() or QApplication([])
 
@@ -299,6 +301,17 @@ class RangerLesChutes(unittest.TestCase):
         self.assertAlmostEqual(surface_neuves,
                                self.resultat.bilan.surface_chutes_creees,
                                places=3)
+
+
+class ReglagesJetables(unittest.TestCase):
+
+    def test_les_reglages_qt_sont_detournes(self):
+        """Un test ne touche jamais la configuration de l'utilisateur.
+        QSettings.setPath(IniFormat, …) le promettait et ne le faisait
+        pas ; seule la variable d'environnement tient parole."""
+        f = interface.FenetrePrincipale()
+        self.assertTrue(f._reglages.fileName().startswith(_JETABLE),
+                        f._reglages.fileName())
 
 
 class Atelier(unittest.TestCase):
@@ -737,6 +750,31 @@ class Fenetre(unittest.TestCase):
                     if hasattr(it, "text") and it.isVisible()}
         self.assertIn("montant  ·  1750 × 60", visibles)
         self.assertIn("tablette\n560 × 180", visibles)
+
+    def test_les_colonnes_avancees_se_replient_sauf_si_utilisees(self):
+        f = _fenetre()
+        f.a_avancees.setChecked(False)
+        self.assertTrue(f.table_pieces.isColumnHidden(7))     # Composable
+        self.assertTrue(f.table_stock.isColumnHidden(10))     # Prix
+        f.table_stock.item(0, 10).setText("35")
+        f._rafraichir_etat()
+        self.assertFalse(f.table_stock.isColumnHidden(10),
+                         "une valeur saisie ne se cache jamais")
+        f.a_avancees.setChecked(True)
+        self.assertFalse(f.table_pieces.isColumnHidden(7))
+
+    def test_un_plan_vide_dit_quoi_faire(self):
+        f = _fenetre()
+        f._modifie = False
+        f._nouveau()
+        self.assertIn("F5", f.vue.message_vide)
+        f.show()
+        APP.processEvents()
+        image = f.vue.grab().toImage()
+        encre = sum(1 for y in range(0, image.height(), 4)
+                    for x in range(0, image.width(), 4)
+                    if image.pixelColor(x, y) != image.pixelColor(2, 2))
+        self.assertGreater(encre, 30, "le plan vide est resté muet")
 
     def test_les_deux_tables_sont_visibles_ensemble(self):
         f = _fenetre()

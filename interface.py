@@ -123,6 +123,8 @@ class FenetrePrincipale(QMainWindow):
         self._chemin_atelier = projet_io.chemin_atelier()
 
         self._construire()
+        self.a_avancees.setChecked(
+            self._reglages.value("colonnes_avancees", False, type=bool))
         atelier = self._atelier()
         if atelier:
             # Un atelier déjà garni : on ouvre sur lui, feuille de pièces
@@ -238,6 +240,13 @@ class FenetrePrincipale(QMainWindow):
             "&Calculer le débit", self._calculer, "F5",
             ("system-run", "media-playback-start", "view-refresh"),
             "Recalculer la feuille de débit (F5)")
+        self.a_avancees = QAction("Colonnes &avancées", self)
+        self.a_avancees.setCheckable(True)
+        self.a_avancees.setStatusTip(
+            "Montrer les colonnes rarement remplies (Composable, Planche ;"
+            " Fil, Catalogue, Prix) — elles reviennent d'elles-mêmes dès"
+            " qu'une ligne s'en sert")
+        self.a_avancees.toggled.connect(self._basculer_avancees)
         self.a_desepingler = self._acte(
             "Tout &désépingler", self._tout_desepingler, None, None,
             "Relâcher toutes les planches épinglées : le prochain calcul"
@@ -279,6 +288,8 @@ class FenetrePrincipale(QMainWindow):
             edition.addAction(action)
         edition.addSeparator()
         edition.addAction(self.a_matiere)
+        edition.addSeparator()
+        edition.addAction(self.a_avancees)
 
         debit = menu.addMenu("&Débit")
         debit.addAction(self.a_calculer)
@@ -292,18 +303,23 @@ class FenetrePrincipale(QMainWindow):
 
         menu.addMenu("&Aide").addAction(self.a_aide)
 
+        # La barre d'outils n'est pas une seconde barre de menus : elle
+        # porte le geste principal, accentué, et trois raccourcis de
+        # main. Le reste vit dans les menus.
         barre = self.addToolBar("Principale")
         barre.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         barre.setMovable(False)
         for action in (self.a_ouvrir, self.a_enregistrer):
             barre.addAction(action)
         barre.addSeparator()
-        barre.addAction(self.a_importer)
+        self.bouton_calculer = QToolButton()
+        self.bouton_calculer.setDefaultAction(self.a_calculer)
+        self.bouton_calculer.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.bouton_calculer.setStyleSheet(apparence.STYLE_ACCENT)
+        barre.addWidget(self.bouton_calculer)
         barre.addSeparator()
-        barre.addAction(self.a_calculer)
-        barre.addAction(self.a_exporter)
         barre.addAction(self.a_imprimer)
-        barre.addSeparator()
         barre.addAction(self.a_saisie)
 
     # -- saisie ------------------------------------------------------------
@@ -686,6 +702,11 @@ class FenetrePrincipale(QMainWindow):
         self.vue.epinglees = set()
         self._a_jour = False
         self.bilan.vider()
+        self.vue.message_vide = (
+            "Saisissez les pièces à débiter, vérifiez le stock,\n"
+            "puis Calculer le débit (F5)."
+            if not self.table_pieces.lignes_utiles() else
+            "Calculer le débit (F5) pour voir le plan.")
         self.vue.afficher([])
         for liste in (self.liste_planches, self.liste_achats,
                       self.liste_chutes, self.liste_non_placees,
@@ -714,6 +735,7 @@ class FenetrePrincipale(QMainWindow):
             "Pièces  ·  %d" % len(self.table_pieces.lignes_utiles()))
         self.titre_stock.setText(
             "Stock  ·  %d" % len(self.table_stock.lignes_utiles()))
+        self._rafraichir_colonnes()
 
         nom = os.path.basename(self._chemin) if self._chemin else "Projet non enregistré"
         self.etat_fichier.setText(("● " if self._modifie else "") + nom)
@@ -772,6 +794,17 @@ class FenetrePrincipale(QMainWindow):
             return
         for ligne in lignes:
             table.item(ligne, 4).setText(matiere.strip())
+
+    def _basculer_avancees(self, montrer):
+        self._reglages.setValue("colonnes_avancees", montrer)
+        self._rafraichir_colonnes()
+
+    def _rafraichir_colonnes(self):
+        """Les colonnes rarement remplies se replient, sauf si une ligne
+        s'en sert : on ne cache jamais une valeur saisie."""
+        montrer = self.a_avancees.isChecked()
+        for table in (self.table_pieces, self.table_stock):
+            table.montrer_avancees(montrer)
 
     def _basculer_saisie(self, masquer):
         if masquer:

@@ -282,6 +282,33 @@ class TableEditable(QTableWidget):
     """
 
     COLONNES: tuple = ()
+    # Colonnes rarement remplies, repliables — jamais si une ligne s'en
+    # sert : on ne cache pas une valeur saisie.
+    AVANCEES: tuple = ()
+
+    def montrer_avancees(self, montrer: bool):
+        for i in self.AVANCEES:
+            utilisee = any(self._valeur_non_defaut(l, i)
+                           for l in range(self.rowCount()))
+            self.setColumnHidden(i, not (montrer or utilisee))
+
+    def _valeur_non_defaut(self, ligne: int, colonne: int) -> bool:
+        descripteur = self.COLONNES[colonne]
+        item = self.item(ligne, colonne)
+        if item is None:
+            return False
+        if descripteur.genre == BOOLEEN:
+            return bool(item.data(ROLE_VALEUR)) != bool(descripteur.defaut)
+        if descripteur.genre == CHOIX:
+            return item.data(ROLE_VALEUR) != descripteur.defaut
+        texte = item.text().strip()
+        if descripteur.genre in (NOMBRE, ENTIER):
+            try:
+                return float(texte.replace(",", ".") or 0) != float(
+                    descripteur.defaut or 0)
+            except ValueError:
+                return True
+        return bool(texte)
 
     def __init__(self):
         super().__init__(0, len(self.COLONNES))
@@ -601,6 +628,7 @@ class TablePieces(TableEditable):
     )
 
     COLONNE_PLANCHE = 8
+    AVANCEES = (7, 8)                # Composable, Planche
 
     def __init__(self, matieres_connues, references_stock=lambda: []):
         super().__init__()
@@ -691,6 +719,8 @@ class TableStock(TableEditable):
                 " pareils : une planche singulière prend sa propre ligne.",
                 ""),
     )
+
+    AVANCEES = (8, 9, 10)            # Fil, Catalogue, Prix
 
     def __init__(self):
         super().__init__()
