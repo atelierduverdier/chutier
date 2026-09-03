@@ -17,8 +17,10 @@ import json
 import os
 import sys
 
-from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QPageLayout, QPainter
+from PySide6.QtCore import QEvent, QRectF, QSettings, Qt, QTimer
+from PySide6.QtGui import (
+    QAction, QFont, QIcon, QKeySequence, QPageLayout, QPainter,
+)
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
@@ -145,7 +147,7 @@ class FenetrePrincipale(QMainWindow):
         central = QSplitter(Qt.Orientation.Horizontal)
         central.setHandleWidth(9)
         central.setStyleSheet(apparence.STYLE_POIGNEE)
-        central.addWidget(self._onglets_saisie())
+        central.addWidget(self._panneau_saisie())
         central.addWidget(self._panneau_resultats())
         central.setStretchFactor(0, 0)
         central.setStretchFactor(1, 1)
@@ -306,33 +308,48 @@ class FenetrePrincipale(QMainWindow):
 
     # -- saisie ------------------------------------------------------------
 
-    def _onglets_saisie(self) -> QWidget:
+    def _panneau_saisie(self) -> QWidget:
+        """Pièces au-dessus, stock en dessous, réglages repliés sous les
+        deux. Trois onglets, c'était quatre lignes de pièces et 700 px de
+        vide, pendant que le stock — dont le débit a besoin en même
+        temps — se cachait derrière un clic."""
         self.table_stock = tsa.TableStock()
         self.table_pieces = tsa.TablePieces(self.table_stock.matieres,
                                             self.table_stock.references)
+        self._table_active = self.table_pieces
 
-        self.onglets_saisie = QTabWidget()
-        self.onglets_saisie.setDocumentMode(True)
-        self.onglets_saisie.addTab(self._page_pieces(), "Pièces")
-        self.onglets_saisie.addTab(self._page_stock(), "Stock")
-        self.onglets_saisie.addTab(self._page_reglages(), "Réglages")
-        self.onglets_saisie.setTabToolTip(
-            0, "Ce qu'il faut débiter : une ligne par référence")
-        self.onglets_saisie.setTabToolTip(
-            1, "Ce qu'on a sous la main : planches, chutes, profils à acheter")
-        self.onglets_saisie.setTabToolTip(
-            2, "Comment on scie : trait de scie, surcotes, seuils de chute")
+        self.saisie = QSplitter(Qt.Orientation.Vertical)
+        self.saisie.setHandleWidth(9)
+        self.saisie.setStyleSheet(apparence.STYLE_POIGNEE)
+        self.saisie.addWidget(self._page_pieces())
+        self.saisie.addWidget(self._page_stock())
+        self.saisie.addWidget(self._page_reglages())
+        self.saisie.setStretchFactor(0, 3)
+        self.saisie.setStretchFactor(1, 2)
+        self.saisie.setStretchFactor(2, 0)
+        self.saisie.setCollapsible(2, False)
 
         for table in (self.table_pieces, self.table_stock):
             table.itemChanged.connect(self._saisie_changee)
             table.model().rowsInserted.connect(self._saisie_changee)
             table.model().rowsRemoved.connect(self._saisie_changee)
-        return self.onglets_saisie
+            table.installEventFilter(self)
+        return self.saisie
 
-    def _page_table(self, table, resume, actions) -> QWidget:
+    def eventFilter(self, objet, evenement):
+        # La table qui reçoit le focus devient celle des actions de ligne
+        # (« + ligne », Dupliquer…) — les onglets décidaient avant.
+        if evenement.type() == QEvent.Type.FocusIn and objet in (
+                self.table_pieces, self.table_stock):
+            self._table_active = objet
+        return super().eventFilter(objet, evenement)
+
+    def _page_table(self, table, titre, resume, actions) -> QWidget:
         page = QWidget()
         colonne = QVBoxLayout(page)
         colonne.setContentsMargins(6, 6, 6, 6)
+        colonne.setSpacing(4)
+        colonne.addWidget(titre)
         colonne.addWidget(table, stretch=1)
         colonne.addWidget(resume)
         ligne = QHBoxLayout()
@@ -362,8 +379,11 @@ class FenetrePrincipale(QMainWindow):
 
     def _page_pieces(self) -> QWidget:
         self.resume_pieces = apparence.discret("")
+        self.titre_pieces = apparence.titre("Pièces")
+        self.titre_pieces.setToolTip(
+            "Ce qu'il faut débiter : une ligne par référence")
         return self._page_table(
-            self.table_pieces, self.resume_pieces,
+            self.table_pieces, self.titre_pieces, self.resume_pieces,
             [self._bouton(self.a_ligne, "+ ligne"),
              self._bouton(self.a_dupliquer, "Dupliquer"),
              self._bouton(self.a_supprimer, "Supprimer"),
@@ -376,8 +396,11 @@ class FenetrePrincipale(QMainWindow):
             "Les lignes cochées « Atelier » vivent dans le fichier commun\n"
             "%s\nréécrit à chaque enregistrement, rangement de chutes et"
             " fermeture." % self._chemin_atelier)
+        self.titre_stock = apparence.titre("Stock")
+        self.titre_stock.setToolTip(
+            "Ce qu'on a sous la main : planches, chutes, profils à acheter")
         return self._page_table(
-            self.table_stock, self.resume_stock,
+            self.table_stock, self.titre_stock, self.resume_stock,
             [self._bouton(self.a_ligne, "+ ligne"),
              self._bouton(self.a_dupliquer, "Dupliquer"),
              self._bouton(self.a_supprimer, "Supprimer")])
@@ -466,7 +489,24 @@ class FenetrePrincipale(QMainWindow):
         cadre.setWidgetResizable(True)
         cadre.setWidget(page)
         cadre.setFrameShape(QScrollArea.Shape.NoFrame)
-        return cadre
+        self.reglages = apparence.Repliable(
+            "Réglages", cadre,
+            "Comment on scie : trait de scie, surcotes, seuils de chute")
+        self.reglages.ouvrir(
+            self._reglages.value("reglages_ouverts", False, type=bool))
+        self.reglages.bascule.connect(self._reglages_bascules)
+        return self.reglages
+
+    def _reglages_bascules(self, ouvert):
+        # Déplié, le groupe recevait la hauteur qu'il avait replié : trois
+        # lignes visibles et un ascenseur. On lui donne une vraie part.
+        tailles = self.saisie.sizes()
+        total = sum(tailles)
+        if ouvert and total:
+            part = int(total * 0.45)
+            reste = total - part
+            self.saisie.setSizes([int(reste * 0.55), reste - int(reste * 0.55),
+                                  part])
 
     def _groupe_reglage(self, titre, champs) -> QGroupBox:
         groupe = QGroupBox(titre)
@@ -670,10 +710,10 @@ class FenetrePrincipale(QMainWindow):
     def _rafraichir_etat(self):
         self.resume_pieces.setText(self.table_pieces.resume())
         self.resume_stock.setText(self.table_stock.resume())
-        self.onglets_saisie.setTabText(
-            0, "Pièces  ·  %d" % len(self.table_pieces.lignes_utiles()))
-        self.onglets_saisie.setTabText(
-            1, "Stock  ·  %d" % len(self.table_stock.lignes_utiles()))
+        self.titre_pieces.setText(
+            "Pièces  ·  %d" % len(self.table_pieces.lignes_utiles()))
+        self.titre_stock.setText(
+            "Stock  ·  %d" % len(self.table_stock.lignes_utiles()))
 
         nom = os.path.basename(self._chemin) if self._chemin else "Projet non enregistré"
         self.etat_fichier.setText(("● " if self._modifie else "") + nom)
@@ -693,15 +733,10 @@ class FenetrePrincipale(QMainWindow):
     # -- édition ------------------------------------------------------------
 
     def _table_courante(self):
-        return (self.table_pieces if self.onglets_saisie.currentIndex() == 0
-                else self.table_stock if self.onglets_saisie.currentIndex() == 1
-                else None)
+        return self._table_active
 
     def _ajouter_ligne(self):
         table = self._table_courante()
-        if table is None:
-            self.onglets_saisie.setCurrentIndex(0)
-            table = self.table_pieces
         ligne = table.ajouter_ligne()
         table.setCurrentCell(ligne, 0)
         table.editItem(table.item(ligne, 0))
@@ -1110,7 +1145,7 @@ class FenetrePrincipale(QMainWindow):
         self._a_jour = False
         self._modifie = True
         self._rafraichir_etat()
-        self.onglets_saisie.setCurrentIndex(1)
+        self.table_stock.setFocus()
         # L'atelier s'écrit tout de suite : c'est un inventaire, pas un
         # document — la chute existe sur l'étagère que le projet soit
         # enregistré ou non.
@@ -1291,7 +1326,7 @@ class FenetrePrincipale(QMainWindow):
         self.table_pieces.remplir(pieces)
         self._chargement = False
         self._retenir_dossier(chemin)
-        self.onglets_saisie.setCurrentIndex(0)
+        self.table_pieces.setFocus()
         self._saisie_changee()
 
     def _exporter_image(self):
@@ -1460,12 +1495,16 @@ class FenetrePrincipale(QMainWindow):
         for numero, planches in enumerate(pages, 1):
             if numero > 1:
                 imprimante.newPage()
+            # Sur le papier, les traits de scie se dessinent TOUJOURS,
+            # numérotés : c'est la feuille qu'on suit à la scie.
             self._dessiner_page(peintre,
-                                self._image_du_plan(planches, largeur),
+                                self._image_du_plan(planches, largeur,
+                                                    traits=True),
                                 numero, len(pages), planches)
         return len(pages)
 
-    def _image_du_plan(self, planches: list, largeur_px: int):
+    def _image_du_plan(self, planches: list, largeur_px: int,
+                       traits: bool = None):
         """Le plan rendu à ``largeur_px``, sur une vue montée hors écran.
 
         Deux raisons de ne pas rendre la vue affichée : les tailles de
@@ -1479,7 +1518,9 @@ class FenetrePrincipale(QMainWindow):
             return None
         vue = vue_plan.VuePlan()
         vue.couleurs = self.vue.couleurs
-        vue.afficher(planches, self.case_traits.isChecked(),
+        vue.epinglees = self.vue.epinglees
+        vue.afficher(planches,
+                     self.case_traits.isChecked() if traits is None else traits,
                      largeur_prevue=largeur_px,
                      facteur_texte=max(1.0, largeur_px
                                        / vue_plan.VuePlan.LARGEUR_LISIBLE))
@@ -1565,7 +1606,8 @@ class FenetrePrincipale(QMainWindow):
 
     def _dessiner_cotes(self, peintre: QPainter, planches: list,
                         zone: QRectF):
-        """Sous le plan, les cotes de débit planche par planche.
+        """Sous le plan, planche par planche : les cotes de débit, puis la
+        liste des coupes dans l'ordre, telle qu'on la suit à la scie.
 
         Une planche de 4 m sur 150 dessinée en travers d'une A4 laisse la
         moitié de la page blanche — et les étiquettes du dessin ne portent
@@ -1582,6 +1624,21 @@ class FenetrePrincipale(QMainWindow):
             return                      # pas la place : le dessin prime
 
         y = zone.top()
+        gras = QFont(police)
+        gras.setBold(True)
+
+        def ecrire(texte, police_):
+            nonlocal y
+            peintre.setFont(police_)
+            boite = QRectF(zone.left(), y, zone.width(), zone.bottom() - y)
+            if boite.height() < ligne:
+                return False
+            hauteur = peintre.boundingRect(
+                boite, int(Qt.TextFlag.TextWordWrap), texte).height()
+            peintre.drawText(boite, int(Qt.TextFlag.TextWordWrap), texte)
+            y += hauteur
+            return True
+
         for numero, debit in planches:
             lots = {}
             for pose in debit.poses:
@@ -1592,15 +1649,23 @@ class FenetrePrincipale(QMainWindow):
                         % (reference, opt._mm(dx), opt._mm(dy),
                            " ×%d" % n if n > 1 else "")
                         for (reference, dx, dy), n in lots.items()]
-            texte = "%d.  %s" % (numero, "   ·   ".join(morceaux))
-            boite = QRectF(zone.left(), y, zone.width(),
-                           zone.bottom() - y)
-            if boite.height() < ligne:
+            if not ecrire("%d.  %s" % (numero, "   ·   ".join(morceaux)),
+                          gras):
                 break
-            hauteur = peintre.boundingRect(
-                boite, int(Qt.TextFlag.TextWordWrap), texte).height()
-            peintre.drawText(boite, int(Qt.TextFlag.TextWordWrap), texte)
-            y += hauteur + ligne * 0.35
+            coupes = ["%d %s %s" % (
+                c.ordre, "↕" if c.sens == opt.TRONCONNAGE else "↔",
+                opt._mm(c.position)) for c in debit.coupes]
+            if coupes and not ecrire("coupes :  " + "   ·   ".join(coupes),
+                                     police):
+                break
+            y += ligne * 0.5
+        if planches[0][1].coupes:
+            ecrire("↕ tronçonnage, en travers du fil, à x mm du bout"
+                   " gauche  —  ↔ délignage, le long du fil, à y mm de la"
+                   " rive basse. Chaque trait traverse de bord à bord le"
+                   " morceau courant ; la lame mange du côté opposé à la"
+                   " pièce.", apparence.police_discrete(police))
+        peintre.setFont(police)
 
     def _exporter_fiche(self):
         """La fiche d'atelier : poses et coupes planche par planche.
@@ -1795,6 +1860,9 @@ jamais. Les chutes passent avant les planches neuves.</p>"""
         etat = self._reglages.value("splitter")
         if etat:
             self._splitter.restoreState(etat)
+        etat = self._reglages.value("saisie")
+        if etat:
+            self.saisie.restoreState(etat)
 
     def closeEvent(self, evenement):
         if not self._confirmer_abandon():
@@ -1805,6 +1873,8 @@ jamais. Les chutes passent avant les planches neuves.</p>"""
         self._enregistrer_atelier()
         self._reglages.setValue("geometrie", self.saveGeometry())
         self._reglages.setValue("splitter", self._splitter.saveState())
+        self._reglages.setValue("saisie", self.saisie.saveState())
+        self._reglages.setValue("reglages_ouverts", self.reglages.est_ouvert())
         self._memoriser_reglages()
         super().closeEvent(evenement)
 

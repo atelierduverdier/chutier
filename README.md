@@ -37,11 +37,15 @@ blanche ; l'exemple ne sert qu'à la découverte.
 
 ## L'interface
 
-Trois onglets à gauche, dans l'ordre du geste : **Pièces** (ce qu'il faut
-débiter), **Stock** (ce qu'on a), **Réglages** (comment on scie). Le
-résultat occupe toute la droite : une rangée de chiffres-clés, puis le
-plan, toutes les planches empilées — pièces colorées par référence,
-chutes hachurées, fond clair pour la perte.
+À gauche, dans l'ordre du geste et l'un sous l'autre : **Pièces** (ce
+qu'il faut débiter), **Stock** (ce qu'on a), et **Réglages** (comment on
+scie) repliés sous les deux. Les boutons de ligne agissent sur la table
+qui a le focus. Le résultat occupe toute la droite : une rangée de
+chiffres-clés, puis le plan, toutes les planches empilées — pièces
+colorées par référence, chutes hachurées, fond clair pour la perte.
+Les étiquettes des pièces s'écrivent sur deux lignes, une ligne
+(« montant · 1750 × 60 ») ou le seul nom, selon la place, et grandissent
+avec la hauteur de la pièce.
 
 | Raccourci | |
 |---|---|
@@ -62,8 +66,9 @@ d'un même débit n'ont jamais la même.
 Quatre façons de sortir le débit de l'écran : le **plan** (PNG à
 résolution d'impression, ou impression paginée — une poignée de planches
 par page, pas soixante écrasées sur une, avec les cotes de débit sous le
-dessin ; avec « Traits de scie » coché, chaque trait porte son numéro
-d'ordre), la **fiche d'atelier** (texte : poses et coupes numérotées
+dessin, puis la liste des coupes numérotées de chaque planche ; sur le
+papier, les traits de scie se dessinent toujours, avec leur numéro), la
+**fiche d'atelier** (texte : poses et coupes numérotées
 planche par planche, à cocher à la scie), les **étiquettes** (une par
 pièce — référence, cotes, planche, exemplaire, couleur du plan — 24 par
 page A4 en 70 × 37 mm, à coller sur le bois) et les **pièces en CSV** (le

@@ -36,11 +36,14 @@ serves discovery.
 
 ## L'interface
 
-Three tabs on the left, in the order of the work: **Parts** (what has to
-be cut), **Stock** (what you have), **Settings** (how you saw). The
-result fills the whole right-hand side: a row of key figures, then the
-plan, every board stacked — parts coloured by reference, offcuts
-hatched, a light background for waste.
+On the left, in the order of the work and one below the other: **Parts**
+(what has to be cut), **Stock** (what you have), and **Settings** (how
+you saw) folded under both. The row buttons act on the table that has
+focus. The result fills the whole right-hand side: a row of key figures,
+then the plan, every board stacked — parts coloured by reference,
+offcuts hatched, a light background for waste. Part labels are written
+on two lines, one line ("montant · 1750 × 60") or the name alone,
+depending on room, and grow with the height of the part.
 
 | Raccourci | |
 |---|---|
@@ -60,8 +63,9 @@ references from the same cutting plan never have the same color.
 
 Four ways to output the cutting plan from the screen: the **plan** (PNG
 at print resolution, or paginated printing—a handful of boards per page,
-not sixty crushed on one, with cutting dimensions under the drawing;
-with "Saw kerfs" ticked, every cut carries its order number), the
+not sixty crushed on one, with cutting dimensions under the drawing,
+then each board's numbered cut list; on paper, saw kerfs are always
+drawn, with their number), the
 **workshop sheet** (text: positions and numbered cuts board by board, to
 be checked at the saw), the **labels** (one per piece — reference,
 dimensions, board, copy, plan colour — 24 per A4 page at 70 × 37 mm, to

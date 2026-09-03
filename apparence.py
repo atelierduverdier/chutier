@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import zlib
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
+    QApplication, QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 # -- couleurs du plan (feuille de papier, indépendantes du thème) --------
@@ -171,6 +172,57 @@ def titre(texte: str) -> QLabel:
     police.setBold(True)
     etiquette.setFont(police)
     return etiquette
+
+
+def police_discrete(police: QFont) -> QFont:
+    petite = QFont(police)
+    petite.setPointSizeF(max(6.0, police.pointSizeF() - 1.0))
+    petite.setItalic(True)
+    return petite
+
+
+class Repliable(QWidget):
+    """Un en-tête cliquable qui montre ou cache son contenu. Replié, il
+    ne prend que la hauteur de son en-tête — dans un séparateur, la place
+    revient aux voisins."""
+
+    bascule = Signal(bool)
+
+    def __init__(self, titre: str, contenu: QWidget, info: str = ""):
+        super().__init__()
+        self._contenu = contenu
+        self._bouton = QToolButton()
+        self._bouton.setText(titre)
+        self._bouton.setCheckable(True)
+        self._bouton.setAutoRaise(True)
+        self._bouton.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        police = self._bouton.font()
+        police.setBold(True)
+        self._bouton.setFont(police)
+        if info:
+            self._bouton.setToolTip(info)
+        self._bouton.toggled.connect(self.ouvrir)
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(6, 4, 6, 4)
+        colonne.setSpacing(4)
+        colonne.addWidget(self._bouton)
+        colonne.addWidget(contenu, stretch=1)
+        self.ouvrir(False)
+
+    def ouvrir(self, ouvert: bool):
+        self._bouton.setChecked(ouvert)
+        self._bouton.setArrowType(Qt.ArrowType.DownArrow if ouvert
+                                  else Qt.ArrowType.RightArrow)
+        self._contenu.setVisible(ouvert)
+        if ouvert:
+            self.setMaximumHeight(16777215)
+        else:
+            self.setMaximumHeight(self._bouton.sizeHint().height() + 8)
+        self.bascule.emit(ouvert)
+
+    def est_ouvert(self) -> bool:
+        return self._bouton.isChecked()
 
 
 def discret(texte: str) -> QLabel:

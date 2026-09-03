@@ -270,7 +270,7 @@ class VuePlan(QGraphicsView):
         numero = QGraphicsSimpleTextItem(str(coupe.ordre))
         numero.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         police = QFont()
-        police.setPointSizeF(5.5 * self._facteur_texte)
+        police.setPointSizeF(6.5 * self._facteur_texte)
         police.setBold(True)
         numero.setFont(police)
         numero.setBrush(QBrush(apparence.PLAN_TRAIT_SCIE))
@@ -314,42 +314,54 @@ class VuePlan(QGraphicsView):
         # Une planche de menuiserie est souvent longue et étroite (un
         # 150×3000) : la pièce posée peut être trop basse pour ses deux
         # lignes complètes tout en étant bien assez large pour son seul
-        # nom. Les trois variantes sont préparées ; _visibilite choisit
+        # nom — ou pour les deux SUR UNE LIGNE, ce qui manquait : un
+        # montant de 1750 × 60 faisait 800 px de large et n'affichait que
+        # « montant ». Les variantes sont préparées ; _visibilite choisit
         # celle qui loge sous le zoom courant, ou aucune (l'info-bulle
-        # reste).
-        complet = self._texte_centre(scene, etiquette, x, y_qt, dx, dy, 8)
-        court = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, dy, 6)
+        # reste), et règle la taille du texte sur la hauteur de la pièce.
+        dedans = [self._texte_centre(scene, chaine, x, y_qt, dx, dy)
+                  for chaine in (etiquette, etiquette.replace("\n", "  ·  "),
+                                 etiquette_courte)]
         hors, cote_hors = None, None
         if y < 0.5:
             # Pièce au ras du bord bas : rien n'occupe l'en-dessous, et
             # l'interligne entre planches y laisse la place — l'étiquette
             # peut déborder là sans chevaucher un voisin.
             hors = self._texte_centre(scene, etiquette_courte, x, y_qt + dy,
-                                      dx, 0, 6, cote="dessous")
+                                      dx, 0, cote="dessous")
             cote_hors = "dessous"
         elif y + dy > largeur_planche - 0.5:
             hors = self._texte_centre(scene, etiquette_courte, x, y_qt, dx, 0,
-                                      6, cote="dessus")
+                                      cote="dessus")
             cote_hors = "dessus"
         self._etiquettes.append(
-            (complet, court, hors, cote_hors, dx, dy, x + dx / 2, numero))
+            (dedans, hors, cote_hors, dx, dy, x + dx / 2, numero))
         return rect
 
-    def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, taille_police,
-                      cote="dedans"):
+    TAILLE_MINI, TAILLE_MAXI, TAILLE_HORS = 6.5, 11.0, 6.0
+
+    def _texte_centre(self, scene, chaine, x, y_qt, dx, dy, cote="dedans"):
         texte = QGraphicsSimpleTextItem(chaine)
         texte.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        police = QFont()
-        police.setPointSizeF(taille_police * self._facteur_texte)
-        texte.setFont(police)
         texte.setBrush(QBrush(apparence.PLAN_BORD if cote == "dedans"
                               else apparence.encre_marge(self)))
         texte.setZValue(6)
         # ItemIgnoresTransformations ancre pos() au point de la scène (donc
         # zoomé avec la vue) mais dessine ensuite en pixels non zoomés — le
-        # centrage se fait par une transformation propre à l'item, en pixels.
-        boite = texte.boundingRect()
+        # centrage se fait par une transformation propre à l'item, en
+        # pixels, refait à chaque changement de taille (_tailler).
         texte.setPos(x + dx / 2, y_qt + dy / 2)
+        self._tailler(texte, self.TAILLE_HORS if cote != "dedans"
+                      else self.TAILLE_MINI, cote)
+        scene.addItem(texte)
+        return texte, cote
+
+    def _tailler(self, texte, taille, cote):
+        """Règle la police et recentre ; rend la boîte en pixels."""
+        police = QFont()
+        police.setPointSizeF(taille * self._facteur_texte)
+        texte.setFont(police)
+        boite = texte.boundingRect()
         ecart = 3 * self._facteur_texte
         if cote == "dessus":
             decalage_y = -boite.height() - ecart
@@ -357,10 +369,11 @@ class VuePlan(QGraphicsView):
             decalage_y = ecart
         else:
             decalage_y = -boite.height() / 2
-        texte.setTransform(
-            texte.transform().translate(-boite.width() / 2, decalage_y))
-        scene.addItem(texte)
-        return texte, boite
+        transformation = texte.transform()
+        transformation.reset()
+        texte.setTransform(transformation.translate(-boite.width() / 2,
+                                                    decalage_y))
+        return boite
 
     # -- sélection --------------------------------------------------------
 
@@ -471,33 +484,35 @@ class VuePlan(QGraphicsView):
         # second tri qui les compare entre elles. Par planche : deux
         # planches empilées ont chacune leur propre bande de marge.
         candidats = {}
-        for (texte_c, boite_c), (texte_k, boite_k), hors, cote_hors, dx, dy, \
-                x_centre, numero in self._etiquettes:
-            marge = 4 * self._facteur_texte
-
-            def tient(boite, hauteur=dy):
-                return (dx * echelle >= boite.width() + marge
-                        and hauteur * echelle >= boite.height() + marge)
-            if tient(boite_c):
-                texte_c.setVisible(True)
-                texte_k.setVisible(False)
+        marge = 4 * self._facteur_texte
+        for dedans, hors, cote_hors, dx, dy, x_centre, numero in \
+                self._etiquettes:
+            # La taille suit la hauteur de la pièce à l'écran, entre deux
+            # bornes : une tablette de 180 mm n'a pas à s'écrire aussi
+            # petit qu'un tasseau de 20.
+            taille = min(self.TAILLE_MAXI,
+                         max(self.TAILLE_MINI, dy * echelle * 0.2))
+            retenue = None
+            for rang, (texte, cote) in enumerate(dedans):
+                boite = self._tailler(texte, taille if rang < 2
+                                      else max(self.TAILLE_MINI, taille - 1),
+                                      cote)
+                if (retenue is None and dx * echelle >= boite.width() + marge
+                        and dy * echelle >= boite.height() + marge):
+                    retenue = texte
+                texte.setVisible(False)
+            if retenue is not None:
+                retenue.setVisible(True)
                 if hors:
                     hors[0].setVisible(False)
-            elif tient(boite_k):
-                texte_c.setVisible(False)
-                texte_k.setVisible(True)
-                if hors:
-                    hors[0].setVisible(False)
-            else:
-                texte_c.setVisible(False)
-                texte_k.setVisible(False)
-                if hors:
-                    texte_h, boite_h = hors
-                    if dx * echelle >= boite_h.width() + marge:
-                        candidats.setdefault((numero, cote_hors), []).append(
-                            (x_centre * echelle, boite_h.width(), texte_h))
-                    else:
-                        texte_h.setVisible(False)
+            elif hors:
+                texte_h, cote = hors
+                boite_h = self._tailler(texte_h, self.TAILLE_HORS, cote)
+                if dx * echelle >= boite_h.width() + marge:
+                    candidats.setdefault((numero, cote_hors), []).append(
+                        (x_centre * echelle, boite_h.width(), texte_h))
+                else:
+                    texte_h.setVisible(False)
 
         for groupe in candidats.values():
             groupe.sort(key=lambda c: c[0])

@@ -724,6 +724,57 @@ class Fenetre(unittest.TestCase):
                     if page.pixelColor(x, y) != Qt.GlobalColor.white)
         self.assertGreater(encre, 200, "la page est restée blanche")
 
+    def test_une_piece_etroite_montre_ses_cotes_sur_une_ligne(self):
+        """Un montant de 1750 × 60 fait 800 px de large à l'écran et
+        n'affichait que « montant » : la variante à deux lignes ne tenait
+        pas en hauteur. Celle sur une ligne, si."""
+        f = _fenetre()
+        f.resize(1680, 960)
+        f.show()
+        APP.processEvents()
+        f.vue.ajuster()
+        visibles = {it.text() for it in f.vue.scene().items()
+                    if hasattr(it, "text") and it.isVisible()}
+        self.assertIn("montant  ·  1750 × 60", visibles)
+        self.assertIn("tablette\n560 × 180", visibles)
+
+    def test_les_deux_tables_sont_visibles_ensemble(self):
+        f = _fenetre()
+        f.show()
+        APP.processEvents()
+        self.assertTrue(f.table_pieces.isVisible())
+        self.assertTrue(f.table_stock.isVisible())
+        self.assertFalse(f.reglages.est_ouvert())
+        f.reglages.ouvrir(True)
+        APP.processEvents()
+        self.assertTrue(f.spin_trait.isVisible())
+        self.assertGreater(f.saisie.sizes()[2], 100)
+
+    def test_les_actions_de_ligne_suivent_la_table_qui_a_le_focus(self):
+        f = _fenetre()
+        f.show()
+        APP.processEvents()
+        f.table_stock.setFocus()
+        APP.processEvents()
+        avant = f.table_stock.rowCount()
+        f._ajouter_ligne()
+        self.assertEqual(f.table_stock.rowCount(), avant + 1)
+        f.table_pieces.setFocus()
+        APP.processEvents()
+        avant = f.table_pieces.rowCount()
+        f._ajouter_ligne()
+        self.assertEqual(f.table_pieces.rowCount(), avant + 1)
+
+    def test_le_papier_porte_toujours_les_coupes(self):
+        f = _fenetre()
+        f.case_traits.setChecked(False)
+        image = f._image_du_plan(f.vue.debits_affiches(), 1200, traits=True)
+        rouge = sum(1 for y in range(0, image.height(), 3)
+                    for x in range(0, image.width(), 3)
+                    if image.pixelColor(x, y).red() > 150
+                    and image.pixelColor(x, y).green() < 90)
+        self.assertGreater(rouge, 20, "aucun trait de scie sur le papier")
+
     def test_les_numeros_de_coupe_sont_sur_le_plan(self):
         f = _fenetre()
         f.case_traits.setChecked(True)
