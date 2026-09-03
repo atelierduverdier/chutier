@@ -38,15 +38,25 @@ pièce à fil indifférent. Fichier → **Exporter la découpe (SVG)** sort
 chaque planche imbriquée en SVG à l'échelle 1 (mm), contour de la
 planche et chemins fermés des pièces, pour la chaîne CNC.
 
-Le moteur (`imbrication.py`, sur `shapely`) est un glouton bas-gauche :
-les positions candidates sont les contacts sommet à sommet entre la
-pièce et ce qui est déjà posé, élargi de l'écart, chacun projeté au sol
-et au mur ; la plus basse puis la plus à gauche qui ne recouvre rien
-gagne. Rejoué sous plusieurs ordres de pièces, le meilleur au score du
-chutier. Ce qui reste est compté chute pour les deux bandes
-rectangulaires (à droite, au-dessus) qui passent les minis, perte pour
-le reste — le chutier range des rectangles. Compter une à quelques
-secondes par dizaine de pièces.
+Le moteur (`imbrication.py`, sur `shapely` ≥ 2.1) est un vrai
+**no-fit polygon**, comme SVGnest, Deepnest et libnest2d : pour chaque
+pièce posée A et pièce à poser B, le NFP est la région des positions de
+B qui recouvrent A (somme de Minkowski de A et de B retournée, calculée
+par triangulation contrainte : l'union des enveloppes convexes des
+sommes de triangles), élargi de l'écart de fraise ; le bord de la
+planche est un obstacle comme un autre. Les positions valides sont « la
+planche moins l'union des NFP », et les candidates en sont les sommets,
+toutes en contact avec un voisin ou le bord. On garde celle qui serre
+le plus les pièces (la gravité de SVGnest, 2 × largeur + hauteur de la
+boîte posée, ou l'aire de cette boîte), puis la plus basse et la plus à
+gauche. Les NFP sont en cache par couple (forme, angle). Les stratégies
+(ordres de pièces × objectifs) se répartissent sur **tous les cœurs**
+(réglage Processus) ; le résultat ne dépend pas du nombre de cœurs,
+seule la durée change — soixante pièces en un quart de seconde sur une
+machine à trente-deux cœurs, deux secondes en séquentiel. Ce qui reste
+est compté chute
+pour les deux bandes rectangulaires (à droite, au-dessus) qui passent
+les minis, perte pour le reste — le chutier range des rectangles.
 
 ## L'atelier
 

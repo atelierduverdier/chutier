@@ -245,7 +245,9 @@ class Parametres:
       ``marge_bord``, la distance au bord de la planche ; ``pas_rotation``
       en degrés, les orientations essayées pour une pièce à fil
       indifférent (90 : quatre orientations ; 45 : huit ; 15 : vingt-
-      quatre, plus lent).
+      quatre, plus lent) ; ``processus``, le nombre de cœurs sur lesquels
+      répartir les stratégies d'imbrication (0 : tous ceux de la machine,
+      1 : sans parallélisme). Le résultat ne dépend pas de ce nombre.
     """
 
     trait_de_scie: float = 3.0
@@ -262,6 +264,7 @@ class Parametres:
     ecart_contours: float = 8.0
     marge_bord: float = 5.0
     pas_rotation: int = 90
+    processus: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -1337,7 +1340,7 @@ def _valider(pieces: list, stock: list, params: Parametres):
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
             or params.surcote_joint < 0 or params.essais_melanges < 0
             or params.passes_amelioration < 0 or params.ecart_contours < 0
-            or params.marge_bord < 0):
+            or params.marge_bord < 0 or params.processus < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
     if not 1 <= params.pas_rotation <= 180 or 360 % params.pas_rotation:
         raise ValueError("paramètres : le pas de rotation doit diviser 360"

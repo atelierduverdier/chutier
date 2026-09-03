@@ -458,6 +458,11 @@ class FenetrePrincipale(QMainWindow):
                              (15, "24 orientations (15°) — lent")):
             self.choix_rotation.addItem(libelle, pas)
         self.choix_rotation.currentIndexChanged.connect(self._saisie_changee)
+        self.spin_processus = QSpinBox()
+        self.spin_processus.setRange(0, 64)
+        self.spin_processus.setSpecialValueText("tous les cœurs")
+        self.spin_processus.setValue(defauts.processus)
+        self.spin_processus.valueChanged.connect(self._saisie_changee)
         self.spin_passes = QSpinBox()
         self.spin_passes.setRange(0, 10)
         self.spin_passes.setValue(defauts.passes_amelioration)
@@ -518,6 +523,10 @@ class FenetrePrincipale(QMainWindow):
              "Les angles essayés pour une pièce à fil indifférent (ou sur"
              " un panneau sans fil). Plus d'orientations imbriquent parfois"
              " mieux, et calculent d'autant plus longtemps."),
+            ("Processus", self.spin_processus,
+             "Les stratégies d'imbrication se répartissent sur les cœurs"
+             " de la machine. Le résultat ne dépend pas de ce nombre ;"
+             " seule la durée change. 1 pour calculer sans parallélisme."),
         ]))
         colonne.addWidget(self._groupe_reglage("Le calcul", [
             ("Privilégier", self.choix_priorite,
@@ -529,8 +538,7 @@ class FenetrePrincipale(QMainWindow):
              "Ordres de pièces tirés au hasard en plus des stratégies"
              " réglées. Plus d'essais range parfois mieux, et calcule plus"
              " longtemps. Le hasard est à graine fixe : mêmes entrées,"
-             " même plan. L'imbrication de contours, cent fois plus"
-             " coûteuse, n'en prend qu'un quart."),
+             " même plan."),
             ("Passes d'amélioration", self.spin_passes,
              "Après le meilleur rangement, on essaie planche par planche"
              " de la vider et de replacer ses pièces dans les trous des"
@@ -889,7 +897,8 @@ class FenetrePrincipale(QMainWindow):
             passes_amelioration=self.spin_passes.value(),
             ecart_contours=self.spin_ecart.value(),
             marge_bord=self.spin_marge_bord.value(),
-            pas_rotation=self.choix_rotation.currentData())
+            pas_rotation=self.choix_rotation.currentData(),
+            processus=self.spin_processus.value())
 
     def _appliquer_parametres(self, p: opt.Parametres):
         for spin, valeur in ((self.spin_trait, p.trait_de_scie),
@@ -902,7 +911,8 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_essais, p.essais_melanges),
                              (self.spin_passes, p.passes_amelioration),
                              (self.spin_ecart, p.ecart_contours),
-                             (self.spin_marge_bord, p.marge_bord)):
+                             (self.spin_marge_bord, p.marge_bord),
+                             (self.spin_processus, p.processus)):
             spin.setValue(valeur)
         self.choix_priorite.setCurrentIndex(
             max(0, self.choix_priorite.findData(p.priorite)))

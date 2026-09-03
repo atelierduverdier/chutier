@@ -11,6 +11,7 @@ entrée, même résultat.
 
 import math
 import os
+import random
 import sys
 import tempfile
 import unittest
@@ -23,7 +24,9 @@ from optimiseur import (  # noqa: E402
 )
 
 try:
-    from shapely.geometry import Polygon, box
+    from shapely import affinity
+    from shapely.geometry import Point, Polygon, box
+    import imbrication
     SHAPELY = True
 except ImportError:                      # pragma: no cover
     SHAPELY = False
@@ -159,6 +162,76 @@ class Invariants(unittest.TestCase):
             optimiser([Piece("x", 10, 10, 18, "cp")],
                       [Planche("cp", 100, 100, 18, "cp")],
                       Parametres(pas_rotation=70))
+
+
+@unittest.skipUnless(SHAPELY, "shapely absent")
+class NoFitPolygon(unittest.TestCase):
+    """Le NFP de B autour de A est la région des positions de B (son
+    coin bas-gauche) où elle recouvre A."""
+
+    def test_deux_rectangles(self):
+        """Autour d'un 40 × 30, un 20 × 10 recouvre pour tout coin dans
+        [−20, 40] × [−10, 30] — au surcroît de simplification près (deux
+        dixièmes de chaque côté)."""
+        formes = imbrication._Formes(Parametres(ecart_contours=0))
+        ca, *_ = formes.variante(Piece("a", 40, 30, 18, "cp"), 0)
+        cb, *_ = formes.variante(Piece("b", 20, 10, 18, "cp"), 0)
+        nfp = formes.nfp(ca, cb)
+        for lu, attendu in zip(nfp.bounds, (-20, -10, 40, 30)):
+            self.assertAlmostEqual(lu, attendu, delta=0.5)
+
+    def test_concave_contre_convexe_tirages(self):
+        """Point dans le NFP ⇔ recouvrement, sur des positions tirées au
+        hasard : c'est la définition, et la triangulation ne doit rien y
+        changer."""
+        formes = imbrication._Formes(Parametres(ecart_contours=0))
+        cl, _, sl, _, _ = formes.variante(
+            Piece("L", 80, 80, 18, "cp", contour=L), 0)
+        cr, _, sr, _, _ = formes.variante(
+            Piece("rond", 60, 60, 18, "cp", contour=ROND), 90)
+        nfp = formes.nfp(cl, cr)
+        rng = random.Random(1)
+        for _ in range(1500):
+            tx, ty = rng.uniform(-70, 90), rng.uniform(-70, 90)
+            dedans = nfp.contains(Point(tx, ty))
+            recouvre = sl.intersection(affinity.translate(sr, tx, ty)).area > 1e-6
+            self.assertEqual(dedans, recouvre, "en (%.1f, %.1f)" % (tx, ty))
+
+    def test_l_ecart_elargit_le_nfp(self):
+        avec = imbrication._Formes(Parametres(ecart_contours=8))
+        sans = imbrication._Formes(Parametres(ecart_contours=0))
+        for f in (avec, sans):
+            f.variante(Piece("a", 40, 30, 18, "cp"), 0)
+            f.variante(Piece("b", 20, 10, 18, "cp"), 0)
+        ca = (("r", 40.0, 30.0), 0)
+        cb = (("r", 20.0, 10.0), 0)
+        self.assertGreater(avec.nfp(ca, cb).area, sans.nfp(ca, cb).area)
+        # à 8 juste de l'écart, un point à 7,5 est bloqué, à 8,5 libre
+        self.assertTrue(avec.nfp(ca, cb).contains(Point(40 + 7.5, 10)))
+        self.assertFalse(avec.nfp(ca, cb).contains(Point(40 + 8.5, 10)))
+
+    def test_parallele_egale_sequentiel(self):
+        stock = [Planche("cp", 600, 400, 18, "cp", 3, fil=False)]
+        seq = optimiser(_pieces(), stock, Parametres(essais_melanges=2,
+                                                     processus=1))
+        par = optimiser(_pieces(), stock, Parametres(essais_melanges=2,
+                                                     processus=0))
+        self.assertEqual(seq.texte(), par.texte())
+
+    def test_les_sommets_de_la_region_libre_touchent(self):
+        """Chaque pièce posée touche un voisin ou le bord, à l'écart
+        près : c'est la propriété du NFP, et ce qui rend le plan serré."""
+        params = Parametres(essais_melanges=0, processus=1)
+        stock = [Planche("cp", 600, 400, 18, "cp", 1, fil=False)]
+        r = optimiser(_pieces(), stock, params)
+        d = r.debits[0]
+        bord = box(0, 0, 600, 400).buffer(-params.marge_bord, join_style="mitre")
+        polys = [Polygon(p.contour) for p in d.poses]
+        for i, poly in enumerate(polys):
+            distances = [poly.distance(q) for j, q in enumerate(polys) if j != i]
+            distances.append(bord.exterior.distance(poly))
+            self.assertLessEqual(min(distances), params.ecart_contours + 0.5,
+                                 "« %s » flotte" % d.poses[i].piece.reference)
 
 
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="300mm" height="200mm"

@@ -6,51 +6,80 @@ quelconques (:attr:`optimiseur.Piece.contour`) se rangent sur les mêmes
 planches et chutes, à la fraise, sans trait de scie : seule compte la
 distance entre contours (diamètre de fraise + jeu) et au bord.
 
-Méthode : un glouton « bas-gauche » rejoué sous plusieurs ordres de
-pièces, le meilleur au score du chutier. Pour chaque exemplaire, dans
-chaque orientation permise par son fil, les positions candidates sont
-les contacts sommet à sommet entre la pièce et ce qui est déjà posé
-(l'occupé, élargi de l'écart) ou le bord utile de la planche (rétréci
-de la marge) ; elles s'essaient dans l'ordre du plus bas puis du plus à
-gauche, la première valide gagne. Un test de validité est un test
-shapely : contenu dans le bord utile, disjoint de l'occupé. Les défauts
-de la planche (recoupes, zones écartées) sont simplement soustraits du
-bord utile — pas de coupe à passer, la fraise contourne.
+Méthode : le no-fit polygon (NFP), comme SVGnest, Deepnest et libnest2d.
+Pour une pièce A déjà posée et une pièce B à poser, le NFP est la région
+des positions de B où elle recouvre A : la somme de Minkowski de A et de
+B retournée. Élargi de l'écart, il devient la région des positions où B
+est à moins de l'écart de A. Le bord de la planche se traite de la même
+façon — un cadre autour du bord utile est un obstacle comme un autre,
+et son NFP laisse libre exactement l'intérieur où B tient (l'inner-fit
+polygon). Les positions valides de B sont alors « la planche moins
+l'union des NFP », et il n'y a plus rien à tester : les positions
+candidates sont les SOMMETS de cette région, toutes valides, toutes en
+contact avec un voisin ou le bord. On choisit celle qui rapproche le
+plus les pièces : la « gravité » de SVGnest (deux fois la largeur plus
+la hauteur de la boîte des pièces posées) ou l'aire de cette boîte, au
+choix de la stratégie, puis la plus basse et la plus à gauche.
 
-Ce qui reste : la bande à droite du dernier contour et celle au-dessus,
-gardées en chute rectangulaire si elles passent les minis — le chutier
-range des rectangles ; le reste du bois est compté perte, même s'il en
-reste des morceaux biscornus.
+Le NFP de deux formes concaves se calcule par triangulation contrainte
+(shapely ≥ 2.1) : la somme de Minkowski de deux triangles est
+l'enveloppe convexe de leurs neuf sommes de sommets, et l'union de ces
+enveloppes est le NFP. Mis en cache par couple (forme, angle) : trente
+exemplaires de trois formes ne coûtent que quelques NFP.
 
-Dépend de shapely (importé ici seulement : le cœur reste sans
+Les orientations permises viennent du fil ; les défauts de la planche
+(recoupes, zones écartées) sont soustraits du bord utile, la fraise
+contourne. Ce qui reste : la bande à droite du dernier contour et celle
+au-dessus, gardées en chute rectangulaire si elles passent les minis —
+le chutier range des rectangles ; le reste est compté perte.
+
+Les stratégies (ordres de pièces × objectifs) sont indépendantes :
+elles se répartissent sur les cœurs de la machine, le meilleur au score
+du chutier. Déterministe : mêmes entrées, même résultat, en parallèle
+ou non.
+
+Dépend de shapely et numpy (importés ici seulement : le cœur reste sans
 dépendance tant qu'aucun contour n'est demandé). Aucun Qt.
 """
 
 from __future__ import annotations
 
+import multiprocessing
+import os
 import random
 
 import numpy as np
 import shapely
 from shapely import affinity
-from shapely.geometry import Polygon, box
+from shapely.geometry import MultiPoint, Polygon, box
 from shapely.ops import unary_union
 from shapely.prepared import prep
 
 import optimiseur as opt
 
 EPS = 1e-6
-# En dessous, deux flottants sont le même point : les sommets doublons
-# n'apportent aucune position candidate nouvelle.
-_GRILLE = 0.01
-# Les tests de collision se font sur un contour simplifié à cette flèche
-# (un rond aplati à 0,02 mm arrive en 88 points, autant de positions
-# candidates par sommet d'en face). La pose exportée garde le contour
-# exact ; l'erreur, un cinquième de millimètre au pire, se perd dans
-# l'écart de fraise.
+# Les NFP se calculent sur un contour simplifié à cette flèche, puis
+# élargi d'autant : le simplifié CONTIENT l'exact, donc une position
+# valide pour lui l'est pour l'exact. La pose exportée garde le contour
+# exact ; le surcroît d'écart, deux dixièmes au pire, se perd dans le
+# diamètre de fraise.
 _SIMPLIFICATION = 0.2
-# Taille des blocs de candidats pré-filtrés d'un coup.
-_BLOC = 512
+# Segments par quart de cercle quand un NFP s'élargit de l'écart.
+_QUARTS = 4
+
+OBJECTIF_GRAVITE = "gravite"     # 2 × largeur + hauteur de la boîte posée
+OBJECTIF_BOITE = "boite"         # aire de la boîte posée
+_OBJECTIFS = (OBJECTIF_GRAVITE, OBJECTIF_BOITE)
+
+
+# ---------------------------------------------------------------------------
+# Formes, variantes tournées, NFP — en cache par processus
+# ---------------------------------------------------------------------------
+
+def _cle_forme(piece: opt.Piece):
+    if piece.contour:
+        return ("c", piece.contour)
+    return ("r", float(piece.longueur), float(piece.largeur))
 
 
 def _polygone(piece: opt.Piece) -> Polygon:
@@ -59,123 +88,248 @@ def _polygone(piece: opt.Piece) -> Polygon:
         p = Polygon(piece.contour)
         if not p.is_valid:
             p = p.buffer(0)
+            if p.geom_type != "Polygon":
+                p = max(p.geoms, key=lambda g: g.area)
     else:
         p = box(0, 0, piece.longueur, piece.largeur)
     return p
 
 
-def _simplifie(p: Polygon) -> Polygon:
-    q = p.simplify(_SIMPLIFICATION, preserve_topology=True)
-    return q if q.is_valid and not q.is_empty else p
-
-
-def _au_coin(p: Polygon) -> Polygon:
+def _au_coin(p):
     minx, miny, _, _ = p.bounds
     return affinity.translate(p, -minx, -miny)
+
+
+def _triangles(p) -> list:
+    t = shapely.constrained_delaunay_triangles(p)
+    return [g for g in t.geoms if g.area > EPS]
+
+
+def _minkowski(a, b_retournee):
+    """A ⊕ B, B déjà retournée (−B) : l'union des enveloppes convexes des
+    sommes de triangles. Exact pour des polygones concaves, sans
+    l'algorithme d'orbite et ses cas dégénérés."""
+    ta = [np.asarray(t.exterior.coords[:-1]) for t in _triangles(a)]
+    tb = [np.asarray(t.exterior.coords[:-1]) for t in _triangles(b_retournee)]
+    enveloppes = []
+    for pa in ta:
+        for pb in tb:
+            sommes = (pa[:, None, :] + pb[None, :, :]).reshape(-1, 2)
+            enveloppes.append(MultiPoint(sommes).convex_hull)
+    return unary_union(enveloppes)
+
+
+# Les caches vivent au niveau du module, pas de la stratégie : un NFP
+# vaut pour toutes les stratégies, et un processus fils créé par fork
+# hérite du cache déjà rempli — le précalcul se fait une fois, en
+# parallèle, avant de lancer les stratégies.
+_VARIANTES = {}        # (cle forme, angle) -> (exact, simplifié élargi, w, h)
+_NFPS = {}             # (ecart, cle_a, cle_b) -> NFP, cle_a <= cle_b
+_CADRES = {}           # (wkb du bord utile, cle_b) -> NFP du bord
+
+
+def _variante(piece: opt.Piece, angle: float):
+    """(clé, exact, simplifié élargi, largeur, hauteur) de la pièce
+    tournée de ``angle`` degrés, coin bas-gauche de la boîte en (0, 0)."""
+    cle = (_cle_forme(piece), angle)
+    if cle not in _VARIANTES:
+        exact = _au_coin(affinity.rotate(_polygone(piece), angle,
+                                         origin=(0, 0)))
+        simp = exact.simplify(_SIMPLIFICATION, preserve_topology=True)
+        simp = simp.buffer(_SIMPLIFICATION, join_style="mitre",
+                           mitre_limit=2.0)
+        if simp.geom_type != "Polygon" or simp.is_empty:
+            simp = exact.buffer(_SIMPLIFICATION, join_style="mitre")
+        _, _, w, h = exact.bounds
+        _VARIANTES[cle] = (exact, simp, w, h)
+    exact, simp, w, h = _VARIANTES[cle]
+    return cle, exact, simp, w, h
+
+
+def _simplifiee(cle):
+    return _VARIANTES[cle][1]
+
+
+def _calculer_nfp(forme_a, forme_b, ecart):
+    retournee = affinity.scale(forme_b, -1, -1, origin=(0, 0))
+    nfp = _minkowski(forme_a, retournee)
+    if ecart > EPS:
+        nfp = nfp.buffer(ecart, quad_segs=_QUARTS)
+    return nfp
+
+
+def _cle_paire(cle_a, cle_b):
+    return (cle_a, cle_b) if repr(cle_a) <= repr(cle_b) else (cle_b, cle_a)
+
+
+class _Formes:
+    """L'accès aux caches, pour un écart donné."""
+
+    def __init__(self, params: opt.Parametres):
+        self.ecart = params.ecart_contours
+
+    def variante(self, piece, angle):
+        return _variante(piece, angle)
+
+    def simplifiee(self, cle):
+        return _simplifiee(cle)
+
+    def nfp(self, cle_a, cle_b):
+        """Le NFP de B (référence : son coin bas-gauche) autour de A posée
+        avec son coin en (0, 0), élargi de l'écart. NFP(B, A) est le
+        symétrique central de NFP(A, B) : on n'en calcule qu'un."""
+        paire = _cle_paire(cle_a, cle_b)
+        cle = (self.ecart, *paire)
+        if cle not in _NFPS:
+            _NFPS[cle] = _calculer_nfp(_simplifiee(paire[0]),
+                                       _simplifiee(paire[1]), self.ecart)
+        nfp = _NFPS[cle]
+        if paire != (cle_a, cle_b):
+            nfp = affinity.scale(nfp, -1, -1, origin=(0, 0))
+        return nfp
+
+    def cadre(self, utile, cle_b):
+        """Le NFP du bord : un cadre épais autour du bord utile (trous et
+        échancrures compris) est un obstacle comme un autre. Ce qu'il
+        laisse libre est exactement l'intérieur où B tient."""
+        cle = (utile.wkb, cle_b)
+        if cle not in _CADRES:
+            _CADRES[cle] = _calculer_cadre(utile, _simplifiee(cle_b))
+        return _CADRES[cle]
+
+
+def _calculer_cadre(utile, forme_b):
+    _, _, w, h = forme_b.bounds
+    minx, miny, maxx, maxy = utile.bounds
+    enveloppe = box(minx - w - 2, miny - h - 2, maxx + w + 2, maxy + h + 2)
+    cadre = enveloppe.difference(utile)
+    retournee = affinity.scale(forme_b, -1, -1, origin=(0, 0))
+    morceaux = [_minkowski(g, retournee) for g in
+                (cadre.geoms if hasattr(cadre, "geoms") else [cadre])
+                if not g.is_empty]
+    return unary_union(morceaux)
 
 
 def _orientations(piece: opt.Piece, planche: opt.Planche,
                   params: opt.Parametres) -> list:
     if not planche.fil or piece.fil == opt.FIL_INDIFFERENT:
-        return list(range(0, 360, params.pas_rotation))
-    if piece.fil == opt.FIL_LONGUEUR:
-        return [0, 180]
-    return [90, 270]
+        angles = list(range(0, 360, params.pas_rotation))
+    elif piece.fil == opt.FIL_LONGUEUR:
+        angles = [0, 180]
+    else:
+        angles = [90, 270]
+    if not piece.contour:
+        # Un rectangle n'a que deux orientations distinctes.
+        vues, garde = set(), []
+        for a in angles:
+            if a % 180 not in vues:
+                vues.add(a % 180)
+                garde.append(a)
+        angles = garde
+    return angles
+
+
+# ---------------------------------------------------------------------------
+# Une planche ouverte
+# ---------------------------------------------------------------------------
+
+def _bord_utile(pl: opt.Planche, params: opt.Parametres):
+    """Le rectangle de la planche moins recoupes, défauts et marge."""
+    utile = box(0, 0, pl.longueur, pl.largeur)
+    if pl.recoupe_bouts > EPS:
+        utile = utile.intersection(box(pl.recoupe_bouts, -1,
+                                       pl.longueur - pl.recoupe_bouts,
+                                       pl.largeur + 1))
+    if pl.recoupe_rives > EPS:
+        utile = utile.intersection(box(-1, pl.recoupe_rives,
+                                       pl.longueur + 1,
+                                       pl.largeur - pl.recoupe_rives))
+    for x, y, dx, dy in pl.defauts:
+        utile = utile.difference(box(x, y, x + dx, y + dy))
+    return utile.buffer(-params.marge_bord, join_style="mitre")
 
 
 class _Plateau:
-    """Une planche ouverte : son bord utile, ce qui y est posé."""
+    """Une planche ouverte : son bord utile, ce qui y est posé, et pour
+    chaque variante de pièce déjà vue, l'union des NFP des pièces posées
+    — tenue à jour à chaque pose, pour ne pas la refaire à chaque
+    essai."""
 
     def __init__(self, planche: opt.Planche, exemplaire: int,
-                 params: opt.Parametres):
+                 params: opt.Parametres, formes: _Formes):
         self.planche = planche
         self.exemplaire = exemplaire
+        self.formes = formes
         self.poses = []
-        pl = planche
-        utile = box(0, 0, pl.longueur, pl.largeur)
-        if pl.recoupe_bouts > EPS:
-            utile = utile.intersection(box(pl.recoupe_bouts, -1,
-                                           pl.longueur - pl.recoupe_bouts,
-                                           pl.largeur + 1))
-        if pl.recoupe_rives > EPS:
-            utile = utile.intersection(box(-1, pl.recoupe_rives,
-                                           pl.longueur + 1,
-                                           pl.largeur - pl.recoupe_rives))
-        for x, y, dx, dy in pl.defauts:
-            utile = utile.difference(box(x, y, x + dx, y + dy))
-        # La marge au bord rétrécit le bord utile ; un contour posé au
-        # ras de ce bord rétréci est donc à `marge_bord` du vrai bord.
-        self.utile = utile.buffer(-params.marge_bord, join_style="mitre")
-        # Préparée EN PLACE : contains_xy / intersects_xy préparent sinon
-        # la géométrie à chaque appel — 0,4 ms par bloc de candidats,
-        # plus que le test lui-même.
-        shapely.prepare(self.utile)
+        self.polygones = []               # exacts, posés
+        self.posees = []                  # (cle variante, tx, ty)
+        self.utile = _bord_utile(planche, params)
         self._utile_prep = prep(self.utile)
-        self.occupe = None
-        self._occupe_prep = None
-        self._sommets_occupe = []
-        self.polygones = []
         self.ecart = params.ecart_contours
+        self.occupe = None                # union des exacts élargis
+        self._bloques = {}                # cle variante -> union des NFP
+        self.boite = None                 # (minx, miny, maxx, maxy) des posées
 
-    def sommets(self):
-        return list(self._sommets_bord()) + self._sommets_occupe
+    # -- obstacles ----------------------------------------------------------
 
-    def _sommets_bord(self):
-        if self.utile.is_empty:
-            return []
-        geoms = (self.utile.geoms if hasattr(self.utile, "geoms")
-                 else [self.utile])
-        for g in geoms:
-            for anneau in [g.exterior] + list(g.interiors):
-                for x, y in anneau.coords[:-1]:
-                    yield (x, y)
+    def _cadre(self, cle_b):
+        return self.formes.cadre(self.utile, cle_b)
 
-    def survivants(self, candidats, coins):
-        """``candidats`` : tableau (N, 2) ; rend les couples retenus."""
-        if len(candidats) == 0:
-            return []
-        c = candidats                                      # (N, 2)
-        k = np.asarray(coins, dtype=float)                 # (V, 2)
-        pts = (c[:, None, :] + k[None, :, :]).reshape(-1, 2)
-        # intersects, pas contains : un sommet posé AU RAS du bord utile
-        # (le cas du premier coin, en bas à gauche) est sur la frontière,
-        # que contains exclut — et plus rien ne se posait.
-        dedans = shapely.intersects_xy(self.utile, pts[:, 0], pts[:, 1])
-        ok = dedans.reshape(len(c), -1).all(axis=1)
-        if self.occupe is not None:
-            dehors = ~shapely.contains_xy(self.occupe, pts[:, 0], pts[:, 1])
-            ok &= dehors.reshape(len(c), -1).all(axis=1)
-        return [(float(c[i, 0]), float(c[i, 1])) for i in np.flatnonzero(ok)]
+    def _bloque(self, cle_b):
+        if cle_b not in self._bloques:
+            nfps = [affinity.translate(self.formes.nfp(cle_a, cle_b), tx, ty)
+                    for cle_a, tx, ty in self.posees]
+            self._bloques[cle_b] = unary_union(nfps) if nfps else None
+        return self._bloques[cle_b]
 
-    def convient(self, p: Polygon) -> bool:
+    def libre(self, cle_b):
+        """La région des positions valides du coin de B."""
+        forme_b = self.formes.simplifiee(cle_b)
+        _, _, w, h = forme_b.bounds
+        minx, miny, maxx, maxy = self.utile.bounds
+        region = box(minx - 1, miny - 1, maxx - w + 1, maxy - h + 1)
+        region = region.difference(self._cadre(cle_b))
+        bloque = self._bloque(cle_b)
+        if bloque is not None:
+            region = region.difference(bloque)
+        return region
+
+    # -- pose -----------------------------------------------------------------
+
+    def convient(self, p) -> bool:
+        """Garde-fou numérique sur le contour exact : dans le bord, sans
+        recouvrement. Les sommets de la région libre sont valides par
+        construction ; ceci rattrape un flottant récalcitrant."""
         if not self._utile_prep.contains(p):
             return False
-        if self._occupe_prep is not None and self._occupe_prep.intersects(p):
-            # Toucher l'élargi par un sommet ou une arête, c'est être
-            # exactement à l'écart de la pièce voisine : permis. Seul un
-            # recouvrement de surface interdit. (intersects seul refusait
-            # tout contact, et les pièces fuyaient aux quatre coins.)
-            return self.occupe.intersection(p).area <= 1e-6
+        if self.occupe is not None and self.occupe.intersects(p):
+            return self.occupe.intersection(p).area <= 1e-3
         return True
 
-    def poser(self, piece, exemplaire, p: Polygon, angle: float):
+    def poser(self, piece, exemplaire, cle_b, exact, angle, tx, ty):
+        p = affinity.translate(exact, tx, ty)
         self.polygones.append(p)
-        # L'occupé est l'union des pièces élargies de l'écart : un contour
-        # posé au ras de l'occupé est à `ecart` de la pièce voisine. Le
-        # coin en onglet (mitre) garde peu de sommets, donc peu de
-        # positions candidates à essayer.
-        elargi = p.buffer(self.ecart, join_style="mitre", mitre_limit=2.0)
+        # L'occupé sert au garde-fou : les exacts élargis d'un peu moins
+        # que l'écart (le simplifié en a déjà pris deux dixièmes).
+        marge = max(0.0, self.ecart - 2 * _SIMPLIFICATION)
+        elargi = p.buffer(marge, join_style="mitre", mitre_limit=2.0)
         self.occupe = (elargi if self.occupe is None
                        else unary_union([self.occupe, elargi]))
         shapely.prepare(self.occupe)
-        self._occupe_prep = prep(self.occupe)
-        geoms = (self.occupe.geoms if hasattr(self.occupe, "geoms")
-                 else [self.occupe])
-        self._sommets_occupe = [
-            (x, y) for g in geoms
-            for anneau in [g.exterior] + list(g.interiors)
-            for x, y in anneau.coords[:-1]]
+        self.posees.append((cle_b, tx, ty))
+        # Les unions déjà bâties s'enrichissent du NFP de la nouvelle
+        # pièce ; les autres se bâtiront à la demande.
+        for cle_v, bloque in list(self._bloques.items()):
+            nfp = affinity.translate(self.formes.nfp(cle_b, cle_v), tx, ty)
+            self._bloques[cle_v] = (nfp if bloque is None
+                                    else unary_union([bloque, nfp]))
         minx, miny, maxx, maxy = p.bounds
+        if self.boite is None:
+            self.boite = (minx, miny, maxx, maxy)
+        else:
+            b = self.boite
+            self.boite = (min(b[0], minx), min(b[1], miny),
+                          max(b[2], maxx), max(b[3], maxy))
         self.poses.append(opt.Pose(
             piece, exemplaire, minx, miny, maxx - minx, maxy - miny,
             angle % 180 == 90,
@@ -183,99 +337,64 @@ class _Plateau:
                           for x, y in p.exterior.coords[:-1]),
             angle=float(angle)))
 
-    def rendement(self) -> float:
-        return sum(q.area for q in self.polygones) / max(self.planche.aire, EPS)
+
+def _sommets(region):
+    geoms = region.geoms if hasattr(region, "geoms") else [region]
+    pts = []
+    for g in geoms:
+        if g.is_empty or g.geom_type != "Polygon":
+            continue
+        for anneau in [g.exterior] + list(g.interiors):
+            pts.extend(anneau.coords[:-1])
+    return pts
 
 
-def _essayer(plateau: _Plateau, piece: opt.Piece, params: opt.Parametres):
-    """La meilleure position (la plus basse, puis la plus à gauche) de la
-    pièce sur ce plateau, ou None : (polygone posé, angle)."""
-    exact = _polygone(piece)
-    base = _simplifie(exact)
-    utile = plateau.utile
-    if utile.is_empty:
-        return None
-    uminx, uminy, umaxx, umaxy = utile.bounds
-    sommets = plateau.sommets()
+def _essayer(plateau: _Plateau, piece: opt.Piece, params: opt.Parametres,
+             objectif: str):
+    """La meilleure pose de la pièce sur ce plateau selon l'objectif, ou
+    None : (cle, exact, angle, tx, ty)."""
+    formes = plateau.formes
     meilleur = None
     for angle in _orientations(piece, plateau.planche, params):
-        tourne = affinity.rotate(base, angle, origin=(0, 0))
-        q = _au_coin(tourne)
-        qminx, qminy, qmaxx, qmaxy = q.bounds
-        if qmaxx > umaxx - uminx + EPS or qmaxy > umaxy - uminy + EPS:
+        cle, exact, _simp, w, h = formes.variante(piece, angle)
+        pts = _sommets(plateau.libre(cle))
+        if not pts:
             continue
-        coins = list(q.exterior.coords[:-1])
-        ordonnes = _candidats(sommets, coins, (uminx, uminy, umaxx, umaxy),
-                              (qmaxx, qmaxy))
-        # Pré-filtre vectoriel par blocs, dans l'ordre du plus bas : tous
-        # les sommets de la pièce translatée doivent être dans le bord
-        # utile et hors de l'occupé (sa frontière compte dehors : toucher
-        # est permis). Nécessaire, pas suffisant — une arête peut encore
-        # croiser — d'où l'essai exact sur les survivants. Par blocs,
-        # parce que seul le premier valide compte : pré-filtrer les
-        # vingt mille candidats d'une planche bien remplie coûtait plus
-        # que d'en essayer deux cents.
-        trouve = None
-        for debut in range(0, len(ordonnes), _BLOC):
-            bloc = ordonnes[debut:debut + _BLOC]
-            if meilleur is not None and (float(bloc[0, 1]), float(bloc[0, 0])) >= meilleur[0]:
+        c = np.asarray(pts, dtype=float)
+        if plateau.boite is None:
+            bminx, bminy = c[:, 0], c[:, 1]
+            bmaxx, bmaxy = c[:, 0] + w, c[:, 1] + h
+        else:
+            b = plateau.boite
+            bminx = np.minimum(b[0], c[:, 0])
+            bminy = np.minimum(b[1], c[:, 1])
+            bmaxx = np.maximum(b[2], c[:, 0] + w)
+            bmaxy = np.maximum(b[3], c[:, 1] + h)
+        largeur, hauteur = bmaxx - bminx, bmaxy - bminy
+        if objectif == OBJECTIF_BOITE:
+            score = largeur * hauteur
+        else:
+            score = 2 * largeur + hauteur
+        score = np.round(score, 3)
+        ordre = np.lexsort((c[:, 0], c[:, 1], score))
+        for i in ordre:
+            tx, ty = float(c[i, 0]), float(c[i, 1])
+            cle_score = (float(score[i]), ty, tx)
+            if meilleur is not None and cle_score >= meilleur[0]:
                 break
-            for tx, ty in plateau.survivants(bloc, coins):
-                if meilleur is not None and (ty, tx) >= meilleur[0]:
-                    break
-                p = affinity.translate(q, tx, ty)
-                if plateau.convient(p):
-                    trouve = (tx, ty)
-                    break
-            if trouve is not None:
+            if plateau.convient(affinity.translate(exact, tx, ty)):
+                meilleur = (cle_score, cle, exact, angle, tx, ty)
                 break
-        if trouve is not None:
-            tx, ty = trouve
-            # La pose garde le contour EXACT, déplacé du même vecteur
-            # que le simplifié (même rotation, même mise au coin).
-            bminx, bminy, _, _ = tourne.bounds
-            place = affinity.translate(
-                affinity.rotate(exact, angle, origin=(0, 0)),
-                tx - bminx, ty - bminy)
-            meilleur = ((ty, tx), place, angle)
     if meilleur is None:
         return None
-    return meilleur[1], meilleur[2]
+    return meilleur[1:]
 
 
-def _candidats(sommets, coins, bornes, taille):
-    """Les positions à essayer, du plus bas puis du plus à gauche.
+# ---------------------------------------------------------------------------
+# Le glouton, une stratégie
+# ---------------------------------------------------------------------------
 
-    Contacts sommet à sommet entre la pièce et l'occupé ou le bord, ET
-    chaque abscisse de contact projetée au sol, chaque ordonnée projetée
-    au mur gauche — même quand le contact d'origine sort de la planche :
-    « posée au sol juste à droite de la cale » vient du coin de l'élargi
-    de la cale qui, lui, est SOUS le sol. Sans cette projection, la
-    position n'existait pas et les pièces s'égaillaient aux coins.
-    Vectorisé : une boucle Python sur sommets × coins coûtait vingt
-    millions de tours sur soixante pièces."""
-    uminx, uminy, umaxx, umaxy = bornes
-    qmaxx, qmaxy = taille
-    s = np.asarray(sommets, dtype=float)
-    k = np.asarray(coins, dtype=float)
-    t = (s[:, None, :] - k[None, :, :]).reshape(-1, 2)
-    t = np.round(t / _GRILLE) * _GRILLE
-    ok_x = (t[:, 0] >= uminx - EPS) & (t[:, 0] + qmaxx <= umaxx + EPS)
-    ok_y = (t[:, 1] >= uminy - EPS) & (t[:, 1] + qmaxy <= umaxy + EPS)
-    xs = np.unique(np.concatenate([t[ok_x, 0], [uminx]]))
-    ys = np.unique(np.concatenate([t[ok_y, 1], [uminy]]))
-    contacts = t[ok_x & ok_y]
-    sol = np.column_stack([xs, np.full(len(xs), uminy)])
-    mur = np.column_stack([np.full(len(ys), uminx), ys])
-    tous = np.concatenate([contacts, sol, mur])
-    # Dédoublonner ET trier (y puis x) en un seul appel : unique() sur
-    # un complexe dont la partie réelle est y — quatre fois plus vite
-    # que unique(axis=0) suivi d'un lexsort, sur 18 000 candidats.
-    cle = np.unique(tous[:, 1] + 1j * tous[:, 0])
-    return np.column_stack([cle.imag, cle.real])
-
-
-def _ouvrir(plateaux, dispo, piece, params):
+def _ouvrir(plateaux, dispo, piece, params, formes, objectif):
     """Entame la planche la moins coûteuse où la pièce loge — chutes
     d'abord, puis le prix, puis le moins de rabotage, puis la plus
     petite. Rend l'indice du plateau ouvert, ou None."""
@@ -293,8 +412,8 @@ def _ouvrir(plateaux, dispo, piece, params):
     candidats.sort()
     for *_, idx in candidats:
         pl, ex = dispo[idx]
-        plateau = _Plateau(pl, ex, params)
-        if _essayer(plateau, piece, params) is not None:
+        plateau = _Plateau(pl, ex, params, formes)
+        if _essayer(plateau, piece, params, objectif) is not None:
             dispo.pop(idx)
             plateaux.append(plateau)
             return len(plateaux) - 1
@@ -315,7 +434,8 @@ def _raison(piece, stock_unites, params):
     return opt.RAISON_TROP_GRANDE
 
 
-def _resoudre(ordre, stock_unites, params) -> "opt._Solution":
+def _resoudre(ordre, stock_unites, params, objectif) -> "opt._Solution":
+    formes = _Formes(params)
     plateaux, dispo, non = [], list(stock_unites), []
     for piece, exemplaire in ordre:
         pose = None
@@ -325,19 +445,20 @@ def _resoudre(ordre, stock_unites, params) -> "opt._Solution":
                 continue
             if not opt._admise(piece, plateau.planche):
                 continue
-            essai = _essayer(plateau, piece, params)
+            essai = _essayer(plateau, piece, params, objectif)
             if essai is not None:
                 pose = (plateau, essai)
                 break
         if pose is None:
-            io = _ouvrir(plateaux, dispo, piece, params)
+            io = _ouvrir(plateaux, dispo, piece, params, formes, objectif)
             if io is None:
                 non.append((piece, exemplaire, _raison(piece, stock_unites,
                                                       params)))
                 continue
-            pose = (plateaux[io], _essayer(plateaux[io], piece, params))
-        plateau, (p, angle) = pose
-        plateau.poser(piece, exemplaire, p, angle)
+            pose = (plateaux[io], _essayer(plateaux[io], piece, params,
+                                           objectif))
+        plateau, (cle, exact, angle, tx, ty) = pose
+        plateau.poser(piece, exemplaire, cle, exact, angle, tx, ty)
     return _finaliser(plateaux, dispo, non, params)
 
 
@@ -350,8 +471,7 @@ def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
         return []
     ecart = params.ecart_contours
     uminx, uminy, umaxx, umaxy = plateau.utile.bounds
-    tous = unary_union(plateau.polygones)
-    _, _, maxx, maxy = tous.bounds
+    _, _, maxx, maxy = plateau.boite
     chutes = []
     x0 = maxx + ecart
     if umaxx - x0 > EPS:
@@ -378,6 +498,10 @@ def _finaliser(plateaux, dispo, non, params) -> "opt._Solution":
     return opt._Solution(debits, non_placees, dispo, [], list(non))
 
 
+# ---------------------------------------------------------------------------
+# Les stratégies, sur tous les cœurs
+# ---------------------------------------------------------------------------
+
 _CLES = {
     "aire": lambda u: (-u[0].aire, -max(u[0].longueur, u[0].largeur)),
     "cote": lambda u: (-max(u[0].longueur, u[0].largeur),
@@ -387,23 +511,115 @@ _CLES = {
 }
 
 
-def imbriquer(unites: list, stock_unites: list,
-              params: opt.Parametres) -> "opt._Solution":
-    """Le meilleur rangement, au score du chutier, parmi les ordres de
-    pièces essayés (les quatre tris, puis ``essais_melanges`` ordres
-    tirés au hasard à graine fixe). Déterministe."""
+def _strategies(unites, params):
     ordres = [sorted(unites, key=cle) for cle in _CLES.values()]
     rng = random.Random(params.graine)
-    # Un ordre imbriqué coûte cent fois un passage guillotine : un quart
-    # des essais de mélange réglés, pas tous.
-    for _ in range(params.essais_melanges // 4):
+    for _ in range(params.essais_melanges):
         ordre = list(unites)
         rng.shuffle(ordre)
         ordres.append(ordre)
-    meilleure = None
-    for ordre in ordres:
-        sol = _resoudre(ordre, stock_unites, params)
-        score = opt._score_solution(sol, params)
-        if meilleure is None or score < meilleure[0]:
-            meilleure = (score, sol)
-    return meilleure[1]
+    return [(ordre, objectif) for ordre in ordres for objectif in _OBJECTIFS]
+
+
+def _tache(args):
+    ordre, stock_unites, params, objectif = args
+    sol = _resoudre(ordre, stock_unites, params, objectif)
+    return opt._score_solution(sol, params), sol
+
+
+def _tache_nfp(args):
+    genre, cle, ecart = args
+    if genre == "nfp":
+        cle_a, cle_b = cle
+        return genre, cle, _calculer_nfp(_simplifiee(cle_a), _simplifiee(cle_b),
+                                         ecart).wkb
+    utile_wkb, cle_b = cle
+    return genre, cle, _calculer_cadre(shapely.from_wkb(utile_wkb),
+                                       _simplifiee(cle_b)).wkb
+
+
+def _taches_nfp(unites, stock_unites, params):
+    """Calcule toutes les variantes (dans le processus parent, AVANT de
+    forker : les fils en héritent) et rend la liste des NFP de couples
+    et de bords qui manquent au cache."""
+    pieces = list({id(p): p for p, _ in unites}.values())
+    planches = list({pl: pl for pl, _ in stock_unites}.values())
+    variantes = []
+    for piece in pieces:
+        angles = set()
+        for pl in planches:
+            angles.update(_orientations(piece, pl, params))
+        for angle in sorted(angles):
+            cle, *_ = _variante(piece, angle)
+            variantes.append(cle)
+    variantes = list(dict.fromkeys(variantes))
+    ecart = params.ecart_contours
+    taches = []
+    vues = set()
+    for a in variantes:
+        for b in variantes:
+            paire = _cle_paire(a, b)
+            cle = (ecart, *paire)
+            if cle in _NFPS or paire in vues:
+                continue
+            vues.add(paire)
+            taches.append(("nfp", paire, ecart))
+    bords = {}
+    for pl in planches:
+        utile = _bord_utile(pl, params)
+        bords[utile.wkb] = utile
+    for wkb in bords:
+        for b in variantes:
+            if (wkb, b) not in _CADRES:
+                taches.append(("cadre", (wkb, b), ecart))
+    return taches
+
+
+def _ranger_nfp(resultats, ecart):
+    for genre, cle, wkb in resultats:
+        geom = shapely.from_wkb(wkb)
+        if genre == "nfp":
+            _NFPS[(ecart, *cle)] = geom
+        else:
+            _CADRES[cle] = geom
+
+
+def _nb_processus(params, nb_taches):
+    voulu = params.processus if params.processus > 0 else (os.cpu_count() or 1)
+    return max(1, min(voulu, nb_taches))
+
+
+def imbriquer(unites: list, stock_unites: list,
+              params: opt.Parametres) -> "opt._Solution":
+    """Le meilleur rangement, au score du chutier, parmi les stratégies
+    (ordres de pièces × objectifs), réparties sur les cœurs. Le score
+    départage, puis le rang de la stratégie : déterministe, en parallèle
+    ou non."""
+    strategies = _strategies(unites, params)
+    taches = [(ordre, stock_unites, params, objectif)
+              for ordre, objectif in strategies]
+    nb = _nb_processus(params, max(len(taches), os.cpu_count() or 1))
+    taches_nfp = _taches_nfp(unites, stock_unites, params)
+    ecart = params.ecart_contours
+    resultats = None
+    if nb > 1 and len(unites) >= 6:
+        try:
+            methodes = multiprocessing.get_all_start_methods()
+            contexte = multiprocessing.get_context(
+                "fork" if "fork" in methodes else None)
+            # Deux pools, dans l'ordre : les NFP d'abord ; les fils du
+            # second pool héritent du cache rempli, sans rien recalculer.
+            if taches_nfp:
+                with contexte.Pool(min(nb, len(taches_nfp))) as pool:
+                    _ranger_nfp(pool.map(_tache_nfp, taches_nfp), ecart)
+                taches_nfp = []
+            with contexte.Pool(min(nb, len(taches))) as pool:
+                resultats = pool.map(_tache, taches)
+        except (OSError, RuntimeError, ValueError):
+            resultats = None            # on repasse en séquentiel
+    if resultats is None:
+        if taches_nfp:
+            _ranger_nfp(map(_tache_nfp, taches_nfp), ecart)
+        resultats = [_tache(t) for t in taches]
+    meilleure = min(range(len(resultats)), key=lambda i: (resultats[i][0], i))
+    return resultats[meilleure][1]

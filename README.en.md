@@ -37,14 +37,23 @@ grain. File → **Export the cut (SVG)** writes every nested board as an
 SVG at scale 1 (mm), board outline and closed paths of the parts, for
 the CNC chain.
 
-The engine (`imbrication.py`, on `shapely`) is a bottom-left greedy:
-candidate positions are vertex-to-vertex contacts between the part and
-what is already placed, grown by the gap, each projected to the floor
-and to the wall; the lowest then leftmost one that overlaps nothing
-wins. Replayed under several part orders, the best by the chutier's
-score. What remains counts as offcut for the two rectangular strips (to
-the right, above) that pass the minima, waste for the rest — the chutier
-stores rectangles. Expect one to a few seconds per ten parts.
+The engine (`imbrication.py`, on `shapely` ≥ 2.1) is a real **no-fit
+polygon**, as in SVGnest, Deepnest and libnest2d: for every placed part
+A and part to place B, the NFP is the region of positions of B that
+overlap A (Minkowski sum of A and reflected B, computed by constrained
+triangulation: the union of the convex hulls of triangle sums), grown by
+the bit gap; the board edge is an obstacle like any other. Valid
+positions are "the board minus the union of NFPs", and the candidates
+are its vertices, all touching a neighbour or the edge. We keep the one
+that packs tightest (SVGnest's gravity, 2 × width + height of the placed
+bounding box, or that box's area), then the lowest and leftmost. NFPs
+are cached per (shape, angle) pair. Strategies (part orders × objectives)
+spread over **all cores** (Processus setting); the result does not
+depend on the core count, only the duration — sixty parts in a quarter
+of a second on a thirty-two-core machine, two seconds sequentially. What
+remains counts as
+offcut for the two rectangular strips (to the right, above) that pass
+the minima, waste for the rest — the chutier stores rectangles.
 
 ## The workshop
 

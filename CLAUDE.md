@@ -23,8 +23,15 @@ python3 tests/lancer.py
 sans-écran :
 
 ```bash
-QT_QPA_PLATFORM=offscreen python3 -c "import interface,sys;from PySide6.QtWidgets import QApplication;a=QApplication(sys.argv);f=interface.FenetrePrincipale();f.resize(1680,960);f.show();a.processEvents();f._calculer();a.processEvents();f.grab().save('/tmp/chutier.png')"
+CHUTIER_ATELIER=/tmp/chutier-essai/atelier.json XDG_CONFIG_HOME=/tmp/chutier-essai QT_QPA_PLATFORM=offscreen python3 -c "import interface,sys;from PySide6.QtWidgets import QApplication;a=QApplication(sys.argv);f=interface.FenetrePrincipale();f.resize(1680,960);f.show();a.processEvents();f._calculer();a.processEvents();f.grab().save('/tmp/chutier.png')"
 ```
+
+Les deux variables d'environnement ne sont pas décoratives : sans elles,
+la fenêtre lit et écrit le VRAI stock de l'atelier
+(`~/.local/share/chutier/atelier.json`) et les vrais réglages Qt
+(`~/.config/AtelierDuVerdier/Chutier.conf`) — le harnais de tests les
+pose lui-même. `QSettings.setPath` ne détourne rien sur Linux ; seule
+`XDG_CONFIG_HOME` tient parole.
 
 Trois défauts n'ont été vus que comme ça, jamais en relisant le code :
 deux références du même vert, une étiquette « chute » écrite par-dessus
