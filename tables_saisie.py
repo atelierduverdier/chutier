@@ -209,6 +209,7 @@ class TableEditable(QTableWidget):
                 self.horizontalHeaderItem(i).setToolTip(colonne.info)
         entete = self.horizontalHeader()
         entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        entete.setMinimumSectionSize(28)
         for i in range(1, len(self.COLONNES)):
             entete.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         entete.setHighlightSections(False)
@@ -233,6 +234,23 @@ class TableEditable(QTableWidget):
                     i, DelegateChoix(colonne.choix, self))
 
         self.itemChanged.connect(self._verifier_cellule)
+
+    # Largeur en dessous de laquelle la référence ne se lit plus.
+    REFERENCE_MINI = 100
+
+    def resizeEvent(self, evenement):
+        """Onze colonnes dans un panneau de 560 px : étirée, la référence
+        — la seule qu'on lise pour se repérer — tombait à « sap… » pendant
+        que les cases à cocher gardaient leur aise. Quand la place manque,
+        elle passe en largeur fixe et la table défile."""
+        super().resizeEvent(evenement)
+        entete = self.horizontalHeader()
+        autres = sum(self.columnWidth(i) for i in range(1, self.columnCount()))
+        if self.viewport().width() - autres < self.REFERENCE_MINI:
+            entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            self.setColumnWidth(0, self.REFERENCE_MINI)
+        else:
+            entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
     # -- lecture ---------------------------------------------------------
 
@@ -462,12 +480,13 @@ class TablePieces(TableEditable):
                 "Nom de la pièce. C'est lui qui lui donne sa couleur sur"
                 " le plan — deux pièces de même nom sont de même teinte.",
                 ""),
-        Colonne("Longueur", "longueur", NOMBRE,
-                "En mm, le long du fil du bois.", 0),
-        Colonne("Largeur", "largeur", NOMBRE, "En mm, en travers du fil.", 0),
-        Colonne("Épaisseur", "epaisseur", NOMBRE,
-                "En mm, cote FINIE. Le brut se rabote : une planche plus"
-                " épaisse convient, jamais une plus mince.", 18),
+        Colonne("Long.", "longueur", NOMBRE,
+                "Longueur en mm, le long du fil du bois.", 0),
+        Colonne("Larg.", "largeur", NOMBRE,
+                "Largeur en mm, en travers du fil.", 0),
+        Colonne("Ép.", "epaisseur", NOMBRE,
+                "Épaisseur en mm, cote FINIE. Le brut se rabote : une"
+                " planche plus épaisse convient, jamais une plus mince.", 18),
         Colonne("Matière", "matiere", MATIERE,
                 "Doit correspondre à une matière du stock — pièces et"
                 " planches sont appariées par matière.", ""),
@@ -518,11 +537,12 @@ class TableStock(TableEditable):
         Colonne("Référence", "reference", TEXTE,
                 "Nom du morceau de stock, tel qu'il est repéré à"
                 " l'atelier.", ""),
-        Colonne("Longueur", "longueur", NOMBRE,
-                "En mm, le long du fil.", 0),
-        Colonne("Largeur", "largeur", NOMBRE, "En mm, en travers du fil.", 0),
-        Colonne("Épaisseur", "epaisseur", NOMBRE,
-                "En mm, épaisseur BRUTE disponible.", 18),
+        Colonne("Long.", "longueur", NOMBRE,
+                "Longueur en mm, le long du fil.", 0),
+        Colonne("Larg.", "largeur", NOMBRE,
+                "Largeur en mm, en travers du fil.", 0),
+        Colonne("Ép.", "epaisseur", NOMBRE,
+                "Épaisseur BRUTE disponible, en mm.", 18),
         Colonne("Matière", "matiere", MATIERE,
                 "Le même mot que dans les pièces, sinon rien ne s'apparie.",
                 ""),
@@ -532,7 +552,11 @@ class TableStock(TableEditable):
         Colonne("Chute", "chute", BOOLEEN,
                 "Un morceau déjà en atelier, à écouler EN PRIORITÉ sur"
                 " les planches neuves. Jamais compté à l'achat.", False),
-        Colonne("A un fil", "fil", BOOLEEN,
+        Colonne("Atelier", "atelier", BOOLEEN,
+                "Cette ligne vit dans le stock COMMUN de l'atelier,"
+                " retrouvé d'un projet à l'autre — pas dans ce projet."
+                " Les chutes rangées y vont d'elles-mêmes.", False),
+        Colonne("Fil", "fil", BOOLEEN,
                 "Décocher pour un panneau (contreplaqué, MDF) : le"
                 " chutier peut alors pivoter librement les pièces.", True),
         Colonne("Catalogue", "illimite", BOOLEEN,
@@ -565,9 +589,12 @@ class TableStock(TableEditable):
         if not stock:
             return "Stock vide — le débit n'aura rien où se poser."
         chutes = sum(s.quantite for s in stock if s.chute)
+        atelier = sum(1 for s in stock if s.atelier)
         catalogue = sum(1 for s in stock if s.illimite)
         surface = sum(s.aire * s.quantite for s in stock if not s.illimite)
         details = ["%d référence(s)" % len(stock)]
+        if atelier:
+            details.append("%d de l'atelier" % atelier)
         if chutes:
             details.append("%d chute(s) à écouler d'abord" % chutes)
         if catalogue:

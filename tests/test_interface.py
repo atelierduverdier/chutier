@@ -35,6 +35,11 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _JETABLE = tempfile.mkdtemp(prefix="chutier-tests-")
+# Le stock commun de l'atelier est détourné lui aussi : un test ne touche
+# JAMAIS l'inventaire réel — et un fichier absent, c'est l'accueil sur
+# l'exemple, celui que les tests connaissent.
+_ATELIER = os.path.join(_JETABLE, "atelier", "atelier.json")
+os.environ["CHUTIER_ATELIER"] = _ATELIER
 QSettings.setDefaultFormat(QSettings.Format.IniFormat)
 QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                   _JETABLE)
@@ -76,7 +81,7 @@ def _dialogue_repond(chemin):
 
 def _fenetre():
     f = interface.FenetrePrincipale()
-    f._calculer()
+    f._calculer_si_pieces()     # un atelier garni ouvre sans pièces
     return f
 
 
@@ -265,6 +270,94 @@ class RangerLesChutes(unittest.TestCase):
         self.assertAlmostEqual(surface_neuves,
                                self.resultat.bilan.surface_chutes_creees,
                                places=3)
+
+
+class Atelier(unittest.TestCase):
+    """Le stock commun : ce qui fait qu'une chute rangée ce soir est là
+    au projet suivant, sans la recopier."""
+
+    def setUp(self):
+        if os.path.exists(_ATELIER):
+            os.unlink(_ATELIER)
+
+    tearDown = setUp
+
+    def test_le_chemin_suit_la_variable_d_environnement(self):
+        self.assertEqual(projet_io.chemin_atelier(), _ATELIER)
+
+    def test_ranger_les_chutes_ecrit_l_atelier_aussitot(self):
+        f = _fenetre()
+        with mock.patch.object(
+                interface.QMessageBox, "question",
+                return_value=interface.QMessageBox.StandardButton.Yes):
+            f._ranger_chutes()
+        self.assertTrue(os.path.exists(_ATELIER), "rien n'a été écrit")
+        rangees = projet_io.lire_atelier(_ATELIER)
+        self.assertEqual(sum(p.quantite for p in rangees),
+                         len(f._resultat.chutes_creees))
+        self.assertTrue(all(p.atelier and p.chute for p in rangees))
+
+    def test_enregistrer_scinde_projet_et_atelier(self):
+        f = _fenetre()
+        f.table_stock.ajouter_ligne(reference="rayon chêne", longueur=2000,
+                                    largeur=150, epaisseur=27,
+                                    matiere="chêne", atelier=True)
+        f._chemin = os.path.join(_JETABLE, "scinde.json")
+        f._enregistrer()
+        _, stock_projet, _ = projet_io.lire(f._chemin)
+        self.assertFalse(any(s.atelier for s in stock_projet),
+                         "une ligne d'atelier est restée dans le projet")
+        self.assertEqual([s.reference for s in projet_io.lire_atelier(_ATELIER)],
+                         ["rayon chêne"])
+
+    def test_ouvrir_un_projet_reprend_l_atelier_du_jour(self):
+        projet_io.enregistrer_atelier(_ATELIER, [
+            opt.Planche("chute du jour", 600, 120, 18, "sapin", chute=True)])
+        chemin = os.path.join(_JETABLE, "sans-atelier.json")
+        projet_io.enregistrer(chemin, PIECES, STOCK, opt.Parametres())
+        f = _fenetre()
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               return_value=(chemin, "")):
+            f._ouvrir()
+        stock = f.table_stock.stock()
+        self.assertEqual([s.reference for s in stock if s.atelier],
+                         ["chute du jour"])
+        self.assertEqual([s.reference for s in stock if not s.atelier],
+                         [s.reference for s in STOCK])
+
+    def test_nouveau_repart_avec_l_atelier(self):
+        projet_io.enregistrer_atelier(_ATELIER, [
+            opt.Planche("rayon", 2000, 150, 27, "chêne")])
+        f = _fenetre()
+        f._modifie = False
+        f._nouveau()
+        self.assertEqual(f.table_pieces.pieces(), [])
+        self.assertEqual([s.reference for s in f.table_stock.stock()],
+                         ["rayon"])
+
+    def test_un_atelier_garni_ouvre_sur_lui_sans_plainte(self):
+        """Feuille de pièces blanche, stock de l'atelier, et aucune boîte
+        « aucune pièce à débiter » à l'accueil."""
+        projet_io.enregistrer_atelier(_ATELIER, [
+            opt.Planche("rayon", 2000, 150, 27, "chêne")])
+        with mock.patch.object(interface.QMessageBox, "warning") as boite:
+            f = interface.FenetrePrincipale()
+            f._calculer_si_pieces()
+        boite.assert_not_called()
+        self.assertEqual(f.table_pieces.pieces(), [])
+        self.assertEqual([s.reference for s in f.table_stock.stock()],
+                         ["rayon"])
+        self.assertFalse(f._modifie)
+
+    def test_la_fermeture_ecrit_l_atelier(self):
+        f = _fenetre()
+        f.table_stock.ajouter_ligne(reference="rayon", longueur=2000,
+                                    largeur=150, epaisseur=27,
+                                    matiere="chêne", atelier=True)
+        f._modifie = False
+        f.close()
+        self.assertEqual([s.reference for s in projet_io.lire_atelier(_ATELIER)],
+                         ["rayon"])
 
 
 class Fenetre(unittest.TestCase):

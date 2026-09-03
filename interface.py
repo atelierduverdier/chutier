@@ -94,12 +94,14 @@ def stock_apres_debit(stock: list, resultat) -> list:
             planche = dataclasses.replace(planche, quantite=reste)
         nouveau.append(planche)
 
+    # Une chute rangée va à l'ATELIER, pas au projet : c'est là qu'on la
+    # retrouvera au débit suivant.
     for (dim_x, dim_y, epaisseur, matiere, fil), nombre in \
             chutes_groupees(resultat).items():
         modele = opt.ChuteCreee(dim_x, dim_y, 0, 0, epaisseur, matiere, fil)
         reference = "Chute %s %s×%s" % (matiere, opt._mm(dim_x), opt._mm(dim_y))
         nouveau.append(dataclasses.replace(modele.en_planche(reference),
-                                           quantite=nombre))
+                                           quantite=nombre, atelier=True))
     return nouveau
 
 
@@ -115,16 +117,25 @@ class FenetrePrincipale(QMainWindow):
         self._a_jour = False
         self._chargement = True
         self._reglages = QSettings("AtelierDuVerdier", "Chutier")
+        self._chemin_atelier = projet_io.chemin_atelier()
 
         self._construire()
-        self._charger_exemple()
+        atelier = self._atelier()
+        if atelier:
+            # Un atelier déjà garni : on ouvre sur lui, feuille de pièces
+            # blanche — c'est le vrai point de départ d'un débit. L'exemple
+            # ne sert qu'à la découverte, quand le stock commun est vide.
+            self._remplir([], atelier, opt.Parametres())
+            self.table_pieces.ajouter_ligne()
+        else:
+            self._charger_exemple()
         # Le trait de scie est une propriété de LA SCIE, pas du projet :
         # il revient donc tel qu'on l'a laissé, y compris par-dessus les
         # réglages d'usine de l'exemple d'accueil.
         self._appliquer_parametres(self._reglages_memorises())
         self._chargement = False
         self._restaurer_geometrie()
-        QTimer.singleShot(0, self._calculer)
+        QTimer.singleShot(0, self._calculer_si_pieces)
 
     # -- construction -----------------------------------------------------
 
@@ -138,7 +149,7 @@ class FenetrePrincipale(QMainWindow):
         central.setStretchFactor(0, 0)
         central.setStretchFactor(1, 1)
         central.setCollapsible(0, True)
-        central.setSizes([560, 1140])
+        central.setSizes([640, 1060])
         self._splitter = central
         self.setCentralWidget(central)
 
@@ -194,6 +205,11 @@ class FenetrePrincipale(QMainWindow):
             ("document-export",),
             "Ressortir la liste de pièces au format d'échange, pour un"
             " tableur ou un autre projet")
+        self.a_atelier = self._acte(
+            "Recharger le stock de l'&atelier", self._recharger_atelier, None,
+            ("view-refresh",),
+            "Relire le fichier commun de l'atelier (chutes rangées, planches"
+            " en rayon) — utile s'il a été modifié par une autre fenêtre")
         self.a_quitter = self._acte("&Quitter", self.close, "Ctrl+Q",
                                     ("application-exit",))
 
@@ -235,6 +251,8 @@ class FenetrePrincipale(QMainWindow):
         fichier.addSeparator()
         fichier.addAction(self.a_importer)
         fichier.addAction(self.a_exporter_csv)
+        fichier.addSeparator()
+        fichier.addAction(self.a_atelier)
         fichier.addSeparator()
         fichier.addAction(self.a_exporter)
         fichier.addAction(self.a_fiche)
@@ -340,6 +358,10 @@ class FenetrePrincipale(QMainWindow):
 
     def _page_stock(self) -> QWidget:
         self.resume_stock = apparence.discret("")
+        self.resume_stock.setToolTip(
+            "Les lignes cochées « Atelier » vivent dans le fichier commun\n"
+            "%s\nréécrit à chaque enregistrement, rangement de chutes et"
+            " fermeture." % self._chemin_atelier)
         return self._page_table(
             self.table_stock, self.resume_stock,
             [self._bouton(self.a_ligne, "+ ligne"),
@@ -731,6 +753,16 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_essais, p.essais_melanges)):
             spin.setValue(valeur)
 
+    def _calculer_si_pieces(self):
+        """Le calcul d'accueil : sur un atelier garni, la feuille de
+        pièces est blanche, et « aucune pièce à débiter » n'est pas une
+        erreur à l'ouverture."""
+        if self.table_pieces.lignes_utiles():
+            self._calculer()
+        else:
+            self._vider_resultats()
+            self._rafraichir_etat()
+
     def _calculer(self):
         # Un débit de 150 pièces demande un tiers de seconde, mais rien ne
         # borne une saisie : le sablier dit au moins que la fenêtre n'est
@@ -946,6 +978,63 @@ class FenetrePrincipale(QMainWindow):
         self._modifie = True
         self._rafraichir_etat()
         self.onglets_saisie.setCurrentIndex(1)
+        # L'atelier s'écrit tout de suite : c'est un inventaire, pas un
+        # document — la chute existe sur l'étagère que le projet soit
+        # enregistré ou non.
+        if self._enregistrer_atelier():
+            self.statusBar().showMessage(
+                "Stock de l'atelier mis à jour : %s" % self._chemin_atelier,
+                8000)
+
+    # -- l'atelier ----------------------------------------------------------------
+
+    def _atelier(self) -> list:
+        """Le stock commun, tel que le fichier le dit."""
+        try:
+            return projet_io.lire_atelier(self._chemin_atelier)
+        except (OSError, ValueError) as erreur:
+            QMessageBox.warning(
+                self, "Stock de l'atelier illisible",
+                "%s\n\nLe débit se fera sans lui." % erreur)
+            return []
+
+    def _enregistrer_atelier(self) -> bool:
+        """Écrit au fichier commun les lignes cochées « Atelier ». Une
+        saisie illisible n'écrit rien (et rend faux) : on ne remplace pas
+        un inventaire par un fichier tronqué."""
+        try:
+            stock = self.table_stock.stock()
+        except ErreurSaisie:
+            return False
+        try:
+            projet_io.enregistrer_atelier(
+                self._chemin_atelier, [s for s in stock if s.atelier])
+        except OSError as erreur:
+            QMessageBox.warning(self, "Atelier non enregistré", str(erreur))
+            return False
+        return True
+
+    def _atelier_frais(self) -> list:
+        """Sauve les lignes d'atelier de la table, puis relit le fichier :
+        ce qui a été tapé n'est jamais perdu, ce qu'une autre fenêtre a
+        rangé entre-temps est repris."""
+        self._enregistrer_atelier()
+        return self._atelier()
+
+    def _recharger_atelier(self):
+        try:
+            stock = [s for s in self.table_stock.stock() if not s.atelier]
+        except ErreurSaisie as erreur:
+            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            return
+        atelier = self._atelier()
+        self._chargement = True
+        self.table_stock.remplir(stock + atelier)
+        self._chargement = False
+        self._saisie_changee()
+        self.statusBar().showMessage(
+            "%d ligne(s) relue(s) depuis %s" % (len(atelier),
+                                                 self._chemin_atelier), 8000)
 
     # -- fichiers ---------------------------------------------------------------
 
@@ -958,11 +1047,13 @@ class FenetrePrincipale(QMainWindow):
     def _nouveau(self):
         if not self._confirmer_abandon():
             return
+        atelier = self._atelier_frais()
         self._chargement = True
         self.table_pieces.setRowCount(0)
-        self.table_stock.setRowCount(0)
+        self.table_stock.remplir(atelier)
         self.table_pieces.ajouter_ligne()
-        self.table_stock.ajouter_ligne()
+        if not atelier:
+            self.table_stock.ajouter_ligne()
         self._appliquer_parametres(self._reglages_memorises())
         self._chargement = False
         self._chemin = None
@@ -1003,7 +1094,11 @@ class FenetrePrincipale(QMainWindow):
         except (OSError, ValueError) as erreur:
             QMessageBox.warning(self, "Ouverture impossible", str(erreur))
             return
-        self._remplir(pieces, stock, parametres)
+        # Le projet ne porte que SES planches ; l'atelier vient du fichier
+        # commun, dans l'état où il est aujourd'hui — pas celui du jour
+        # où le projet a été enregistré.
+        self._remplir(pieces, [s for s in stock if not s.atelier]
+                      + self._atelier_frais(), parametres)
         self._chemin = chemin
         self._modifie = False
         self._retenir_dossier(chemin)
@@ -1017,12 +1112,14 @@ class FenetrePrincipale(QMainWindow):
         if not self._chemin:
             return self._enregistrer_sous()
         try:
+            stock = self.table_stock.stock()
             projet_io.enregistrer(self._chemin, self.table_pieces.pieces(),
-                                  self.table_stock.stock(),
+                                  [s for s in stock if not s.atelier],
                                   self._parametres_actuels())
         except (OSError, ErreurSaisie) as erreur:
             QMessageBox.warning(self, "Enregistrement impossible", str(erreur))
             return
+        self._enregistrer_atelier()
         self._modifie = False
         self._rafraichir_etat()
 
@@ -1350,7 +1447,8 @@ class FenetrePrincipale(QMainWindow):
                        fil=opt.FIL_INDIFFERENT)],
             [opt.Planche("sapin 2400×200", 2400, 200, 18, "sapin", quantite=4),
              opt.Planche("chute étagère", 800, 180, 18, "sapin", chute=True),
-             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)],
+             opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True)]
+            + self._atelier_frais(),
             opt.Parametres())
         if not self._chargement:
             self._calculer()
@@ -1388,7 +1486,8 @@ class FenetrePrincipale(QMainWindow):
             [opt.Planche("douglas 150x30 -- 3 m", 3000, 150, 30, "douglas",
                          quantite=3),
              opt.Planche("douglas 150x30 -- 4 m", 4000, 150, 30, "douglas",
-                         quantite=2)],
+                         quantite=2)]
+            + self._atelier_frais(),
             opt.Parametres(trait_de_scie=4.0, tolerance_epaisseur=5.0))
         self._calculer()
 
@@ -1417,6 +1516,12 @@ coupes, planche par planche — celle qu'on coche à la scie. Fichier →
 <i>exporter les pièces</i> ressort la feuille de débit au format CSV,
 pour un tableur ou un autre projet.</p>
 
+<p><b>L'atelier</b><br>
+Les lignes de stock cochées <i>Atelier</i> vivent dans un fichier commun
+(<tt>%s</tt>), pas dans le projet : on les retrouve à chaque projet
+neuf ou rouvert. « Ranger ces chutes au stock » y écrit aussitôt ; le
+reste s'y écrit à l'enregistrement et à la fermeture.</p>
+
 <p><b>Réglages</b><br>
 Trait de scie, surcotes et seuils de chute sont retenus d'une séance à
 l'autre : ils reviennent pour tout projet neuf. Un projet enregistré
@@ -1425,7 +1530,8 @@ garde les siens et les réimpose à l'ouverture.</p>
 <p><b>Conventions</b><br>
 Tout est en millimètres. La longueur court le long du fil. Une planche
 plus épaisse que la pièce convient (le brut se rabote) ; une plus mince,
-jamais. Les chutes passent avant les planches neuves.</p>""")
+jamais. Les chutes passent avant les planches neuves.</p>"""
+                                % self._chemin_atelier)
 
     # -- fenêtre ------------------------------------------------------------------
 
@@ -1441,6 +1547,9 @@ jamais. Les chutes passent avant les planches neuves.</p>""")
         if not self._confirmer_abandon():
             evenement.ignore()
             return
+        # « Abandonner » abandonne le PROJET ; l'atelier, lui, est un
+        # inventaire et s'écrit toujours (s'il se lit).
+        self._enregistrer_atelier()
         self._reglages.setValue("geometrie", self.saveGeometry())
         self._reglages.setValue("splitter", self._splitter.saveState())
         self._memoriser_reglages()

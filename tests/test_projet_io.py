@@ -4,6 +4,7 @@
 Lancement : python3 tests/test_projet_io.py
 """
 
+import dataclasses
 import os
 import sys
 import tempfile
@@ -90,6 +91,38 @@ class EnregistrerEtLire(unittest.TestCase):
             source = f.read()
         for interdit in ("PySide", "PyQt", "QtWidgets", "QtCore", "QtGui"):
             self.assertNotIn(interdit, source)
+
+
+class Atelier(unittest.TestCase):
+    """Le fichier commun : lu absent comme vide, écrit marqué atelier."""
+
+    def test_absent_vaut_vide(self):
+        self.assertEqual(projet_io.lire_atelier("/inexistant/atelier.json"),
+                         [])
+
+    def test_aller_retour_marque_atelier(self):
+        chemin = os.path.join(tempfile.mkdtemp(), "sous", "atelier.json")
+        stock = [Planche("chute", 800, 180, 18, "sapin", chute=True),
+                 Planche("rayon", 2000, 150, 27, "chêne", quantite=3)]
+        projet_io.enregistrer_atelier(chemin, stock)      # dossier créé
+        relu = projet_io.lire_atelier(chemin)
+        self.assertEqual(relu, [dataclasses.replace(s, atelier=True)
+                                for s in stock])
+
+    def test_chemin_par_defaut(self):
+        with mock.patch.dict(os.environ, {"CHUTIER_ATELIER": "",
+                                          "XDG_DATA_HOME": "/donnees"}):
+            self.assertEqual(projet_io.chemin_atelier(),
+                             "/donnees/chutier/atelier.json")
+        with mock.patch.dict(os.environ, {"CHUTIER_ATELIER": "/ici.json"}):
+            self.assertEqual(projet_io.chemin_atelier(), "/ici.json")
+
+    def test_mal_forme(self):
+        chemin = _chemin_temp()
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write('{"pieces": []}')
+        with self.assertRaises(ValueError):
+            projet_io.lire_atelier(chemin)
 
 
 class EcritureAtomique(unittest.TestCase):

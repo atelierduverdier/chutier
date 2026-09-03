@@ -108,6 +108,11 @@ class Planche:
     défaut) revient à ne pas en tenir compte pour cette planche. À
     renseigner pour TOUS les profils comparés : un mélange de planches
     prisées et non prisées dans le même choix n'a pas de sens.
+
+    ``atelier`` : ce morceau vit dans le stock COMMUN de l'atelier (le
+    fichier retrouvé d'un projet à l'autre), pas dans le projet. Sans
+    effet sur le débit : c'est la persistance qui s'en sert pour savoir
+    où réécrire la ligne.
     """
 
     reference: str
@@ -120,6 +125,7 @@ class Planche:
     fil: bool = True
     illimite: bool = False
     prix: float = 0.0
+    atelier: bool = False
 
     @property
     def aire(self) -> float:
