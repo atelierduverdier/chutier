@@ -438,6 +438,14 @@ class Resultat:
             for c in d.chutes:
                 lignes.append("  chute : %s × %s en (%s, %s)"
                               % (_mm(c.dim_x), _mm(c.dim_y), _mm(c.x), _mm(c.y)))
+            # Les coupes dans l'ordre : c'est la liste qu'on coche à la
+            # scie, elle manquait à la fiche qui n'énumérait que les poses.
+            for c in d.coupes:
+                lignes.append(
+                    "  coupe %d : %s à %s (de %s à %s)"
+                    % (c.ordre, "délignage" if c.sens == DELIGNAGE
+                       else "tronçonnage", _mm(c.position), _mm(c.de),
+                       _mm(c.a)))
         if self.non_placees:
             lignes.append("")
             lignes.append("Non placées :")

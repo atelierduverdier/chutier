@@ -681,6 +681,64 @@ class Fenetre(unittest.TestCase):
         self.assertEqual(pages, 1)
         self.assertGreater(os.path.getsize(chemin), 5000)
 
+    def test_les_etiquettes_sortent_en_pdf(self):
+        f = _fenetre()
+        entrees = f._etiquettes()
+        self.assertEqual(len(entrees), f._resultat.bilan.nb_posees)
+        self.assertEqual(len(f._pages_etiquettes()), 1)          # 21 ≤ 24
+        chemin = os.path.join(_JETABLE, "etiquettes.pdf")
+        imprimante = QPrinter(QPrinter.PrinterMode.HighResolution)
+        imprimante.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        imprimante.setOutputFileName(chemin)
+        peintre = QPainter()
+        self.assertTrue(peintre.begin(imprimante))
+        try:
+            pages = f.composer_etiquettes(peintre, imprimante)
+        finally:
+            peintre.end()
+        self.assertEqual(pages, 1)
+        self.assertGreater(os.path.getsize(chemin), 2000)
+
+    def test_les_etiquettes_se_paginent(self):
+        f = _fenetre()
+        f._remplir([opt.Piece("p%d" % i, 300, 100, 18, "sapin", 1)
+                    for i in range(50)],
+                   [opt.Planche("sapin", 2400, 200, 18, "sapin", 1,
+                                illimite=True)] ,
+                   opt.Parametres(essais_melanges=0))
+        f._calculer()
+        pages = f._pages_etiquettes()
+        self.assertEqual(len(pages), 3)
+        self.assertEqual(sum(len(p) for p in pages), 50)
+
+    def test_une_page_d_etiquettes_se_dessine(self):
+        f = _fenetre()
+        page = QImage(1240, 1754, QImage.Format.Format_ARGB32)
+        page.fill(Qt.GlobalColor.white)
+        peintre = QPainter(page)
+        try:
+            f._dessiner_etiquettes(peintre, f._etiquettes())
+        finally:
+            peintre.end()
+        encre = sum(1 for y in range(0, 1754, 9) for x in range(0, 1240, 9)
+                    if page.pixelColor(x, y) != Qt.GlobalColor.white)
+        self.assertGreater(encre, 200, "la page est restée blanche")
+
+    def test_les_numeros_de_coupe_sont_sur_le_plan(self):
+        f = _fenetre()
+        f.case_traits.setChecked(True)
+        textes = {it.text() for it in f.vue.scene().items()
+                  if hasattr(it, "text")}
+        for debit in f._resultat.debits:
+            for coupe in debit.coupes:
+                self.assertIn(str(coupe.ordre), textes)
+
+    def test_la_fiche_liste_les_coupes(self):
+        f = _fenetre()
+        fiche = f._resultat.texte()
+        self.assertIn("coupe 1 :", fiche)
+        self.assertIn("tronçonnage", fiche)
+
     def test_les_reglages_reviennent_d_une_seance_a_l_autre(self):
         """Un trait de scie est une propriété de la scie, pas du projet :
         le retaper à chaque nouveau débit était une corvée, et une source

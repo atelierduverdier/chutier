@@ -201,6 +201,12 @@ class FenetrePrincipale(QMainWindow):
             None, ("text-x-generic",),
             "La liste des poses et des coupes planche par planche, à cocher"
             " au fur et à mesure du débit")
+        self.a_etiquettes = self._acte(
+            "Imprimer les é&tiquettes…", self._imprimer_etiquettes, None,
+            ("document-print",),
+            "Une étiquette par pièce débitée — référence, cotes, planche,"
+            " couleur du plan — 24 par page A4 (70 × 37 mm), à coller sur"
+            " le bois")
         self.a_exporter_csv = self._acte(
             "Exporter les pièces (CSV)…", self._exporter_csv, None,
             ("document-export",),
@@ -262,6 +268,7 @@ class FenetrePrincipale(QMainWindow):
         fichier.addAction(self.a_exporter)
         fichier.addAction(self.a_fiche)
         fichier.addAction(self.a_imprimer)
+        fichier.addAction(self.a_etiquettes)
         fichier.addSeparator()
         fichier.addAction(self.a_quitter)
 
@@ -1329,6 +1336,111 @@ class FenetrePrincipale(QMainWindow):
         self.statusBar().showMessage(
             "Plan envoyé à l'impression (%d page(s))" % pages, 6000)
 
+    # -- étiquettes -----------------------------------------------------------------
+
+    ETIQUETTES_COLONNES, ETIQUETTES_LIGNES = 3, 8     # planche A4 70 × 37 mm
+
+    def _etiquettes(self) -> list:
+        """Une entrée par pièce débitée, dans l'ordre des planches et des
+        poses — l'ordre où on les sortira de la scie."""
+        if self._resultat is None:
+            return []
+        entrees = []
+        for numero, debit in enumerate(self._resultat.debits, 1):
+            pl = debit.planche
+            plusieurs = pl.quantite > 1 or pl.illimite
+            planche = "planche %d — %s%s" % (
+                numero, pl.reference,
+                " (ex. %d)" % debit.exemplaire if plusieurs else "")
+            for pose in debit.poses:
+                entrees.append((pose.piece.reference,
+                                "%s × %s × %s mm" % (opt._mm(pose.dim_x),
+                                                     opt._mm(pose.dim_y),
+                                                     opt._mm(pose.piece.epaisseur)),
+                                planche,
+                                "%d / %d" % (pose.exemplaire,
+                                             pose.piece.quantite),
+                                self.vue.couleur(pose.piece.reference)))
+        return entrees
+
+    def _pages_etiquettes(self) -> list:
+        par_page = self.ETIQUETTES_COLONNES * self.ETIQUETTES_LIGNES
+        entrees = self._etiquettes()
+        return [entrees[i:i + par_page]
+                for i in range(0, len(entrees), par_page)]
+
+    def _imprimer_etiquettes(self):
+        if self._resultat is None or not self._resultat.debits:
+            QMessageBox.information(self, "Rien à imprimer",
+                                    "Calculez d'abord le débit (F5).")
+            return
+        imprimante = QPrinter(QPrinter.PrinterMode.HighResolution)
+        imprimante.setPageOrientation(QPageLayout.Orientation.Portrait)
+        if QPrintDialog(imprimante, self).exec() != QDialog.DialogCode.Accepted:
+            return
+        peintre = QPainter()
+        if not peintre.begin(imprimante):
+            QMessageBox.warning(self, "Impression impossible",
+                                "L'imprimante n'a pas accepté le document.")
+            return
+        try:
+            pages = self.composer_etiquettes(peintre, imprimante)
+        finally:
+            peintre.end()
+        self.statusBar().showMessage(
+            "Étiquettes envoyées à l'impression (%d page(s))" % pages, 6000)
+
+    def composer_etiquettes(self, peintre: QPainter, imprimante) -> int:
+        """Peint toutes les pages d'étiquettes et rend leur nombre. Séparé
+        du choix de l'imprimante pour être éprouvé sur un PDF."""
+        pages = self._pages_etiquettes()
+        for numero, entrees in enumerate(pages, 1):
+            if numero > 1:
+                imprimante.newPage()
+            self._dessiner_etiquettes(peintre, entrees)
+        return len(pages)
+
+    def _dessiner_etiquettes(self, peintre: QPainter, entrees: list):
+        """Une grille de 3 × 8 sur la page : les planches d'étiquettes du
+        commerce à 70 × 37 mm. Chaque étiquette : la référence en gras,
+        les cotes, la planche d'où elle vient, son rang — et à gauche une
+        bande de la couleur qu'elle a sur le plan, pour retrouver la
+        pièce sur le papier comme sur le bois."""
+        page = QRectF(0, 0, peintre.device().width(),
+                      peintre.device().height())
+        marge_x, marge_y = page.width() * 0.035, page.height() * 0.03
+        largeur = (page.width() - 2 * marge_x) / self.ETIQUETTES_COLONNES
+        hauteur = (page.height() - 2 * marge_y) / self.ETIQUETTES_LIGNES
+        police = peintre.font()
+        for i, (reference, cotes, planche, rang, couleur) in enumerate(entrees):
+            ligne, colonne = divmod(i, self.ETIQUETTES_COLONNES)
+            case = QRectF(marge_x + colonne * largeur,
+                          marge_y + ligne * hauteur, largeur, hauteur)
+            interieur = case.adjusted(largeur * 0.06, hauteur * 0.12,
+                                      -largeur * 0.06, -hauteur * 0.12)
+            bande = QRectF(interieur.left(), interieur.top(),
+                           largeur * 0.05, interieur.height())
+            peintre.fillRect(bande, couleur)
+            texte = interieur.adjusted(largeur * 0.08, 0, 0, 0)
+            haut = texte.top()
+            for chaine, taille, gras in ((reference, 11, True),
+                                         (cotes, 10, False),
+                                         (planche, 8, False),
+                                         ("pièce %s" % rang, 8, False)):
+                police.setPointSize(taille)
+                police.setBold(gras)
+                peintre.setFont(police)
+                h = peintre.fontMetrics().height() * 1.15
+                peintre.drawText(QRectF(texte.left(), haut, texte.width(), h),
+                                 int(Qt.AlignmentFlag.AlignLeft
+                                     | Qt.AlignmentFlag.AlignVCenter),
+                                 peintre.fontMetrics().elidedText(
+                                     chaine, Qt.TextElideMode.ElideRight,
+                                     int(texte.width())))
+                haut += h
+        police.setBold(False)
+        peintre.setFont(police)
+
     def composer_document(self, peintre: QPainter, imprimante) -> int:
         """Peint toutes les pages et rend leur nombre. Séparé du choix de
         l'imprimante pour être éprouvé sur un PDF, sans matériel."""
@@ -1639,9 +1751,12 @@ sur les quantités.</p>
 
 <p><b>Sortir le débit</b><br>
 Fichier → <i>fiche d'atelier</i> écrit en texte la liste des poses et des
-coupes, planche par planche — celle qu'on coche à la scie. Fichier →
+coupes numérotées, planche par planche — celle qu'on coche à la scie.
+Fichier → <i>imprimer les étiquettes</i> sort une étiquette par pièce
+(24 par page A4, 70 × 37 mm) à coller sur le bois. Fichier →
 <i>exporter les pièces</i> ressort la feuille de débit au format CSV,
-pour un tableur ou un autre projet.</p>
+pour un tableur ou un autre projet. Avec <i>Traits de scie</i> coché,
+chaque trait porte son numéro d'ordre sur le plan.</p>
 
 <p><b>L'atelier</b><br>
 Les lignes de stock cochées <i>Atelier</i> vivent dans un fichier commun

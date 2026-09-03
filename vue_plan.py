@@ -244,21 +244,50 @@ class VuePlan(QGraphicsView):
 
     def _traits_de_scie(self, scene, debit, y_haut):
         """Les coupes dans leur ordre d'exécution — chaque trait traverse
-        de bord à bord le morceau courant, tel qu'on le passera à la scie."""
+        de bord à bord le morceau courant, tel qu'on le passera à la scie.
+        Chaque trait porte son numéro à son départ : leur rang n'était
+        lisible qu'en info-bulle, donc pas sur le papier."""
         pl = debit.planche
         epaisseur = max(pl.longueur, pl.largeur) / 700
         for coupe in debit.coupes:
             if coupe.sens == opt.DELIGNAGE:
                 y = y_haut + pl.largeur - coupe.position
                 ligne = scene.addLine(coupe.de, y, coupe.a, y)
+                depart = (coupe.de, y)
             else:
+                haut = y_haut + pl.largeur - coupe.a
                 ligne = scene.addLine(coupe.position, y_haut + pl.largeur - coupe.de,
-                                      coupe.position, y_haut + pl.largeur - coupe.a)
+                                      coupe.position, haut)
+                depart = (coupe.position, haut)
             stylo = QPen(apparence.PLAN_TRAIT_SCIE, epaisseur)
             stylo.setStyle(Qt.PenStyle.DashLine)
             ligne.setPen(stylo)
             ligne.setZValue(5)
             ligne.setToolTip("Coupe n° %d — %s" % (coupe.ordre, coupe.sens))
+            self._numero_de_coupe(scene, coupe, depart)
+
+    def _numero_de_coupe(self, scene, coupe, depart):
+        numero = QGraphicsSimpleTextItem(str(coupe.ordre))
+        numero.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        police = QFont()
+        police.setPointSizeF(5.5 * self._facteur_texte)
+        police.setBold(True)
+        numero.setFont(police)
+        numero.setBrush(QBrush(apparence.PLAN_TRAIT_SCIE))
+        numero.setZValue(7)
+        numero.setToolTip("Coupe n° %d — %s" % (coupe.ordre, coupe.sens))
+        boite = numero.boundingRect()
+        numero.setPos(*depart)
+        ecart = 1.5 * self._facteur_texte
+        # Un délignage part du bord gauche du morceau : le numéro se pose
+        # juste au-dessus du trait. Un tronçonnage part du haut : juste à
+        # droite du trait, au ras du haut.
+        if coupe.sens == opt.DELIGNAGE:
+            decalage = (ecart, -boite.height())
+        else:
+            decalage = (ecart, ecart)
+        numero.setTransform(numero.transform().translate(*decalage))
+        scene.addItem(numero)
 
     def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
                    y_haut, couleur, etiquette, etiquette_courte,
