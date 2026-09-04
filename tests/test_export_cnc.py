@@ -39,10 +39,11 @@ def _paires_dxf(texte):
 
 
 class LightBurn(unittest.TestCase):
-    """Ouvert dans un vrai LightBurn 1.3.01 le 4 septembre 2026 : la
-    géométrie arrive à l'échelle 1 en millimètres, trous compris, origine
-    en bas à gauche, les deux calques de coupe nommés. Ce que ce test
-    garde, c'est ce qui s'était trouvé faux ce jour-là."""
+    """Ouvert dans un vrai LightBurn le 4 septembre 2026, en 1.3.01 puis
+    en 1.7 : aucun avertissement au chargement, la géométrie arrive à
+    l'échelle 1 en millimètres, trous compris, origine en bas à gauche,
+    les deux calques de coupe nommés. Ce que ce test garde, c'est ce qui
+    s'était trouvé faux ce jour-là sur la 1.3."""
 
     def test_la_version_declaree_n_est_pas_dans_le_futur(self):
         """« AppVersion 1.4.00 » faisait ouvrir LightBurn 1.3 sur « This

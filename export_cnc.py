@@ -20,10 +20,12 @@ comme sur la machine, sans rien d'autre que la bibliothèque standard :
   Pour lire les noms, c'est le SVG ou le DXF (calque NOMS).
 
 Vérifié le 4 septembre 2026 en ouvrant les fichiers produits dans un
-**vrai LightBurn 1.3.01** : les deux calques de coupe portent leur nom
-français, la géométrie arrive à l'échelle 1 en millimètres (une sélection
-totale mesure exactement les cotes de la planche), les trous des pièces
-sont là, et l'origine est en bas à gauche.
+**vrai LightBurn**, en 1.3.01 puis en 1.7 : aucun avertissement au
+chargement, les deux calques de coupe portent leur nom français, la
+géométrie arrive à l'échelle 1 en millimètres (une sélection totale
+mesure exactement les cotes de la planche), les trous des pièces sont là,
+et l'origine est en bas à gauche. Deux versions à quatre ans d'écart :
+c'est le format qui est stable, pas une chance.
 
 Une pose sans contour (un rectangle) s'écrit comme son rectangle.
 """

@@ -48,8 +48,9 @@ pièces, en **SVG**, en **DXF** (R12, calques PIECES, PLANCHE, NOMS) ou en
 projet **LightBurn** (.lbrn, calque 0 les pièces, calque 1 le tour de
 planche), pour la chaîne CNC ou le laser. Le DXF est relu sans une
 correction par l'audit d'`ezdxf`, et le .lbrn a été ouvert dans un vrai
-**LightBurn 1.3.01** : géométrie à l'échelle 1 en millimètres, trous
-compris, origine en bas à gauche, les deux calques nommés. Le .lbrn ne
+**LightBurn, en 1.3.01 et en 1.7** : aucun avertissement au chargement,
+géométrie à l'échelle 1 en millimètres, trous compris, origine en bas à
+gauche, les deux calques nommés. Le .lbrn ne
 porte pas les noms des pièces — pour eux, le SVG ou le calque NOMS du
 DXF.
 

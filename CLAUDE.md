@@ -55,7 +55,9 @@ Deux défauts n'ont été vus que comme ça : une `AppVersion` déclarée trop
 récente ouvrait sur un avertissement de perte de données (bouton par
 défaut sur NON), et un `<Shape Type="Text">` écrit à la main fait planter
 LightBurn par une faute de segmentation — d'où un .lbrn sans noms de
-pièces.
+pièces. Le format est stable : la 1.3.01 et la 1.7 lisent le même fichier
+sans rien dire. **Ne jamais aider à contourner l'essai de trente jours**
+— la vérification se fait pendant qu'il court, ou sur une licence.
 
 **La version** est `VERSION` dans `optimiseur.py`, recopiée dans
 `web/app.js`, `sw.js` et `version.json` — `tests/test_version.py` refuse
