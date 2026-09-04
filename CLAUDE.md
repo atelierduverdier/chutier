@@ -38,6 +38,16 @@ deux références du même vert, une étiquette « chute » écrite par-dessus
 le titre d'une planche, et des cartouches tombés à huit pixels sur un
 brin de 4 m. Le dessin est le produit — il se regarde.
 
+**La page web se juge à plusieurs tailles d'écran.** La fenêtre de Chrome
+refuse de descendre sous la moitié de l'écran ; on charge donc la page
+dans un `<iframe>` aux cotes voulues, où les requêtes de média
+s'appliquent, et on mesure dedans — largeur des colonnes de la grille, et
+surtout si le dernier paragraphe passe SOUS le pied de page. Deux défauts
+n'ont été vus que là : sur tablette couchée, un bandeau sombre barrait le
+texte du bas ; debout, les deux moitiés restaient côte à côte et la
+saisie tombait sous sa largeur utile. Tailles à essayer : 1000×560,
+1000×620, 1280×700, 880×900.
+
 **Le G-code se REJOUE, il ne se relit pas.** `tests/test_gcode.py` porte
 un simulateur qui tient l'état modal (G0/G1, position, avance) et rend la
 liste des déplacements ; les assertions portent sur ce que la fraise

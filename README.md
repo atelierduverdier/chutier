@@ -40,6 +40,11 @@ n'existe pas au stock le dit **tout de suite**, avec les deux mots en
 présence — la faute est presque toujours une majuscule ou une espace.
 Bureau et navigateur disent la même chose, au même moment.
 
+Sur **tablette et téléphone**, les deux moitiés passent l'une sous
+l'autre et la page défile ; sur un écran bas, elle défile aussi plutôt
+que de tasser le plan — sans quoi le dernier paragraphe passait sous le
+pied de page, barré d'un bandeau sombre.
+
 Les colonnes de texte s'élargissent à leur contenu **des deux côtés** :
 sur le web, le texte vit dans un `<input>` dont la longueur n'entre pas
 dans le calcul de la colonne — le navigateur taille sur l'en-tête, et

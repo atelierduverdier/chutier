@@ -8,7 +8,10 @@
   :root { --fond: #1a1e23; --carte: #22272e; --texte: #d8dde3; --mid: #8a929c; --bord: #3a404a; --etabli: #3b4048; }
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+/* 100dvh et non 100% : sur une tablette, la barre d'adresse se rétracte
+   en défilant, et une hauteur figée laissait le bas de la page sous le
+   pied de page — un bandeau sombre en travers du dernier paragraphe. */
+html, body { margin: 0; height: 100%; height: 100dvh; }
 body { font: 14px/1.35 system-ui, sans-serif; color: var(--texte); background: var(--fond); display: flex; flex-direction: column; }
 button { font: inherit; padding: 4px 10px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte); border-radius: 4px; cursor: pointer; }
 button:hover { border-color: var(--mid); }
@@ -101,6 +104,33 @@ footer a { color: inherit; }
 .menu-contextuel .titre { padding: 4px 10px; color: var(--mid); font-size: 12px; }
 .menu-contextuel .sep { border-top: 1px solid var(--bord); margin: 3px 0; }
 .impression { display: none; }
+/* Tablette et téléphone : les deux moitiés l'une SOUS l'autre, et la page
+   défile. Côte à côte sur 800 px, la saisie tombait bien en dessous de sa
+   largeur utile, et le plan gardait ses 300 px de haut qui poussaient la
+   légende sous le pied de page. */
+@media (max-width: 950px) {
+  html, body { height: auto; min-height: 100dvh; }
+  main { grid-template-columns: 1fr; gap: 10px; overflow: visible; }
+  .poignee { display: none; }
+  .saisie { overflow: visible; }
+  .table-cadre { max-height: 50vh; }
+  .plan { min-height: 60vh; }
+  .tuiles { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Un écran bas — une tablette couchée, une fenêtre réduite : le plan ne
+   garde pas 300 px de haut au prix du reste. */
+@media (max-height: 620px) {
+  /* La page défile plutôt que de tasser : sinon le contenu débordait
+     SOUS le pied de page, qui barrait le dernier paragraphe d'un bandeau
+     sombre (tablette couchée, 4 septembre 2026). */
+  html, body { height: auto; min-height: 100dvh; }
+  main { overflow: visible; }
+  .saisie { overflow: visible; }
+  .plan { min-height: 260px; }
+  .table-cadre { max-height: 34vh; }
+}
+
 @media print {
   header, main .saisie, .poignee, .onglets, .outils-plan, footer, .legende, .discret, #tuiles { display: none !important; }
   main { display: block; padding: 0; }
