@@ -220,6 +220,7 @@ interface calls the core, never the reverse — same sharing as laser_core
 | `optimiseur.py` | all geometry and the guillotine solver. No dependencies. |
 | `imbrication.py` | contour nesting for CNC. Depends on `shapely`, imported by the core only when a contour is requested. Without Qt. |
 | `contours_svg.py` | reading SVG paths (parser taken from LaserAtelier), writing the cut. No dependencies. |
+| `triangulation.py` | ear clipping of a polygon with holes, for the NFP when `shapely` < 2.1 (the browser). No dependencies. |
 | `csv_io.py`, `projet_io.py` | CSV exchange, project JSON. Without Qt. |
 | `apparence.py` | colors, summary tiles. Knows Qt, not cutting. |
 | `tables_saisie.py` | the two tables and their delegates. |
@@ -230,7 +231,20 @@ interface calls the core, never the reverse — same sharing as laser_core
 
 LGPL-2.1-or-later, like the G-code viewer of the workshop — the
 interface is built on PySide6 (Qt), the core has no dependencies;
-contour nesting requires `shapely` (`python-shapely` package).
+contour nesting requires `shapely` (`python-shapely` package), 2.1 for
+the C triangulation, otherwise the built-in triangulation takes over.
+
+## Towards the browser
+
+The whole core — guillotine, nesting, holes, SVG, project JSON — runs
+as is under **Pyodide** (Python in WebAssembly), verified in Node with
+Pyodide 0.28: the guillotine example in 0.03 s, ten nested shapes in
+0.5 s, `shapely` 2.0.7 and `numpy` loaded from the Pyodide
+distribution. That is the chosen path to share the application with the
+community: a static page, no server, no account, next to the
+repository. What remains to write is the interface (tables, plan,
+printing) in HTML; project files, CSV and SVG stay the same in both
+versions.
 
 ## Tests
 

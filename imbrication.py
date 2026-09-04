@@ -57,6 +57,7 @@ from shapely.ops import unary_union
 from shapely.prepared import prep
 
 import optimiseur as opt
+import triangulation
 
 EPS = 1e-6
 # Les NFP se calculent sur un contour simplifié à cette flèche, puis
@@ -104,9 +105,19 @@ def _au_coin(p):
     return affinity.translate(p, -minx, -miny)
 
 
+# shapely ≥ 2.1 triangule en C ; sinon — le navigateur, Pyodide embarquant
+# shapely 2.0 — la triangulation maison fait le même travail. Un drapeau,
+# pour que les tests éprouvent le repli sur un poste qui a les deux.
+TRIANGULATION_SHAPELY = hasattr(shapely, "constrained_delaunay_triangles")
+
+
 def _triangles(p) -> list:
-    t = shapely.constrained_delaunay_triangles(p)
-    return [g for g in t.geoms if g.area > EPS]
+    """Les triangles qui couvrent la matière de ``p`` (trous exclus)."""
+    if TRIANGULATION_SHAPELY:
+        t = shapely.constrained_delaunay_triangles(p)
+        return [g for g in t.geoms if g.area > EPS]
+    tris = triangulation.trianguler(p.exterior.coords, [r.coords for r in p.interiors])
+    return [g for g in (Polygon(t) for t in tris) if g.area > EPS]
 
 
 def _minkowski(a, b_retournee):
@@ -616,7 +627,10 @@ def _contexte():
     ses fils C++, peut se bloquer, et Python le dénonce. Mais forkserver
     réimporte le module principal, ce qu'un script lu sur l'entrée
     standard n'a pas — fork alors, et séquentiel en dernier recours."""
-    methodes = multiprocessing.get_all_start_methods()
+    try:
+        methodes = multiprocessing.get_all_start_methods()
+    except (AttributeError, OSError, ValueError):
+        return None                     # pas de processus ici (navigateur)
     principal = sys.modules.get("__main__")
     fichier = getattr(principal, "__file__", None)
     reimportable = bool(fichier) and os.path.exists(fichier)

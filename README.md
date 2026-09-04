@@ -230,6 +230,7 @@ laser_core / task_panels dans LaserAtelier.
 | `optimiseur.py` | toute la géométrie et le solveur guillotine. Aucune dépendance. |
 | `imbrication.py` | l'imbrication de contours pour la CNC. Dépend de `shapely`, importé par le cœur seulement quand un contour est demandé. Sans Qt. |
 | `contours_svg.py` | lecture des tracés SVG (parseur repris de LaserAtelier), écriture de la découpe. Sans dépendance. |
+| `triangulation.py` | découpage en oreilles d'un polygone à trous, pour le NFP quand `shapely` < 2.1 (le navigateur). Sans dépendance. |
 | `csv_io.py`, `projet_io.py` | échange CSV, projet JSON. Sans Qt. |
 | `apparence.py` | couleurs, tuiles de bilan. Connaît Qt, pas le débit. |
 | `tables_saisie.py` | les deux tables et leurs délégués. |
@@ -240,7 +241,20 @@ laser_core / task_panels dans LaserAtelier.
 
 LGPL-2.1-or-later, comme le visualiseur G-code de l'atelier — l'interface
 est bâtie sur PySide6 (Qt), le cœur n'a aucune dépendance ; l'imbrication
-de contours demande `shapely` (paquet `python-shapely`).
+de contours demande `shapely` (paquet `python-shapely`), en 2.1 pour la
+triangulation en C, sinon la triangulation maison prend le relais.
+
+## Vers le navigateur
+
+Le cœur entier — guillotine, imbrication, trous, SVG, projet JSON —
+tourne tel quel sous **Pyodide** (Python en WebAssembly), vérifié dans
+Node avec Pyodide 0.28 : l'exemple guillotine en 0,03 s, dix formes
+imbriquées en 0,5 s, `shapely` 2.0.7 et `numpy` chargés depuis la
+distribution Pyodide. C'est la voie choisie pour partager l'application
+avec la communauté : une page statique, sans serveur ni compte, à côté
+du dépôt. Ce qui reste à écrire est l'interface (tables, plan,
+impression) en HTML ; les fichiers de projet, le CSV et le SVG restent
+les mêmes dans les deux versions.
 
 ## Tests
 

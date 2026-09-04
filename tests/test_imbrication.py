@@ -251,6 +251,38 @@ class NoFitPolygon(unittest.TestCase):
         self.assertTrue(avec.nfp(ca, cb).contains(Point(40 + 7.5, 10)))
         self.assertFalse(avec.nfp(ca, cb).contains(Point(40 + 8.5, 10)))
 
+    def test_le_repli_de_triangulation_donne_le_meme_nfp(self):
+        """Sans shapely 2.1 (le navigateur), la triangulation maison
+        doit produire le même NFP, donc le même plan."""
+        from unittest import mock
+        cadre = ((0, 0), (200, 0), (200, 200), (0, 200))
+        trou = ((30, 30), (170, 30), (170, 170), (30, 170))
+        pieces = [Piece("cadre", 200, 200, 15, "cp", 1, FIL_INDIFFERENT,
+                        contour=cadre, trous=(trou,)),
+                  Piece("L", 80, 80, 15, "cp", 3, FIL_INDIFFERENT, contour=L),
+                  Piece("rond", 60, 60, 15, "cp", 2, FIL_INDIFFERENT,
+                        contour=ROND)]
+        stock = [Planche("cp", 500, 400, 15, "cp", 1, fil=False)]
+        params = Parametres(essais_melanges=0, processus=1)
+
+        def vider():
+            imbrication._NFPS.clear()
+            imbrication._CADRES.clear()
+            imbrication._VARIANTES.clear()
+        vider()
+        avec = optimiser(pieces, stock, params)
+        vider()
+        with mock.patch.object(imbrication, "TRIANGULATION_SHAPELY", False):
+            sans = optimiser(pieces, stock, params)
+        vider()
+        self.assertEqual(avec.bilan.nb_posees, sans.bilan.nb_posees)
+        self.assertEqual(len(avec.debits), len(sans.debits))
+        for a, b in zip(avec.debits[0].poses, sans.debits[0].poses):
+            self.assertEqual(a.piece.reference, b.piece.reference)
+            self.assertAlmostEqual(a.x, b.x, delta=0.05)
+            self.assertAlmostEqual(a.y, b.y, delta=0.05)
+            self.assertEqual(a.angle, b.angle)
+
     def test_parallele_egale_sequentiel(self):
         stock = [Planche("cp", 600, 400, 18, "cp", 3, fil=False)]
         seq = optimiser(_pieces(), stock, Parametres(essais_melanges=2,
