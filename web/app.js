@@ -525,7 +525,7 @@ function telecharger(nom, texte, type = "text/plain") {
   const a = el("a", { href: URL.createObjectURL(new Blob([texte], { type })), download: nom });
   document.body.append(a); a.click(); a.remove();
 }
-function lireFichier(input) { return new Promise((resolve) => { input.onchange = () => { const f = input.files[0]; input.value = ""; if (!f) return resolve(null); const lecteur = new FileReader(); lecteur.onload = () => resolve({ nom: f.name, texte: lecteur.result }); lecteur.readAsText(f); }; input.click(); }); }
+function lireFichier(input, binaire = false) { return new Promise((resolve) => { input.onchange = () => { const f = input.files[0]; input.value = ""; if (!f) return resolve(null); const lecteur = new FileReader(); lecteur.onload = () => resolve({ nom: f.name, texte: binaire ? lecteur.result.split(",")[1] : lecteur.result }); binaire ? lecteur.readAsDataURL(f) : lecteur.readAsText(f); }; input.click(); }); }
 
 async function ouvrirProjet() {
   const f = await lireFichier($("#f-projet")); if (!f) return;
@@ -549,6 +549,14 @@ async function importerCsv() {
   if (d.erreur) { alerter("Import impossible : " + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat();
+}
+async function importerFcstd() {
+  const f = await lireFichier($("#f-fcstd"), true); if (!f) return;
+  const d = JSON.parse(await appeler("depuis_fcstd", f.texte));
+  if (d.erreur) { alerter("Import impossible : " + d.erreur); return; }
+  etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
+  etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
+  $("#etat").textContent = `${d.pieces.length} pièce(s) lues dans ${f.nom}`;
 }
 async function exporterCsv() { telecharger((etat.nomProjet || "pieces") + ".csv", await appeler("vers_csv", JSON.stringify(etat.pieces)), "text/csv"); }
 async function importerSvg() {
@@ -682,6 +690,7 @@ function brancher() {
   $("#b-refaire").onclick = refaire;
   $("#b-imprimer").onclick = () => window.print();
   $("#b-importer-csv").onclick = importerCsv;
+  $("#b-importer-fcstd").onclick = importerFcstd;
   $("#b-exporter-csv").onclick = exporterCsv;
   $("#b-importer-svg").onclick = importerSvg;
   $("#b-exporter-svg").onclick = () => exporterDecoupe("svg");

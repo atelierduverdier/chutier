@@ -19,8 +19,11 @@ import json
 import contours_svg
 import couleurs
 import csv_io
+import base64
+
 import exemples
 import export_cnc
+import fcstd_io
 import optimiseur as opt
 import projet_io
 import saisie
@@ -190,6 +193,17 @@ def decoupe(format_: str, debit_json: str, numero: int = 1,
     """La découpe d'une planche en svg, dxf ou lbrn."""
     debit = projet_io._debit(json.loads(debit_json))
     return export_cnc.decoupe(format_, debit, numero, titre)
+
+
+def depuis_fcstd(base64_du_fichier: str) -> str:
+    """Les pièces de la feuille de débit d'un .FCStd (en base64 : la
+    page envoie des octets), ou ``{"erreur"}``."""
+    try:
+        pieces = fcstd_io.lire_pieces(base64.b64decode(base64_du_fichier))
+    except (ValueError, OSError) as erreur:
+        return json.dumps({"erreur": str(erreur)}, ensure_ascii=False)
+    return json.dumps({"pieces": [dataclasses.asdict(p) for p in pieces]},
+                      ensure_ascii=False)
 
 
 def depuis_csv(texte: str) -> str:

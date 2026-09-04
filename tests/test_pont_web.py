@@ -132,6 +132,17 @@ class Fichiers(unittest.TestCase):
         relu = json.loads(pont_web.depuis_svg(svg))
         self.assertEqual(len(relu["formes"]), 3)      # planche + 2 pièces
 
+    def test_fcstd_en_base64(self):
+        import base64
+        import fcstd_io
+        donnees = fcstd_io.fabriquer({"Debit": [
+            ["Rep.", "Longueur", "Largeur", "Qte"], ["M1", 1000, 60, 2]]})
+        lu = json.loads(pont_web.depuis_fcstd(base64.b64encode(donnees).decode()))
+        self.assertEqual(lu["pieces"][0]["reference"], "M1")
+        self.assertEqual(lu["pieces"][0]["quantite"], 2)
+        self.assertIn("erreur", json.loads(pont_web.depuis_fcstd(
+            base64.b64encode(b"rien").decode())))
+
     def test_csv_dans_les_deux_sens(self):
         entree = json.loads(pont_web.exemple())
         csv = pont_web.vers_csv(json.dumps(entree["pieces"]))

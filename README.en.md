@@ -19,8 +19,14 @@ both exist and launch via:
 python3 interface.py
 ```
 
-Remaining task: importing the parts list from a project's FreeCAD
-spreadsheet (the CSV is the exchange contract in the meantime).
+Importing from a project's FreeCAD spreadsheet is in: File → **Import
+parts (FreeCAD .FCStd)**. The spreadsheet is read inside the document
+without FreeCAD; it needs a header row (Rep. or Designation, Longueur,
+Largeur, optionally Qté, Épaisseur, Matière, Fil), one part per row
+below, section titles skipped. Formulas are evaluated (aliases,
+cross-sheet references such as `Parametres.HautVantail`, units,
+`round`…): a real cut list is made of them. What the evaluator does not
+know, it refuses, naming the cell.
 
 ## CNC: arbitrary shapes, nested
 

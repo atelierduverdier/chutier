@@ -38,6 +38,7 @@ import contours_svg
 import csv_io
 import exemples
 import export_cnc
+import fcstd_io
 import optimiseur as opt
 import projet_io
 import tables_saisie as tsa
@@ -188,6 +189,12 @@ class FenetrePrincipale(QMainWindow):
             "&Importer des pièces (CSV)…", self._importer_csv, "Ctrl+I",
             ("document-import", "document-open"),
             "Charger une liste de pièces produite par un autre projet")
+        self.a_importer_fcstd = self._acte(
+            "Importer des pièces (&FreeCAD .FCStd)…", self._importer_fcstd, None,
+            ("document-import", "document-open"),
+            "Lire la feuille de débit du tableur d'un document FreeCAD :"
+            " une ligne d'en-tête (Rep., Désignation, Qté, Longueur, Largeur,"
+            " Épaisseur), les formules et les alias calculés ici")
         self.a_contours = self._acte(
             "Importer des &contours (SVG)…", self._importer_contours, None,
             ("document-import", "document-open"),
@@ -302,6 +309,7 @@ class FenetrePrincipale(QMainWindow):
             fichier.addAction(action)
         fichier.addSeparator()
         fichier.addAction(self.a_importer)
+        fichier.addAction(self.a_importer_fcstd)
         fichier.addAction(self.a_exporter_csv)
         fichier.addSeparator()
         fichier.addAction(self.a_contours)
@@ -1608,6 +1616,34 @@ class FenetrePrincipale(QMainWindow):
         self._retenir_dossier(ecrits[0])
         self.statusBar().showMessage(
             "%d fichier(s) écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)
+
+    def _importer_fcstd(self):
+        """La feuille de débit d'un document FreeCAD, sans FreeCAD : le
+        tableur est lu dans le .FCStd, formules et alias calculés ici.
+        Remplace la liste de pièces, comme l'import CSV."""
+        if self.table_pieces.lignes_utiles() and not self._confirmer_abandon(
+                "La liste de pièces va être remplacée par la feuille de débit"
+                " du document."):
+            return
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Importer la feuille de débit d'un document FreeCAD",
+            self._dossier(), "Document FreeCAD (*.FCStd)")
+        if not chemin:
+            return
+        try:
+            pieces = fcstd_io.lire_fichier(chemin)
+        except (OSError, ValueError) as erreur:
+            QMessageBox.warning(self, "Import impossible", str(erreur))
+            return
+        self._chargement = True
+        self.table_pieces.remplir(pieces)
+        self._chargement = False
+        self._retenir_dossier(chemin)
+        self.table_pieces.setFocus()
+        self._saisie_changee()
+        self.statusBar().showMessage(
+            "%d pièce(s) lues dans %s" % (len(pieces), os.path.basename(chemin)),
+            8000)
 
     def _exporter_image(self):
         if self._resultat is None or not self._resultat.debits:

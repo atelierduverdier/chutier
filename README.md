@@ -19,9 +19,15 @@ existent tous les deux, et se lancent par :
 python3 interface.py
 ```
 
-Reste à faire : l'import de la liste de pièces depuis la feuille de
-calcul FreeCAD d'un projet (le CSV est le contrat d'échange en
-attendant).
+L'import depuis la feuille de calcul FreeCAD d'un projet est là :
+Fichier → **Importer des pièces (FreeCAD .FCStd)**. Le tableur est lu
+dans le document sans FreeCAD ; il faut une ligne d'en-tête (Rep. ou
+Désignation, Longueur, Largeur, et à volonté Qté, Épaisseur, Matière,
+Fil), une pièce par ligne dessous, les titres de section sautés. Les
+formules sont calculées (alias, références entre feuilles comme
+`Parametres.HautVantail`, unités, `round`…) : une feuille de débit
+réelle en est faite. Ce que l'évaluateur ne sait pas, il le refuse en
+nommant la cellule.
 
 ## La CNC : des formes quelconques, imbriquées
 
