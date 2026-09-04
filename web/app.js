@@ -507,12 +507,14 @@ async function importerSvg() {
   if (d.avertissements.length) alerter(`${d.formes.length} contour(s) importé(s)\n\n` + d.avertissements.join("\n"));
   else $("#etat").textContent = `${d.formes.length} contour(s) importé(s)`;
 }
-async function exporterSvg() {
+const FORMATS_DECOUPE = { svg: ["svg", "image/svg+xml"], dxf: ["dxf", "application/dxf"], lbrn: ["lbrn", "application/xml"] };
+async function exporterDecoupe(format) {
   if (!etat.resultat) { alerter("Calculez d'abord le débit."); return; }
   const titre = etat.nomProjet || "Feuille de débit";
+  const [extension, type] = FORMATS_DECOUPE[format];
   for (const [i, d] of etat.resultat.debits.entries()) {
-    const svg = await appeler("svg_planche", JSON.stringify(d.epingle), i + 1, titre);
-    telecharger(`${titre}-planche-${i + 1}.svg`, svg, "image/svg+xml");
+    const texte = await appeler("decoupe", format, JSON.stringify(d.epingle), i + 1, titre);
+    telecharger(`${titre}-planche-${i + 1}.${extension}`, texte, type);
     await new Promise(r => setTimeout(r, 300));
   }
 }
@@ -601,7 +603,7 @@ L'atelier : les lignes de stock cochées « Atelier » restent dans ce navigateu
 
 Corriger le plan : clic droit sur une planche pour l'épingler (reprise telle quelle au prochain calcul), clic droit sur une pièce pour la tailler dans une autre planche.
 
-La CNC : Plus… → Importer des contours (SVG) ajoute aux pièces chaque tracé fermé ; dès qu'une matière compte un contour, tout ce lot est imbriqué à la fraise. Plus… → Exporter la découpe sort chaque planche en SVG à l'échelle 1.
+La CNC : Plus… → Importer des contours (SVG) ajoute aux pièces chaque tracé fermé ; dès qu'une matière compte un contour, tout ce lot est imbriqué à la fraise. Plus… → exporter la découpe sort chaque planche en SVG, DXF ou LightBurn à l'échelle 1, pour la chaîne CNC ou le laser.
 
 Tout est en millimètres. La longueur court le long du fil. Une planche plus épaisse que la pièce convient, jamais une plus mince. Les chutes passent avant les planches neuves. Rien ne quitte votre navigateur.`);
 }
@@ -615,7 +617,9 @@ function brancher() {
   $("#b-importer-csv").onclick = importerCsv;
   $("#b-exporter-csv").onclick = exporterCsv;
   $("#b-importer-svg").onclick = importerSvg;
-  $("#b-exporter-svg").onclick = exporterSvg;
+  $("#b-exporter-svg").onclick = () => exporterDecoupe("svg");
+  $("#b-exporter-dxf").onclick = () => exporterDecoupe("dxf");
+  $("#b-exporter-lbrn").onclick = () => exporterDecoupe("lbrn");
   $("#b-fiche").onclick = exporterFiche;
   $("#b-exemple").onclick = () => chargerExemple("exemple");
   $("#b-exemple-formes").onclick = () => chargerExemple("exemple_formes");

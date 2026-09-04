@@ -35,9 +35,11 @@ bounding-box dimensions in the table, and the Contour column says
 polygons, on the same boards and offcuts, with the same defects.
 Settings "La CNC": gap between contours (bit diameter + clearance),
 margin to the edge, number of orientations tried for a part with free
-grain. File → **Export the cut (SVG)** writes every nested board as an
-SVG at scale 1 (mm), board outline and closed paths of the parts, for
-the CNC chain.
+grain. File → **Export the cut** writes every board at scale 1 (mm),
+board outline and closed contours of the parts, as **SVG**, **DXF**
+(R12, layers PIECES, PLANCHE, NOMS) or a **LightBurn** project (.lbrn,
+layer 0 the parts, layer 1 the board outline), for the CNC chain or the
+laser.
 
 The engine (`imbrication.py`, on `shapely` ≥ 2.1) is a real **no-fit
 polygon**, as in SVGnest, Deepnest and libnest2d: for every placed part

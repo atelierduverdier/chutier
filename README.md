@@ -36,9 +36,11 @@ ses cotes de boîte englobante dans la table, et la colonne Contour dit
 participent comme des polygones, sur les mêmes planches et chutes, avec
 les mêmes défauts. Réglages « La CNC » : écart entre contours (diamètre
 de fraise + jeu), marge au bord, nombre d'orientations essayées pour une
-pièce à fil indifférent. Fichier → **Exporter la découpe (SVG)** sort
-chaque planche imbriquée en SVG à l'échelle 1 (mm), contour de la
-planche et chemins fermés des pièces, pour la chaîne CNC.
+pièce à fil indifférent. Fichier → **Exporter la découpe** sort chaque
+planche à l'échelle 1 (mm), contour de la planche et contours fermés des
+pièces, en **SVG**, en **DXF** (R12, calques PIECES, PLANCHE, NOMS) ou en
+projet **LightBurn** (.lbrn, calque 0 les pièces, calque 1 le tour de
+planche), pour la chaîne CNC ou le laser.
 
 Le moteur (`imbrication.py`, sur `shapely` ≥ 2.1) est un vrai
 **no-fit polygon**, comme SVGnest, Deepnest et libnest2d : pour chaque
