@@ -529,8 +529,12 @@ def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
     demi = params.ecart_contours / 2.0
     fraisees = [p.buffer(demi, join_style="mitre", mitre_limit=2.0)
                 for p in plateau.polygones]
-    reste = _bord_brut(pl).difference(
-        shapely.union_all(fraisees, grid_size=_PRECISION))
+    # Les deux opérandes au même pas de précision : la soustraction se
+    # fait alors en arrondi fixe, la seule que GEOS en WebAssembly ne
+    # fasse jamais échouer fatalement (une erreur de topologie y fige la
+    # page entière, il n'y a pas d'exception à rattraper).
+    reste = _robuste(_bord_brut(pl)).difference(
+        _robuste(shapely.union_all(fraisees, grid_size=_PRECISION)))
     reste = reste.simplify(0.2, preserve_topology=True)
     morceaux = reste.geoms if hasattr(reste, "geoms") else [reste]
     chutes = []
