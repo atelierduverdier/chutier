@@ -110,6 +110,31 @@ class Lecture(unittest.TestCase):
             fcstd_io.lire_pieces(donnees)
         self.assertIn("douze", str(leve.exception))
 
+    def test_un_document_modele_indique_la_macro(self):
+        """Le document des volets battants n'a qu'un tableur de cotes
+        pilotes : dire ce qui manque ne suffit pas, il faut indiquer le
+        chemin — la macro qui mesure les solides et écrit un CSV."""
+        donnees = fcstd_io.fabriquer({"Parametres": [
+            ["Hauteur vantail", (1900, "HautVantail")],
+            ["Largeur montant", (110, "LargMontant")]]})
+        with self.assertRaises(ValueError) as leve:
+            fcstd_io.lire_pieces(donnees)
+        message = str(leve.exception)
+        self.assertIn("Parametres", message)
+        self.assertIn("Exporter_Chutier", message)
+        self.assertIn("CSV", message)
+
+    def test_le_document_reel_des_volets_battants(self):
+        """Modelé, sans feuille de débit : il doit être refusé avec le
+        chemin à suivre, pas avec un simple « non »."""
+        chemin = os.path.expanduser(
+            "~/Projets/realisations/volets-battants/Volets.FCStd")
+        if not os.path.exists(chemin):
+            self.skipTest("document absent")
+        with self.assertRaises(ValueError) as leve:
+            fcstd_io.lire_fichier(chemin)
+        self.assertIn("Exporter_Chutier", str(leve.exception))
+
     def test_pas_un_document_freecad(self):
         with self.assertRaises(ValueError):
             fcstd_io.lire_pieces(b"pas un zip")

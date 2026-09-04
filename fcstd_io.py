@@ -354,9 +354,22 @@ def lire_pieces(donnees: bytes, feuille: str = None) -> list:
         trouve = _entete(document[nom])
         if trouve:
             return _lire(document, document[nom], *trouve)
+    # Dire ce qui manque ne suffit pas : un document MODELÉ n'a pas de
+    # feuille de débit du tout, et son tableur ne porte que des cotes
+    # pilotes. On indique alors le chemin, au lieu de laisser chercher.
     raise ValueError(
         "aucun tableur (%s) n'a de ligne d'en-tête avec une référence, une"
-        " longueur et une largeur" % ", ".join(sorted(document)))
+        " longueur et une largeur.\n\n"
+        "Cet import lit une FEUILLE DE DÉBIT écrite à la main dans le"
+        " document : une ligne d'en-tête (Rep. ou Désignation, Longueur,"
+        " Largeur, et à volonté Qté, Épaisseur, Matière, Fil), une pièce"
+        " par ligne dessous.\n\n"
+        "Si le document est modelé et n'a pas cette feuille — un tableur"
+        " de cotes pilotes n'en est pas une —, les pièces se déduisent des"
+        " solides : dans FreeCAD, la macro « Exporter_Chutier » les mesure"
+        " par leur boîte englobante et écrit un CSV, que Fichier →"
+        " Importer des pièces (CSV) relit ici."
+        % ", ".join(sorted(document)))
 
 
 def _lire(document: dict, feuille: Feuille, lig_entete: int,

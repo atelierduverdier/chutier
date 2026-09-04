@@ -60,7 +60,7 @@ const REGLAGES = [
     ["marge_bord", "Marge au bord (mm)", "nombre", "Distance entre un contour et le bord de la planche."],
     ["vitesse_fraisage", "Vitesse de fraisage (mm/min)", "nombre", "Pour estimer le temps de découpe d'une planche imbriquée."],
     ["pas_rotation", "Orientations", "choix", "Les angles essayés pour une pièce à fil indifférent.",
-      [[90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
+      [[180, "2 orientations (180°) — rapide"], [90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
   ["Le calcul", [
     ["priorite", "Privilégier", "choix", "Entre deux plans dans le même bois neuf : moins de pertes, ou moins de coupes.",
       [["bois", "le bois — moins de pertes"], ["scie", "le temps de scie — moins de coupes"]]],
@@ -132,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.2.1";
+export const VERSION = "1.2.2";
 
 function controlerVersion() {
   const b = $("#b-version");

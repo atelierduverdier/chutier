@@ -279,9 +279,9 @@ desktop. To try it locally: `python3 -m http.server` at the root, then
 The computation is **spread over several Web Workers**: 86 % of a nesting
 run goes into the no-fit polygons, independent of one another, and the
 page hands a slice to each of three extra workers. On the odd-shapes
-example a first run goes from 7 to 4 seconds; whatever a previous run
-already cached is never redistributed, since redoing it in parallel would
-cost more than doing nothing.
+example (168 no-fit polygons) a first run goes from about 8 to 5 seconds
+in Chrome; whatever a previous run already cached is never redistributed,
+since redoing it in parallel would cost more than doing nothing.
 
 Between the input side and the plan, a **handle** sets how the two
 halves share the width, like the desktop application's splitter: twelve

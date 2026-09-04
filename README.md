@@ -334,8 +334,9 @@ premier chargement télécharge une quinzaine de Mo (ensuite en cache).
 Le calcul y est **réparti sur plusieurs Web Workers** : 86 % du temps
 d'une imbrication part dans les no-fit polygons, indépendants les uns des
 autres, et la page en confie une tranche à chacun de trois workers de
-plus. Sur l'exemple des formes biscornues, un premier calcul passe de 7 à
-4 secondes ; ce qu'un calcul a déjà mis en cache n'est jamais redistribué,
+plus. Sur l'exemple des formes biscornues (168 no-fit polygons), un
+premier calcul passe d'environ 8 à 5 secondes dans Chrome ; ce qu'un
+calcul a déjà mis en cache n'est jamais redistribué,
 le refaire à plusieurs coûterait plus cher que de ne rien faire. Sans
 impression d'étiquettes : pour celle-là, le bureau. Pour l'essayer en local : `python3 -m http.server` à la racine,
 puis <http://localhost:8000/>.

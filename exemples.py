@@ -105,5 +105,9 @@ def formes_biscornues():
     # Deux orientations : avec quatre, huit formes font cinq cents NFP à
     # précalculer — trop long pour un exemple d'accueil, surtout dans le
     # navigateur.
-    return pieces, stock, opt.Parametres(ecart_contours=6.0, marge_bord=5.0,
+    # Marge au bord de 8 : au moins le DIAMÈTRE de la fraise, sans quoi
+    # l'export G-code signale à juste titre que le flanc de l'outil
+    # dépasse l'arête de la planche. Le plan est le même à trois
+    # millimètres près — les pièces se décalent, rien d'autre.
+    return pieces, stock, opt.Parametres(ecart_contours=6.0, marge_bord=8.0,
                                         pas_rotation=180)

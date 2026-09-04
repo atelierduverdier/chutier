@@ -372,35 +372,50 @@ class Avertissements(unittest.TestCase):
         self.assertTrue(any("mord dans" in a for a in large))
         self.assertTrue(any("écart entre contours" in a for a in large))
 
-    def test_le_flanc_qui_rase_le_bord_n_est_qu_une_remarque(self):
-        """Une pièce à 5 mm du bord, fraisée à Ø 6, laisse l'outil raser
-        l'arête sur un millimètre : c'est le quotidien d'une découpe en
-        panneau. En faire une faute, c'était six alarmes pour rien."""
-        import dataclasses
+    def _plan_a_la_marge(self, marge):
+        """Une pièce seule, à une marge connue du bord — pour choisir de
+        quel côté du rayon on se place, sans dépendre des réglages d'un
+        exemple qu'on retouchera."""
+        piece = Piece("plaque", 100, 100, 15, "cp", 1, FIL_INDIFFERENT,
+                      contour=CARRE)
+        # Un peu de large : une planche juste à la cote laisse le bord
+        # utile à zéro et rien ne se place. Le solveur pousse la pièce
+        # dans le coin, donc elle reste bien à « marge » du bord.
+        stock = [Planche("cp", 120 + 2 * marge, 120 + 2 * marge, 15, "cp", 1,
+                         fil=False)]
+        return optimiser([piece], stock,
+                         Parametres(essais_melanges=0, processus=1,
+                                    marge_bord=marge)).debits[0]
 
-        import exemples
-        pieces, stock, params = exemples.formes_biscornues()
-        r = optimiser(pieces, stock, dataclasses.replace(params, processus=1))
-        for numero, debit in enumerate(r.debits, 1):
-            _, fautes, remarques = gcode.programme(
-                debit, gcode.Reglages(diametre_fraise=6), numero)
-            self.assertEqual(fautes, [], "une faute sur un plan cuttable")
-            self.assertTrue(remarques)
-            for mot in remarques:
-                self.assertIn("rase le bord", mot)
-                self.assertIn("sans conséquence", mot)
+    def test_le_flanc_qui_rase_le_bord_n_est_qu_une_remarque(self):
+        """Rayon < marge < diamètre : le centre reste dans la planche, seul
+        le flanc dépasse. C'est le quotidien d'une découpe en panneau, et
+        en faire une faute, c'était six alarmes pour rien."""
+        debit = self._plan_a_la_marge(4)          # fraise Ø6, rayon 3
+        _, fautes, remarques = gcode.programme(debit,
+                                               gcode.Reglages(diametre_fraise=6))
+        self.assertEqual(fautes, [])
+        self.assertTrue(remarques)
+        self.assertIn("rase le bord", remarques[0])
+        # le débord vaut le diamètre moins la marge, à l'approximation de
+        # l'arc près : la remarque doit dire COMBIEN, pas seulement que
+        # ça dépasse
+        debord = float(re.search(r"dépasse de ([\d.]+) mm",
+                                 remarques[0]).group(1))
+        self.assertAlmostEqual(debord, 2.0, delta=0.4)
 
     def test_le_centre_hors_de_la_planche_est_une_faute(self):
-        """Là, la machine promène la fraise au-delà de la matière, où sont
-        les serre-joints."""
-        import dataclasses
+        """Marge < rayon : la machine promène la fraise au-delà de la
+        matière, là où sont les serre-joints."""
+        debit = self._plan_a_la_marge(2)
+        _, fautes, _ = gcode.programme(debit, gcode.Reglages(diametre_fraise=6))
+        self.assertTrue(any("CENTRE" in f for f in fautes), fautes)
 
-        import exemples
-        pieces, stock, params = exemples.formes_biscornues()
-        r = optimiser(pieces, stock, dataclasses.replace(params, processus=1))
-        _, fautes, _ = gcode.programme(r.debits[0],
-                                       gcode.Reglages(diametre_fraise=12))
-        self.assertTrue(any("CENTRE" in f for f in fautes))
+    def test_une_marge_large_ne_dit_rien(self):
+        debit = self._plan_a_la_marge(10)
+        _, fautes, remarques = gcode.programme(debit,
+                                               gcode.Reglages(diametre_fraise=6))
+        self.assertEqual((fautes, remarques), ([], []))
 
     def test_ils_sont_recopies_en_tete_du_fichier(self):
         """Celui qui ouvre le fichier à la machine ne lit pas l'écran d'où

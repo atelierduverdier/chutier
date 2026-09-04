@@ -722,7 +722,13 @@ class FenetrePrincipale(QMainWindow):
         self.spin_ecart = self._spin(defauts.ecart_contours, 0, 50)
         self.spin_marge_bord = self._spin(defauts.marge_bord, 0, 100)
         self.choix_rotation = QComboBox()
-        for pas, libelle in ((90, "4 orientations (90°)"),
+        # 180° manquait : l'exemple des formes le demande pour rester
+        # rapide, findData ne le trouvait pas, et le réglage retombait
+        # SILENCIEUSEMENT sur 90 — quatre orientations au lieu de deux,
+        # un plan différent de celui que l'exemple décrit, et le double
+        # de NFP à calculer (vu le 4 septembre 2026).
+        for pas, libelle in ((180, "2 orientations (180°) — rapide"),
+                             (90, "4 orientations (90°)"),
                              (45, "8 orientations (45°)"),
                              (30, "12 orientations (30°)"),
                              (15, "24 orientations (15°) — lent")):

@@ -409,6 +409,46 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class ReglagesDesExemples(unittest.TestCase):
+
+    def test_les_orientations_de_l_exemple_arrivent_dans_l_interface(self):
+        """L'exemple des formes demande DEUX orientations pour rester
+        rapide ; la liste n'offrait que 90, 45, 30 et 15, findData ne
+        trouvait pas 180 et le réglage retombait silencieusement sur 90 —
+        quatre orientations, 592 no-fit polygons au lieu de 168, et un
+        plan différent de celui que l'exemple décrit."""
+        import exemples
+        f = _fenetre()
+        f._charger_exemple_formes()
+        APP.processEvents()
+        attendu = exemples.formes_biscornues()[2]
+        obtenu = f._parametres_actuels()
+        self.assertEqual(obtenu.pas_rotation, attendu.pas_rotation)
+        self.assertEqual(obtenu.marge_bord, attendu.marge_bord)
+        self.assertEqual(obtenu.ecart_contours, attendu.ecart_contours)
+        f._modifie = False
+        f.close()
+
+    def test_chaque_reglage_de_chaque_exemple_est_offert(self):
+        """Un réglage qu'un exemple pose et que la liste n'a pas retombe
+        en silence sur le premier venu."""
+        import exemples
+        f = _fenetre()
+        for charger, nom in ((f._charger_exemple, "panneaux"),
+                             (f._charger_exemple_formes, "formes")):
+            charger()
+            APP.processEvents()
+            voulu = (exemples.formes_biscornues()[2] if nom == "formes"
+                     else opt.Parametres())
+            obtenu = f._parametres_actuels()
+            for champ in ("pas_rotation", "priorite"):
+                self.assertEqual(getattr(obtenu, champ),
+                                 getattr(voulu, champ),
+                                 "%s : %s perdu" % (nom, champ))
+        f._modifie = False
+        f.close()
+
+
 class CorrectionsDAudit(unittest.TestCase):
     """Six défauts trouvés par un audit le 4 septembre 2026 — chacun se
     reproduisait à l'exécution, aucun ne se voyait à la lecture."""
