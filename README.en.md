@@ -234,17 +234,19 @@ interface is built on PySide6 (Qt), the core has no dependencies;
 contour nesting requires `shapely` (`python-shapely` package), 2.1 for
 the C triangulation, otherwise the built-in triangulation takes over.
 
-## Towards the browser
+## In the browser
 
-The whole core — guillotine, nesting, holes, SVG, project JSON — runs
-as is under **Pyodide** (Python in WebAssembly), verified in Node with
-Pyodide 0.28: the guillotine example in 0.03 s, ten nested shapes in
-0.5 s, `shapely` 2.0.7 and `numpy` loaded from the Pyodide
-distribution. That is the chosen path to share the application with the
-community: a static page, no server, no account, next to the
-repository. What remains to write is the interface (tables, plan,
-printing) in HTML; project files, CSV and SVG stay the same in both
-versions.
+**<https://atelierduverdier.github.io/chutier/>** — the same application,
+nothing to install: `index.html` and `web/` load the whole Python core
+(guillotine, nesting, holes, SVG, project) in the browser through
+**Pyodide** (Python in WebAssembly), with `shapely` and `numpy`. Nothing
+is sent anywhere: the computation runs in a Web Worker of the page, the
+workshop stock lives in the browser's local storage, and the files
+(project .json, parts .csv, contours and cut .svg) are the same as the
+desktop application's, both ways. The first load downloads about
+fifteen MB (cached afterwards). No multicore and no label printing: for
+those two, the desktop. To try it locally: `python3 -m http.server` at
+the root, then <http://localhost:8000/>. The interface is in French.
 
 ## Tests
 

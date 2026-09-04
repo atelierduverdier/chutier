@@ -244,17 +244,20 @@ est bâtie sur PySide6 (Qt), le cœur n'a aucune dépendance ; l'imbrication
 de contours demande `shapely` (paquet `python-shapely`), en 2.1 pour la
 triangulation en C, sinon la triangulation maison prend le relais.
 
-## Vers le navigateur
+## Dans le navigateur
 
-Le cœur entier — guillotine, imbrication, trous, SVG, projet JSON —
-tourne tel quel sous **Pyodide** (Python en WebAssembly), vérifié dans
-Node avec Pyodide 0.28 : l'exemple guillotine en 0,03 s, dix formes
-imbriquées en 0,5 s, `shapely` 2.0.7 et `numpy` chargés depuis la
-distribution Pyodide. C'est la voie choisie pour partager l'application
-avec la communauté : une page statique, sans serveur ni compte, à côté
-du dépôt. Ce qui reste à écrire est l'interface (tables, plan,
-impression) en HTML ; les fichiers de projet, le CSV et le SVG restent
-les mêmes dans les deux versions.
+**<https://atelierduverdier.github.io/chutier/>** — la même application,
+sans rien installer : `index.html` et `web/` chargent le cœur Python
+entier (guillotine, imbrication, trous, SVG, projet) dans le navigateur
+par **Pyodide** (Python en WebAssembly), avec `shapely` et `numpy`.
+Rien n'est envoyé nulle part : le calcul a lieu dans un Web Worker de la
+page, le stock de l'atelier vit dans le stockage local du navigateur, et
+les fichiers (projet .json, pièces .csv, contours et découpe .svg) sont
+les mêmes que ceux de l'application de bureau, dans les deux sens. Le
+premier chargement télécharge une quinzaine de Mo (ensuite en cache).
+Sans multicœur ni impression d'étiquettes : pour ces deux-là, le
+bureau. Pour l'essayer en local : `python3 -m http.server` à la racine,
+puis <http://localhost:8000/>.
 
 ## Tests
 

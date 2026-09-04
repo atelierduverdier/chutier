@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chutier — feuille de débit et stock de chutes</title>
+<link rel="icon" href="resources/icone.svg">
+<link rel="stylesheet" href="web/style.css">
+</head>
+<body>
+<header class="barre">
+  <img src="resources/icone.svg" alt="" class="logo">
+  <strong>Chutier</strong>
+  <span class="discret">feuille de débit, stock de chutes, imbrication CNC — dans votre navigateur, rien n'est envoyé nulle part</span>
+  <span class="etire"></span>
+  <button id="b-nouveau" title="Vider les pièces et le stock du projet (l'atelier reste)">Nouveau</button>
+  <button id="b-ouvrir" title="Rouvrir un projet enregistré (.json)">Ouvrir…</button>
+  <button id="b-enregistrer" title="Télécharger le projet (.json)">Enregistrer</button>
+  <button id="b-calculer" class="accent" title="Calculer le débit (F5)">Calculer le débit</button>
+  <button id="b-imprimer" title="Imprimer le plan et la liste des coupes (Ctrl+P)">Imprimer</button>
+  <details class="menu">
+    <summary>Plus…</summary>
+    <div>
+      <button id="b-importer-csv">Importer des pièces (CSV)…</button>
+      <button id="b-exporter-csv">Exporter les pièces (CSV)</button>
+      <button id="b-importer-svg">Importer des contours (SVG)…</button>
+      <button id="b-exporter-svg">Exporter la découpe (SVG)</button>
+      <button id="b-fiche">Exporter la fiche d'atelier (texte)</button>
+      <button id="b-exemple">Exemple : panneaux</button>
+      <button id="b-desepingler">Tout désépingler</button>
+      <button id="b-aide">Repères et conventions</button>
+    </div>
+  </details>
+  <input type="file" id="f-projet" accept=".json,application/json" hidden>
+  <input type="file" id="f-csv" accept=".csv,text/csv" hidden>
+  <input type="file" id="f-svg" accept=".svg,image/svg+xml" hidden>
+</header>
+
+<main>
+  <section class="saisie">
+    <div class="bloc">
+      <h2>Pièces <span id="n-pieces" class="compte"></span></h2>
+      <div class="table-cadre"><table id="t-pieces"></table></div>
+      <p id="r-pieces" class="discret"></p>
+      <div class="actions">
+        <button data-table="pieces" data-acte="ligne">+ ligne</button>
+        <button data-table="pieces" data-acte="dupliquer">Dupliquer</button>
+        <button data-table="pieces" data-acte="supprimer">Supprimer</button>
+        <label class="discret"><input type="checkbox" id="c-avancees"> colonnes avancées</label>
+      </div>
+    </div>
+    <div class="bloc">
+      <h2>Stock <span id="n-stock" class="compte"></span></h2>
+      <div class="table-cadre"><table id="t-stock"></table></div>
+      <p id="r-stock" class="discret"></p>
+      <div class="actions">
+        <button data-table="stock" data-acte="ligne">+ ligne</button>
+        <button data-table="stock" data-acte="dupliquer">Dupliquer</button>
+        <button data-table="stock" data-acte="supprimer">Supprimer</button>
+        <button id="b-ranger" title="Le stock de l'atelier mis à jour comme si le débit était fait : planches entamées en moins, chutes créées en plus" disabled>Ranger les chutes au stock</button>
+      </div>
+    </div>
+    <details class="bloc" id="d-reglages">
+      <summary><h2>Réglages</h2></summary>
+      <p class="discret">Retenus d'une séance à l'autre dans ce navigateur, comme le stock coché « Atelier ». Un projet enregistré garde les siens.</p>
+      <div id="reglages"></div>
+    </details>
+  </section>
+
+  <section class="resultats">
+    <div id="tuiles" class="tuiles"></div>
+    <nav class="onglets">
+      <button data-onglet="plan" class="actif">Plan de débit</button>
+      <button data-onglet="achats">À acheter <span id="n-achats"></span></button>
+      <button data-onglet="chutes">Chutes créées <span id="n-chutes"></span></button>
+      <button data-onglet="non">Pièces non placées <span id="n-non"></span></button>
+    </nav>
+    <div class="onglet actif" id="o-plan">
+      <div class="outils-plan">
+        <label class="discret"><input type="checkbox" id="c-traits"> Traits de scie</label>
+        <span class="etire"></span>
+        <button id="b-moins" title="Dézoomer">−</button>
+        <button id="b-plus" title="Zoomer">+</button>
+        <button id="b-ajuster" title="Revoir tout le plan">Ajuster</button>
+      </div>
+      <div id="plan" class="plan"><p class="vide" id="plan-vide">Chargement de Python dans le navigateur (une quinzaine de Mo la première fois, ensuite en cache)…</p></div>
+      <div id="legende" class="legende"></div>
+      <p class="discret">Ctrl+molette : zoomer — clic droit sur une planche : l'épingler — clic droit sur une pièce : la tailler dans une autre planche.</p>
+    </div>
+    <div class="onglet" id="o-achats"><p class="discret">Les planches NEUVES réellement entamées — les chutes, déjà en atelier, n'y figurent jamais. Renseignez le prix d'une planche dans le stock pour obtenir le coût.</p><ul id="l-achats"></ul></div>
+    <div class="onglet" id="o-chutes"><p class="discret">Les restes assez grands pour resservir — la raison d'être du chutier. « Ranger les chutes au stock » met l'atelier à jour comme si le débit était fait.</p><ul id="l-chutes"></ul></div>
+    <div class="onglet" id="o-non"><p class="discret" id="m-non"></p><ul id="l-non"></ul></div>
+  </section>
+</main>
+
+<section id="impression" class="impression"></section>
+<div id="menu-contextuel" class="menu-contextuel" hidden></div>
+<footer class="discret"><span id="etat">Python se charge…</span><span class="etire"></span><a href="https://github.com/atelierduverdier/chutier">Code source, LGPL-2.1</a> · Atelier du Verdier</footer>
+<script type="module" src="web/app.js"></script>
+</body>
+</html>
