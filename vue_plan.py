@@ -84,6 +84,8 @@ class VuePlan(QGraphicsView):
         self._selection = None
         self.epinglees = set()     # numéros des planches épinglées
         self.au_menu = None        # rappel (numero, pose|None, position)
+        self.au_deplacement = None  # rappel (numero, pose, dx, dy) en mm
+        self._glisse = None        # (item, numero, pose, point de départ scène)
         self.message_vide = ""     # ce qu'on écrit quand il n'y a rien
         self._zoom_manuel = False
         self._traits_visibles = False
@@ -526,7 +528,44 @@ class VuePlan(QGraphicsView):
             self.selectionner(numero, defiler=False)
             if callable(getattr(self, "au_clic_planche", None)):
                 self.au_clic_planche(numero)
+        # Une pièce imbriquée se prend à la souris : le glissement part
+        # ici, la validation (dans le bois, à l'écart des autres) est
+        # l'affaire du cœur, au relâchement.
+        if (evenement.button() == Qt.MouseButton.LeftButton
+                and callable(self.au_deplacement)):
+            trouvee = self.pose_sous(evenement.position().toPoint())
+            if trouvee and trouvee[1].contour:
+                item = next(i for i, v in self._poses.items() if v is trouvee)
+                self._glisse = (item, trouvee[0], trouvee[1],
+                                self.mapToScene(evenement.position().toPoint()))
+                item.setZValue(20)
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                evenement.accept()
+                return
         super().mousePressEvent(evenement)
+
+    def mouseMoveEvent(self, evenement):
+        if self._glisse is None:
+            super().mouseMoveEvent(evenement)
+            return
+        item, _numero, _pose, depart = self._glisse
+        d = self.mapToScene(evenement.position().toPoint()) - depart
+        item.setPos(d)
+
+    def mouseReleaseEvent(self, evenement):
+        if self._glisse is None:
+            super().mouseReleaseEvent(evenement)
+            return
+        item, numero, pose, depart = self._glisse
+        self._glisse = None
+        self.unsetCursor()
+        d = self.mapToScene(evenement.position().toPoint()) - depart
+        item.setPos(0, 0)
+        item.setZValue(0)
+        # La scène a y vers le bas, la planche vers le haut.
+        if abs(d.x()) > 0.5 or abs(d.y()) > 0.5:
+            self.au_deplacement(numero, pose, round(d.x(), 2), round(-d.y(), 2))
+        evenement.accept()
 
     def contextMenuEvent(self, evenement):
         """Clic droit : la fenêtre bâtit le menu (épingler la planche,

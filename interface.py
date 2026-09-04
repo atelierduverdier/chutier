@@ -773,6 +773,7 @@ class FenetrePrincipale(QMainWindow):
         self.vue.setMinimumWidth(300)
         self.vue.au_clic_planche = self._planche_cliquee
         self.vue.au_menu = self._menu_du_plan
+        self.vue.au_deplacement = self._deplacer_pose
         scission.addWidget(self.vue)
         scission.setStretchFactor(0, 0)
         scission.setStretchFactor(1, 1)
@@ -800,7 +801,8 @@ class FenetrePrincipale(QMainWindow):
         colonne.addWidget(self.legende)
 
         colonne.addWidget(apparence.discret(
-            "Ctrl+molette : zoomer — glisser : déplacer — double-clic :"
+            "Ctrl+molette : zoomer — glisser : déplacer (une pièce"
+            " imbriquée : la déplacer, la planche s'épingle) — double-clic :"
             " ajuster — clic sur une planche : la sélectionner — clic"
             " droit : épingler la planche, imposer une planche à la pièce."))
         return page
@@ -1346,6 +1348,42 @@ class FenetrePrincipale(QMainWindow):
                                self._imposer_planche(p, ""))
         menu.exec(position)
         del debit
+
+    def _deplacer_pose(self, numero, pose, dx, dy):
+        """Une pièce glissée à la souris sur une planche imbriquée. Le
+        cœur valide (dans le bois, à l'écart des autres) et refait les
+        chutes ; la planche s'épingle d'elle-même, sinon le prochain
+        calcul déferait la main de l'utilisateur."""
+        if self._resultat is None:
+            return
+        debit = self._resultat.debits[numero - 1]
+        if pose not in debit.poses:
+            return
+        import imbrication
+        nouveau = imbrication.deplacer(debit, debit.poses.index(pose), dx, dy,
+                                       self._parametres_actuels())
+        if nouveau is None:
+            self.statusBar().showMessage(
+                "Déplacement refusé : hors de la planche (marge comprise)"
+                " ou trop près d'une autre pièce.", 6000)
+            self._afficher_resultat()
+            return
+        debits = list(self._resultat.debits)
+        debits[numero - 1] = nouveau
+        if numero <= len(self._epingles):
+            self._epingles[numero - 1] = nouveau
+        else:
+            # Les épingles ouvrent la liste : la planche y prend rang.
+            debits.insert(len(self._epingles), debits.pop(numero - 1))
+            self._epingles.append(nouveau)
+        self._resultat = opt.Resultat(debits, self._resultat.non_placees,
+                                      opt._bilan(debits,
+                                                 self._resultat.non_placees))
+        self._modifie = True
+        self._afficher_resultat()
+        self.statusBar().showMessage(
+            "Pièce déplacée — planche épinglée : elle sera reprise telle"
+            " quelle au prochain calcul.", 6000)
 
     def _epingler(self, numero):
         if self._resultat is None or not self._a_jour:

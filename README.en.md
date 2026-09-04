@@ -261,6 +261,15 @@ fifteen MB (cached afterwards). No multicore and no label printing: for
 those two, the desktop. To try it locally: `python3 -m http.server` at
 the root, then <http://localhost:8000/>. The interface is in French.
 
+The page is **bilingual**: an "EN / FR" button next to the title
+switches the whole interface, and the choice is remembered in the
+browser (on a first visit, the browser's language decides). The
+dictionary is `web/langue.js`, whose key IS the French text: a string
+with no translation shows in French rather than vanishing, and
+`tests/test_langue.py` refuses to let a string of `web/app.js` or
+`index.html` go untranslated, or a translation go unused. The desktop
+application stays in French.
+
 The page **works offline** after a first visit: a service worker
 (`sw.js`) keeps the page, the Python modules and the Pyodide files —
 network first when it answers, cache otherwise. It installs as an
@@ -271,6 +280,12 @@ one — touching it reloads everything; neutral offline, it claims
 nothing. The desktop application carries the same badge in its status
 bar and asks the same address at startup (`CHUTIER_SANS_RESEAU=1`
 disables it); a git clone updates with `git pull`.
+
+**Moving a part by hand.** On a nested board, dragging a part moves it —
+on the desktop as in the browser. The core validates the move (inside
+the wood, the cutter's gap away from the others) and rebuilds the
+offcuts; the board pins itself, otherwise the next run would undo your
+hand. An impossible move is refused, with its reason.
 
 **Odd-shaped offcuts.** What remains of a nested board keeps its shape:
 the board minus the parts widened by the cutter's pass, piece by piece.

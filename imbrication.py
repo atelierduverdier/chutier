@@ -45,6 +45,7 @@ dépendance tant qu'aucun contour n'est demandé). Aucun Qt.
 from __future__ import annotations
 
 import multiprocessing
+import dataclasses
 import os
 import random
 import sys
@@ -558,6 +559,46 @@ def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
                                      pl.matiere, pl.fil, contour, trous))
     chutes.sort(key=lambda c: -c.aire)
     return chutes
+
+
+class _Reste:
+    """Ce que ``_chutes`` demande d'un plateau : la planche et les
+    polygones posés — pour recalculer les chutes d'un débit modifié."""
+
+    def __init__(self, planche, polygones):
+        self.planche = planche
+        self.polygones = polygones
+
+
+def deplacer(debit: "opt.Debit", indice: int, dx: float, dy: float,
+             params: opt.Parametres):
+    """Le débit où la pièce ``indice`` a glissé de (dx, dy) — ou None si
+    elle sortirait du bord utile (marge comprise) ou s'approcherait d'une
+    autre à moins de l'écart. Les chutes sont refaites ; la main de
+    l'utilisateur prime sur le rangement, pas sur la matière."""
+    pose = debit.poses[indice]
+    if not pose.contour:
+        return None
+    utile = _bord_utile(debit.planche, params)
+    polygones = [Polygon(p.contour, holes=p.trous or None)
+                 for p in debit.poses]
+    bouge = affinity.translate(polygones[indice], dx, dy)
+    if not utile.buffer(1e-3).contains(bouge):
+        return None
+    for j, autre in enumerate(polygones):
+        if j != indice and autre.distance(bouge) < params.ecart_contours - 0.25:
+            return None
+    deplace = dataclasses.replace(
+        pose, x=pose.x + dx, y=pose.y + dy,
+        contour=tuple((round(x + dx, 4), round(y + dy, 4))
+                      for x, y in pose.contour),
+        trous=tuple(tuple((round(x + dx, 4), round(y + dy, 4)) for x, y in t)
+                    for t in pose.trous))
+    poses = list(debit.poses)
+    poses[indice] = deplace
+    polygones[indice] = bouge
+    return opt.Debit(debit.planche, debit.exemplaire, poses,
+                     _chutes(_Reste(debit.planche, polygones), params), [])
 
 
 def _finaliser(plateaux, dispo, non, params) -> "opt._Solution":

@@ -409,6 +409,47 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class Deplacement(unittest.TestCase):
+
+    def test_une_piece_glissee_epingle_sa_planche(self):
+        f = _fenetre()
+        f._charger_exemple_formes()
+        APP.processEvents()
+        f._calculer()
+        APP.processEvents()
+        r = f._resultat
+        self.assertTrue(r.debits)
+        numero = len(r.debits)                     # la dernière, non épinglée
+        debit = r.debits[numero - 1]
+        pose = debit.poses[0]
+        f._deplacer_pose(numero, pose, 10000, 0)     # refusé : hors planche
+        self.assertEqual(f._epingles, [])
+        self.assertIn("refusé", f.statusBar().currentMessage())
+        # une pièce coincée entre ses voisines ne bouge pas d'un
+        # millimètre : on cherche celle qui a de l'air, et son sens
+        trouvee = None
+        for indice, pose in enumerate(debit.poses):
+            for dx, dy in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)):
+                f._deplacer_pose(numero, pose, dx, dy)
+                if f._epingles:
+                    trouvee = (indice, pose, dx, dy)
+                    break
+            if trouvee:
+                break
+        self.assertIsNotNone(trouvee, "aucune pièce n'a pu bouger")
+        indice, pose, dx, dy = trouvee
+        self.assertEqual(len(f._epingles), 1)
+        self.assertTrue(f._modifie)
+        # la planche épinglée ouvre la liste, la pièce a bougé
+        self.assertAlmostEqual(f._resultat.debits[0].poses[indice].x, pose.x + dx)
+        self.assertAlmostEqual(f._resultat.debits[0].poses[indice].y, pose.y + dy)
+        self.assertEqual(f.vue.epinglees, {1})
+        # sans quoi la fermeture ouvre « Projet modifié », modale, que
+        # personne ne fermera hors écran : la suite entière se fige
+        f._modifie = False
+        f.close()
+
+
 class EpinglesEtPlancheImposee(unittest.TestCase):
 
     def test_epingler_garde_la_planche_au_recalcul(self):

@@ -73,6 +73,22 @@ def _planche(d: dict) -> opt.Planche:
     return opt.Planche(**champs)
 
 
+def deplacer(epingle_json: str, indice: int, dx: float, dy: float,
+             parametres_json: str) -> str:
+    """Une pièce glissée à la souris sur une planche imbriquée : le débit
+    modifié (même forme que dans ``calculer``), ou ``{"refus": …}``."""
+    import imbrication
+    import projet_io
+    debit = projet_io._debit(json.loads(epingle_json))
+    params = _parametres(json.loads(parametres_json or "{}"))
+    nouveau = imbrication.deplacer(debit, int(indice), float(dx), float(dy),
+                                   params)
+    if nouveau is None:
+        return json.dumps({"refus": "Déplacement refusé : hors de la planche"
+                           " (marge comprise) ou trop près d'une autre pièce."})
+    return json.dumps(_debit(nouveau))
+
+
 def _parametres(d: dict) -> opt.Parametres:
     defauts = opt.Parametres()
     champs = {}

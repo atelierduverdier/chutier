@@ -198,6 +198,34 @@ class Invariants(unittest.TestCase):
         self.assertEqual(r3.bilan.nb_posees, 0)
         self.assertIn("biscornue", r3.non_placees[0].raison)
 
+    def test_une_piece_se_deplace_a_la_main_si_la_matiere_le_permet(self):
+        """Glissée à la souris : acceptée dans le bois et à l'écart des
+        autres, refusée sinon ; les chutes sont refaites."""
+        import imbrication
+        cale = Piece("cale", 100, 50, 15, "cp", 2, FIL_INDIFFERENT,
+                     contour=((0, 0), (100, 0), (100, 50), (0, 50)))
+        r = optimiser([cale], [Planche("cp", 400, 200, 15, "cp", 1, fil=False)],
+                      RAPIDE)
+        d = r.debits[0]
+        self.assertEqual(len(d.poses), 2)
+        loin = imbrication.deplacer(d, 1, 150, 50, RAPIDE)
+        self.assertIsNotNone(loin)
+        self.assertAlmostEqual(loin.poses[1].x, d.poses[1].x + 150)
+        self.assertAlmostEqual(loin.poses[1].contour[0][1],
+                               d.poses[1].contour[0][1] + 50)
+        self.assertEqual(loin.poses[0], d.poses[0])
+        self.assertTrue(loin.chutes)                 # refaites
+        self.assertGreater(loin.surface_chutes, 0)
+        # hors de la planche (marge comprise)
+        self.assertIsNone(imbrication.deplacer(d, 1, 1000, 0, RAPIDE))
+        self.assertIsNone(imbrication.deplacer(
+            d, 1, 0, 200 - d.poses[1].y - d.poses[1].dim_y
+            - RAPIDE.marge_bord + 1, RAPIDE))
+        # sur l'autre pièce
+        dx = d.poses[0].x - d.poses[1].x
+        dy = d.poses[0].y - d.poses[1].y
+        self.assertIsNone(imbrication.deplacer(d, 1, dx, dy, RAPIDE))
+
     def test_lot_rectangles_seuls_reste_guillotine(self):
         stock = [Planche("cp", 600, 400, 18, "cp", 1, fil=False)]
         r = optimiser([Piece("cale", 120, 40, 18, "cp", 2)], stock, RAPIDE)

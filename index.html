@@ -14,6 +14,7 @@
   <img src="resources/icone.svg" alt="" class="logo">
   <strong>Chutier</strong>
   <button id="b-version" class="ver" type="button" title="Version du chutier"></button>
+  <button id="b-langue" class="langue" type="button" title="English / français"></button>
   <span class="discret">feuille de débit, stock de chutes, imbrication CNC — dans votre navigateur, rien n'est envoyé nulle part</span>
   <span class="etire"></span>
   <button id="b-nouveau" title="Vider les pièces et le stock du projet (l'atelier reste)">Nouveau</button>
@@ -96,7 +97,7 @@
       </div>
       <div id="plan" class="plan"><p class="vide" id="plan-vide">Chargement de Python dans le navigateur (une quinzaine de Mo la première fois, ensuite en cache)…</p></div>
       <div id="legende" class="legende"></div>
-      <p class="discret">Ctrl+molette : zoomer — clic droit sur une planche : l'épingler — clic droit sur une pièce : la tailler dans une autre planche.</p>
+      <p class="discret">Ctrl+molette : zoomer — clic droit sur une planche : l'épingler — clic droit sur une pièce : la tailler dans une autre planche — sur une planche imbriquée, glisser une pièce la déplace (la planche s'épingle).</p>
     </div>
     <div class="onglet" id="o-achats"><p class="discret">Les planches NEUVES réellement entamées — les chutes, déjà en atelier, n'y figurent jamais. Renseignez le prix d'une planche dans le stock pour obtenir le coût.</p><ul id="l-achats"></ul></div>
     <div class="onglet" id="o-chutes"><p class="discret">Les restes assez grands pour resservir — la raison d'être du chutier. « Ranger les chutes au stock » met l'atelier à jour comme si le débit était fait.</p><ul id="l-chutes"></ul></div>

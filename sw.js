@@ -17,7 +17,8 @@ const MODULES = ["optimiseur.py", "imbrication.py", "triangulation.py",
   "contours_svg.py", "projet_io.py", "csv_io.py", "couleurs.py",
   "saisie.py", "stock_atelier.py", "exemples.py", "export_cnc.py", "fcstd_io.py", "pont_web.py"];
 const FICHIERS = ["./", "./index.html", "./manifest.webmanifest", "./resources/icone.svg",
-  "./web/app.js", "./web/style.css", "./web/worker.js", ...MODULES.map(m => "./" + m)];
+  "./web/app.js", "./web/langue.js", "./web/style.css", "./web/worker.js",
+  ...MODULES.map(m => "./" + m)];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FICHIERS)).then(() => self.skipWaiting()));
@@ -49,7 +50,11 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   if (url.origin !== self.location.origin || !url.pathname.startsWith(PORTEE) || url.search) return;
-  e.respondWith(fetch(e.request).then(r => garder(e.request, r))
+  // « no-cache » : le navigateur revalide auprès du serveur au lieu de
+  // se fier à son propre cache HTTP — sans quoi un app.js d'hier peut
+  // survivre à une publication tant que sa fraîcheur heuristique dure.
+  const init = e.request.mode === "navigate" ? undefined : { cache: "no-cache" };
+  e.respondWith(fetch(e.request, init).then(r => garder(e.request, r))
     .catch(() => caches.match(e.request)
       .then(hit => hit || (e.request.mode === "navigate" ? caches.match("./index.html") : Response.error()))));
 });

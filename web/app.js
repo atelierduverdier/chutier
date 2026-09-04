@@ -4,6 +4,8 @@
 // interface.py le fait pour Qt — et lit les mêmes fichiers (.json, .csv,
 // .svg) que l'application de bureau.
 
+import { t, langue, changerLangue, traduirePage } from "./langue.js";
+
 const FILS = [["longueur", "Longueur"], ["largeur", "Largeur"], ["indifferent", "Indifférent"]];
 
 const COLONNES = {
@@ -66,6 +68,7 @@ const REGLAGES = [
     ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."]]],
 ];
 
+// Traduit à l'affichage, pas ici : une constante figerait la langue du chargement.
 const RAISONS_VIDE = "Saisissez les pièces à débiter, vérifiez le stock, puis Calculer le débit (F5).";
 
 // -- état ---------------------------------------------------------------------
@@ -88,8 +91,10 @@ const el = (tag, attrs = {}, ...enfants) => {
   return e;
 };
 const mm = (v) => { const f = Number(v); return Number.isInteger(f) ? String(f) : f.toFixed(1).replace(/\.0$/, ""); };
-const m2 = (v) => (v / 1e6).toFixed(3).replace(".", ",");
-const pct = (v) => (100 * v).toFixed(1).replace(".", ",");
+// La virgule décimale suit la langue : en anglais, un point.
+const dec = (texte) => (langue === "fr" ? texte.replace(".", ",") : texte);
+const m2 = (v) => dec((v / 1e6).toFixed(3));
+const pct = (v) => dec((100 * v).toFixed(1));
 
 // -- le worker -----------------------------------------------------------------
 
@@ -107,20 +112,20 @@ export const VERSION = "1.0.0";
 function controlerVersion() {
   const b = $("#b-version");
   b.textContent = VERSION; b.className = "ver";
-  b.title = "Version " + VERSION + " du chutier. Vérification de la mise à jour…";
+  b.title = t("Version ") + VERSION + t(" du chutier. Vérification de la mise à jour…");
   fetch(new URL("../version.json?t=" + Date.now(), import.meta.url), { cache: "no-store" })
     .then(r => r.ok ? r.json() : null)
     .then(j => {
       if (!j || !j.version) return;
       if (j.version === VERSION) {
-        b.className = "ver ok"; b.title = "À jour : c'est bien la dernière version (" + VERSION + ").";
+        b.className = "ver ok"; b.title = t("À jour : c'est bien la dernière version (") + VERSION + ").";
       } else {
         b.className = "ver vieux"; b.textContent = VERSION + " ⟳";
-        b.title = "Version " + j.version + " disponible. Toucher pour mettre à jour (Ctrl + Maj + R).";
+        b.title = t("Version ") + j.version + t(" disponible. Toucher pour mettre à jour (Ctrl + Maj + R).");
         b.onclick = forcerMaj;
       }
     })
-    .catch(() => { b.title = "Version " + VERSION + ". Hors-ligne : mise à jour non vérifiable."; });
+    .catch(() => { b.title = t("Version ") + VERSION + ". Hors-ligne : mise à jour non vérifiable."; });
 }
 
 function forcerMaj() {
@@ -145,8 +150,8 @@ function lancerWorker() {
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.etat) { $("#etat").textContent = m.etat; return; }
-    if (m.echec) { $("#etat").textContent = "Python n'a pas pu se charger : " + m.echec; const v = $("#plan-vide"); if (v) v.textContent = "Python n'a pas pu se charger : " + m.echec; return; }
-    if (m.pret) { pythonPret = true; $("#etat").textContent = "Prêt"; if (!demarre) { demarre = true; demarrer(); } return; }
+    if (m.echec) { $("#etat").textContent = t("Python n'a pas pu se charger : ") + m.echec; const v = $("#plan-vide"); if (v) v.textContent = t("Python n'a pas pu se charger : ") + m.echec; return; }
+    if (m.pret) { pythonPret = true; $("#etat").textContent = t("Prêt"); if (!demarre) { demarre = true; demarrer(); } return; }
     const a = attentes.get(m.id);
     if (!a) return;
     attentes.delete(m.id);
@@ -171,7 +176,7 @@ function interrompre() {
   for (const a of attentes.values()) a.reject(new Error("interrompu"));
   attentes.clear();
   pythonPret = false;
-  $("#etat").textContent = "Calcul interrompu — Python se recharge…";
+  $("#etat").textContent = t("Calcul interrompu — Python se recharge…");
   lancerWorker();
 }
 lancerWorker();
@@ -198,8 +203,8 @@ function rejouer(texte) {
   historique.courant = texte; etat.aJour = false;
   rendreTable("pieces"); rendreTable("stock"); rafraichirEtat(); enregistrerAtelier(); brouillonPlusTard();
 }
-function annuler() { clearTimeout(historique.minuterie); consigner(); if (!historique.passe.length) { $("#etat").textContent = "Rien à annuler"; return; } historique.futur.push(historique.courant); rejouer(historique.passe.pop()); }
-function refaire() { if (!historique.futur.length) { $("#etat").textContent = "Rien à refaire"; return; } historique.passe.push(historique.courant); rejouer(historique.futur.pop()); }
+function annuler() { clearTimeout(historique.minuterie); consigner(); if (!historique.passe.length) { $("#etat").textContent = t("Rien à annuler"); return; } historique.futur.push(historique.courant); rejouer(historique.passe.pop()); }
+function refaire() { if (!historique.futur.length) { $("#etat").textContent = t("Rien à refaire"); return; } historique.passe.push(historique.courant); rejouer(historique.futur.pop()); }
 
 // -- brouillon : le projet en cours survit à un rechargement ----------------------------
 
@@ -233,7 +238,7 @@ function rendreTable(nom) {
   const colonnes = COLONNES[nom].filter(c => !c.avancee || etat.avancees || lignes.some(l => utilisee(c, l)));
   table.replaceChildren();
   const entete = el("tr");
-  for (const c of colonnes) entete.append(el("th", { text: c.titre, title: c.info }));
+  for (const c of colonnes) entete.append(el("th", { text: t(c.titre), title: t(c.info) }));
   table.append(el("thead", {}, entete));
   const corps = el("tbody");
   lignes.forEach((ligne, i) => {
@@ -258,18 +263,18 @@ function cellule(nom, ligne, c, i) {
   const td = el("td", { class: c.genre === "nombre" || c.genre === "entier" ? "num" : c.genre === "bool" ? "bool" : c.genre });
   const changer = () => { etat.aJour = false; rafraichirEtat(); marquerChangement(); };
   if (c.genre === "bool") {
-    td.append(el("input", { type: "checkbox", title: c.info, onchange: (e) => { ligne[c.cle] = e.target.checked; changer(); if (c.cle === "atelier" || nom === "stock") enregistrerAtelier(); } }));
+    td.append(el("input", { type: "checkbox", title: t(c.info), onchange: (e) => { ligne[c.cle] = e.target.checked; changer(); if (c.cle === "atelier" || nom === "stock") enregistrerAtelier(); } }));
     td.firstChild.checked = Boolean(ligne[c.cle]);
   } else if (c.genre === "choix") {
-    const sel = el("select", { title: c.info, onchange: (e) => { ligne[c.cle] = e.target.value; changer(); } });
-    for (const [v, t] of c.choix) sel.append(el("option", { value: v, text: t }));
+    const sel = el("select", { title: t(c.info), onchange: (e) => { ligne[c.cle] = e.target.value; changer(); } });
+    for (const [v, libelle] of c.choix) sel.append(el("option", { value: v, text: t(libelle) }));
     sel.value = ligne[c.cle];
     td.append(sel);
   } else if (c.genre === "contour") {
     const n = (ligne.contour || []).length;
-    const t = (ligne.trous || []).length;
-    td.textContent = n ? `◇ ${n} pts` + (t ? ` · ${t} trou${t > 1 ? "s" : ""}` : "") : "";
-    td.title = c.info;
+    const nt = (ligne.trous || []).length;
+    td.textContent = n ? t`◇ ${n} pts` + (nt ? t` · ${nt} trou${nt > 1 ? "s" : ""}` : "") : "";
+    td.title = t(c.info);
   } else {
     const input = el("input", { type: "text", title: c.info, value: ligne[c.cle] ?? "", "data-colonne": c.cle,
       oninput: (e) => { ligne[c.cle] = e.target.value; e.target.classList.toggle("faux", (c.genre === "nombre" || c.genre === "entier") && e.target.value.trim() !== "" && Number.isNaN(Number(e.target.value.replace(",", ".")))); changer(); if (nom === "stock") enregistrerAtelier(); },
@@ -307,7 +312,7 @@ function coller(nom, i, c, e) {
       if (!col) return;
       const v = cell.trim();
       if (col.genre === "bool") etat[nom][ligne][col.cle] = ["1", "x", "vrai", "true", "oui", "o"].includes(v.toLowerCase());
-      else if (col.genre === "choix") { const trouve = col.choix.find(([k, t]) => k === v.toLowerCase() || t.toLowerCase() === v.toLowerCase()); if (trouve) etat[nom][ligne][col.cle] = trouve[0]; }
+      else if (col.genre === "choix") { const trouve = col.choix.find(([k, libelle]) => k === v.toLowerCase() || libelle.toLowerCase() === v.toLowerCase() || t(libelle).toLowerCase() === v.toLowerCase()); if (trouve) etat[nom][ligne][col.cle] = trouve[0]; }
       else if (col.genre !== "contour") etat[nom][ligne][col.cle] = v;
     });
   });
@@ -324,11 +329,11 @@ function rafraichirResumes() {
   const pieces = etat.pieces.filter(p => (p.reference || "").trim());
   const ex = pieces.reduce((n, p) => n + (Number(p.quantite) || 1), 0);
   const contours = pieces.filter(p => (p.contour || []).length).length;
-  $("#r-pieces").textContent = pieces.length ? `${pieces.length} référence(s), ${ex} exemplaire(s)` + (contours ? ` dont ${contours} contour(s) à imbriquer` : "") + ` · ${[...new Set(pieces.map(p => p.matiere).filter(Boolean))].join(", ") || "matière non renseignée"}` : "Aucune pièce — ajoutez une ligne, collez un tableau (Ctrl+V), importez un CSV ou des contours SVG.";
+  $("#r-pieces").textContent = pieces.length ? t`${pieces.length} référence(s), ${ex} exemplaire(s)` + (contours ? t` dont ${contours} contour(s) à imbriquer` : "") + t` · ${[...new Set(pieces.map(p => p.matiere).filter(Boolean))].join(", ") || t("matière non renseignée")}` : t("Aucune pièce — ajoutez une ligne, collez un tableau (Ctrl+V), importez un CSV ou des contours SVG.");
   const stock = etat.stock.filter(s => (s.reference || "").trim());
   const chutes = stock.filter(s => s.chute).reduce((n, s) => n + (Number(s.quantite) || 1), 0);
   const atelierN = stock.filter(s => s.atelier).length;
-  $("#r-stock").textContent = stock.length ? `${stock.length} référence(s)` + (atelierN ? ` · ${atelierN} de l'atelier` : "") + (chutes ? ` · ${chutes} chute(s) à écouler d'abord` : "") : "Stock vide — le débit n'aura rien où se poser.";
+  $("#r-stock").textContent = stock.length ? t`${stock.length} référence(s)` + (atelierN ? t` · ${atelierN} de l'atelier` : "") + (chutes ? t` · ${chutes} chute(s) à écouler d'abord` : "") : t("Stock vide — le débit n'aura rien où se poser.");
 }
 
 // -- réglages ------------------------------------------------------------------------
@@ -337,13 +342,13 @@ function rendreReglages() {
   const zone = $("#reglages");
   zone.replaceChildren();
   for (const [titre, champs] of REGLAGES) {
-    zone.append(el("h3", { text: titre }));
+    zone.append(el("h3", { text: t(titre) }));
     for (const [cle, libelle, genre, info, choix] of champs) {
-      zone.append(el("label", { text: libelle, title: info }));
+      zone.append(el("label", { text: t(libelle), title: t(info) }));
       let champ;
       if (genre === "choix") {
         champ = el("select", { onchange: (e) => { etat.parametres[cle] = isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value); changerReglage(); } });
-        for (const [v, t] of choix) champ.append(el("option", { value: v, text: t }));
+        for (const [v, libelle] of choix) champ.append(el("option", { value: v, text: t(libelle) }));
         champ.value = String(etat.parametres[cle]);
       } else if (genre === "bool") {
         champ = el("input", { type: "checkbox", onchange: (e) => { etat.parametres[cle] = e.target.checked; changerReglage(); } });
@@ -363,21 +368,21 @@ function changerReglage() { etat.aJour = false; stockage.ecrire("parametres", et
 async function calculer() {
   if (!pythonPret) return;
   const pieces = etat.pieces.filter(p => (p.reference || "").trim());
-  if (!pieces.length) { alerter("Aucune pièce à débiter."); return; }
-  $("#etat").textContent = "Calcul…";
+  if (!pieces.length) { alerter(t("Aucune pièce à débiter.")); return; }
+  $("#etat").textContent = t("Calcul…");
   $("#b-calculer").disabled = true;
   $("#b-interrompre").hidden = false;
   try {
     const sortie = JSON.parse(await appeler("calculer", JSON.stringify({ pieces, stock: etat.stock.filter(s => (s.reference || "").trim()), parametres: { ...etat.parametres, processus: 1 }, epingles: etat.epingles })));
-    if (!sortie.ok) { alerter("Saisie invalide : " + sortie.erreur); $("#etat").textContent = "Saisie invalide"; return; }
-    if (sortie.epingles_relachees) { etat.epingles = []; $("#etat").textContent = "Épingles relâchées : une planche ou une pièce a changé."; }
-    else $("#etat").textContent = "Plan à jour";
+    if (!sortie.ok) { alerter(t("Saisie invalide : ") + sortie.erreur); $("#etat").textContent = t("Saisie invalide"); return; }
+    if (sortie.epingles_relachees) { etat.epingles = []; $("#etat").textContent = t("Épingles relâchées : une planche ou une pièce a changé."); }
+    else $("#etat").textContent = t("Plan à jour");
     etat.resultat = sortie.resultat;
     etat.aJour = true;
     afficherResultat();
   } catch (erreur) {
-    if (erreur.message === "interrompu") { $("#etat").textContent = "Calcul interrompu — le plan précédent reste affiché"; }
-    else { alerter("Le calcul a échoué : " + erreur.message); $("#etat").textContent = "Échec du calcul"; }
+    if (erreur.message === "interrompu") { $("#etat").textContent = t("Calcul interrompu — le plan précédent reste affiché"); }
+    else { alerter(t("Le calcul a échoué : ") + erreur.message); $("#etat").textContent = t("Échec du calcul"); }
   } finally {
     $("#b-calculer").disabled = false;
     $("#b-interrompre").hidden = true;
@@ -390,22 +395,22 @@ function afficherResultat() {
   const r = etat.resultat;
   const b = r.bilan;
   const tuiles = [
-    ["Pièces posées", `${b.nb_posees} / ${b.nb_demandees}`, b.nb_non_placees ? `${b.nb_non_placees} non placée(s)` : "", b.nb_non_placees ? "alerte" : ""],
-    ["Rendement", pct(b.rendement) + " %", m2(b.surface_pieces) + " m² de pièces", ""],
-    ["Planches entamées", String(b.nb_planches_entamees), b.nb_chutes_consommees ? `dont ${b.nb_chutes_consommees} chute(s)` : "aucune chute écoulée", ""],
-    ["Pertes", m2(b.surface_perdue) + " m²", b.longueur_fraisage > 0 ? `${(b.longueur_fraisage / 1000).toFixed(1).replace(".", ",")} m de fraisage ≈ ${Math.round(b.longueur_fraisage / Math.max(etat.parametres.vitesse_fraisage || 1500, 1))} min` : `sciure et rebuts · ${b.nb_coupes} coupe(s)`, ""],
-    ["Chutes créées", String(r.chutes_groupees.reduce((n, c) => n + c.nombre, 0)), b.surface_chutes_creees ? m2(b.surface_chutes_creees) + " m² à ranger" : "rien à garder", b.surface_chutes_creees ? "accent" : ""],
-    ["À acheter", String(r.achats.reduce((n, a) => n + a.nombre, 0)), r.cout ? r.cout.toFixed(2) + " €" : "prix non renseignés", ""],
+    [t("Pièces posées"), t`${b.nb_posees} / ${b.nb_demandees}`, b.nb_non_placees ? t`${b.nb_non_placees} non placée(s)` : "", b.nb_non_placees ? "alerte" : ""],
+    [t("Rendement"), pct(b.rendement) + " %", m2(b.surface_pieces) + t(" m² de pièces"), ""],
+    [t("Planches entamées"), String(b.nb_planches_entamees), b.nb_chutes_consommees ? t`dont ${b.nb_chutes_consommees} chute(s)` : t("aucune chute écoulée"), ""],
+    [t("Pertes"), m2(b.surface_perdue) + " m²", b.longueur_fraisage > 0 ? t`${dec((b.longueur_fraisage / 1000).toFixed(1))} m de fraisage ≈ ${Math.round(b.longueur_fraisage / Math.max(etat.parametres.vitesse_fraisage || 1500, 1))} min` : t`sciure et rebuts · ${b.nb_coupes} coupe(s)`, ""],
+    [t("Chutes créées"), String(r.chutes_groupees.reduce((n, c) => n + c.nombre, 0)), b.surface_chutes_creees ? m2(b.surface_chutes_creees) + t(" m² à ranger") : t("rien à garder"), b.surface_chutes_creees ? "accent" : ""],
+    [t("À acheter"), String(r.achats.reduce((n, a) => n + a.nombre, 0)), r.cout ? r.cout.toFixed(2) + " €" : t("prix non renseignés"), ""],
   ];
   $("#tuiles").replaceChildren(...tuiles.map(([l, v, d, ton]) => el("div", { class: "tuile " + ton }, el("div", { class: "libelle", text: l }), el("div", { class: "valeur", text: v }), el("div", { class: "detail", text: d }))));
-  $("#l-achats").replaceChildren(...r.achats.map(a => el("li", { text: `${a.nombre} × « ${a.reference} » — ${mm(a.longueur)} × ${mm(a.largeur)} × ${mm(a.epaisseur)} mm, ${a.matiere}` + (a.prix ? ` — ${(a.nombre * a.prix).toFixed(2)} €` : "") })));
+  $("#l-achats").replaceChildren(...r.achats.map(a => el("li", { text: t`${a.nombre} × « ${a.reference} » — ${mm(a.longueur)} × ${mm(a.largeur)} × ${mm(a.epaisseur)} mm, ${a.matiere}` + (a.prix ? t` — ${(a.nombre * a.prix).toFixed(2)} €` : "") })));
   $("#n-achats").textContent = "· " + r.achats.reduce((n, a) => n + a.nombre, 0);
-  $("#l-chutes").replaceChildren(...r.chutes_groupees.map(c => el("li", { text: `${c.nombre} ×  ${mm(c.dim_x)} × ${mm(c.dim_y)} × ${mm(c.epaisseur)} mm — ${c.matiere}${c.biscornue ? ` (biscornue, ${c.sommets} sommets)` : ""}` })));
+  $("#l-chutes").replaceChildren(...r.chutes_groupees.map(c => el("li", { text: t`${c.nombre} ×  ${mm(c.dim_x)} × ${mm(c.dim_y)} × ${mm(c.epaisseur)} mm — ${c.matiere}${c.biscornue ? t` (biscornue, ${c.sommets} sommets)` : ""}` })));
   $("#n-chutes").textContent = "· " + r.chutes_groupees.reduce((n, c) => n + c.nombre, 0);
   $("#b-ranger").disabled = !r.chutes_groupees.length;
-  $("#l-non").replaceChildren(...r.non_placees.map(n => el("li", { class: "rouge", text: `« ${n.reference} » ×${n.exemplaires} — ${n.raison}` })));
+  $("#l-non").replaceChildren(...r.non_placees.map(n => el("li", { class: "rouge", text: t`« ${n.reference} » ×${n.exemplaires} — ${t(n.raison)}` })));
   $("#n-non").textContent = b.nb_non_placees ? "· " + b.nb_non_placees : "";
-  $("#m-non").textContent = r.non_placees.length ? "Ces pièces n'ont trouvé aucune place. Ajoutez du stock, relâchez le fil, ou cochez « Composable »." : "Tout est passé — aucune pièce laissée de côté.";
+  $("#m-non").textContent = r.non_placees.length ? t("Ces pièces n'ont trouvé aucune place. Ajoutez du stock, relâchez le fil, ou cochez « Composable ».") : t("Tout est passé — aucune pièce laissée de côté.");
   etat.planche = 1;
   dessinerPlan();
   rendreImpression();
@@ -422,7 +427,7 @@ const chemin = (anneaux, Y) => anneaux.map(anneau => "M" + anneau.map(([px, py])
 function dessinerPlan() {
   const zone = $("#plan");
   const r = etat.resultat;
-  if (!r || !r.debits.length) { zone.replaceChildren(el("p", { class: "vide", id: "plan-vide", text: RAISONS_VIDE })); $("#legende").replaceChildren(); return; }
+  if (!r || !r.debits.length) { zone.replaceChildren(el("p", { class: "vide", id: "plan-vide", text: t(RAISONS_VIDE) })); $("#legende").replaceChildren(); return; }
   const L = Math.max(...r.debits.map(d => d.planche.longueur));
   const police = L / 110;                       // mm de scène : le plan est en mm
   const cartouche = L / 85;
@@ -437,7 +442,7 @@ function dessinerPlan() {
     const pl = d.planche;
     const epinglee = numero <= etat.epingles.length;
     const groupe = svgEl("g", { "data-planche": numero, class: "planche" });
-    groupe.append(svgEl("text", { x: 0, y: y + cartouche, "font-size": cartouche, "font-weight": "bold", class: "cartouche" }, `${numero}.  ${pl.reference}${d.plusieurs ? ` (ex. ${d.exemplaire})` : ""}   —   ${mm(pl.longueur)} × ${mm(pl.largeur)} × ${mm(pl.epaisseur)} mm, ${pl.matiere}${pl.chute ? " [chute]" : pl.illimite ? " [catalogue]" : ""}   —   ${d.poses.length} pièce(s), rendement ${pct(d.rendement)} %${d.imbriquee ? `   —   ${(d.longueur_fraisage / 1000).toFixed(1).replace(".", ",")} m de fraisage` : ""}${epinglee ? "   —   ÉPINGLÉE" : ""}`));
+    groupe.append(svgEl("text", { x: 0, y: y + cartouche, "font-size": cartouche, "font-weight": "bold", class: "cartouche" }, t`${numero}.  ${pl.reference}${d.plusieurs ? t` (ex. ${d.exemplaire})` : ""}   —   ${mm(pl.longueur)} × ${mm(pl.largeur)} × ${mm(pl.epaisseur)} mm, ${pl.matiere}${pl.chute ? t(" [chute]") : pl.illimite ? t(" [catalogue]") : ""}   —   ${d.poses.length} pièce(s), rendement ${pct(d.rendement)} %${d.imbriquee ? t`   —   ${dec((d.longueur_fraisage / 1000).toFixed(1))} m de fraisage` : ""}${epinglee ? t("   —   ÉPINGLÉE") : ""}`));
     y += bande;
     const yh = y;
     const Y = (v, h = 0) => yh + pl.largeur - v - h;
@@ -454,10 +459,10 @@ function dessinerPlan() {
       if ((c.contour || []).length) {
         groupe.append(svgEl("path", { d: chemin([c.contour, ...(c.trous || [])], Y), "fill-rule": "evenodd", fill: "url(#hachure-chute)", stroke: "#767c85", "stroke-width": L / 1200 }));
         const [cx, cy] = centreDeGravite(c.contour);
-        groupe.append(...etiquette("chute biscornue", `${mm(c.dim_x)} × ${mm(c.dim_y)}`, cx - c.dim_x * 0.3, Y(cy) - c.dim_y * 0.3, c.dim_x * 0.6, c.dim_y * 0.6, police, "#2f3540"));
+        groupe.append(...etiquette(t("chute biscornue"), t`${mm(c.dim_x)} × ${mm(c.dim_y)}`, cx - c.dim_x * 0.3, Y(cy) - c.dim_y * 0.3, c.dim_x * 0.6, c.dim_y * 0.6, police, "#2f3540"));
       } else {
         groupe.append(svgEl("rect", { x: c.x, y: Y(c.y, c.dim_y), width: c.dim_x, height: c.dim_y, fill: "url(#hachure-chute)", stroke: "#767c85", "stroke-width": L / 1200 }));
-        groupe.append(...etiquette(`chute`, `${mm(c.dim_x)} × ${mm(c.dim_y)}`, c.x, Y(c.y, c.dim_y), c.dim_x, c.dim_y, police, "#2f3540"));
+        groupe.append(...etiquette(t`chute`, t`${mm(c.dim_x)} × ${mm(c.dim_y)}`, c.x, Y(c.y, c.dim_y), c.dim_x, c.dim_y, police, "#2f3540"));
       }
     }
     d.poses.forEach((p, ip) => {
@@ -469,7 +474,7 @@ function dessinerPlan() {
         forme = svgEl("rect", { x: p.x, y: Y(p.y, p.dim_y), width: p.dim_x, height: p.dim_y, fill: couleur, stroke: "#2f3540", "stroke-width": L / 1500 });
       }
       forme.setAttribute("data-planche", numero); forme.setAttribute("data-pose", ip);
-      forme.append(svgEl("title", {}, `${p.reference} ${p.exemplaire}/${p.quantite} — ${mm(p.dim_x)} × ${mm(p.dim_y)} en (${mm(p.x)}, ${mm(p.y)})${p.angle ? `, tournée de ${mm(p.angle)}°` : p.pivotee ? ", pivotée" : ""}`));
+      forme.append(svgEl("title", {}, t`${p.reference} ${p.exemplaire}/${p.quantite} — ${mm(p.dim_x)} × ${mm(p.dim_y)} en (${mm(p.x)}, ${mm(p.y)})${p.angle ? t`, tournée de ${mm(p.angle)}°` : p.pivotee ? t(", pivotée") : ""}`));
       groupe.append(forme);
       if (p.contour.length) {
         // Le nom seul, au centre de gravité — ou, pour une forme à trou
@@ -482,7 +487,7 @@ function dessinerPlan() {
         } else [cx, cy] = centreDeGravite(p.contour);
         groupe.append(...etiquette(p.reference, "", cx - bx / 2, Y(cy) - by / 2, bx, by, police, "#2f3540"));
       } else {
-        groupe.append(...etiquette(p.reference, `${mm(p.dim_x)} × ${mm(p.dim_y)}`, p.x, Y(p.y, p.dim_y), p.dim_x, p.dim_y, police, "#2f3540"));
+        groupe.append(...etiquette(p.reference, t`${mm(p.dim_x)} × ${mm(p.dim_y)}`, p.x, Y(p.y, p.dim_y), p.dim_x, p.dim_y, police, "#2f3540"));
       }
     });
     if (etat.traits) for (const c of d.coupes) {
@@ -506,10 +511,10 @@ function dessinerPlan() {
   // légende
   const comptes = {};
   for (const d of r.debits) for (const p of d.poses) comptes[p.reference] = (comptes[p.reference] || 0) + 1;
-  const legende = Object.entries(comptes).map(([ref, n]) => el("span", {}, el("span", { class: "pastille", style: `background:${r.couleurs[ref]}` }), `${ref} ×${n}`));
-  if (r.debits.some(d => d.chutes.length)) legende.push(el("span", {}, el("span", { class: "pastille", style: "background: repeating-linear-gradient(45deg,#faf8f4,#faf8f4 2px,#767c85 2px,#767c85 3px)" }), "chute réutilisable"));
-  if (r.debits.some(d => zonesEcartees(d.planche).length)) legende.push(el("span", {}, el("span", { class: "pastille", style: "background: repeating-linear-gradient(45deg,#faf8f4,#faf8f4 2px,#a85a52 2px,#a85a52 3px)" }), "défaut écarté"));
-  legende.push(el("span", {}, el("span", { class: "pastille", style: "background:#faf8f4" }), "perte"));
+  const legende = Object.entries(comptes).map(([ref, n]) => el("span", {}, el("span", { class: "pastille", style: `background:${r.couleurs[ref]}` }), t`${ref} ×${n}`));
+  if (r.debits.some(d => d.chutes.length)) legende.push(el("span", {}, el("span", { class: "pastille", style: "background: repeating-linear-gradient(45deg,#faf8f4,#faf8f4 2px,#767c85 2px,#767c85 3px)" }), t("chute réutilisable")));
+  if (r.debits.some(d => zonesEcartees(d.planche).length)) legende.push(el("span", {}, el("span", { class: "pastille", style: "background: repeating-linear-gradient(45deg,#faf8f4,#faf8f4 2px,#a85a52 2px,#a85a52 3px)" }), t("défaut écarté")));
+  legende.push(el("span", {}, el("span", { class: "pastille", style: "background:#faf8f4" }), t("perte")));
   $("#legende").replaceChildren(...legende);
 }
 
@@ -540,9 +545,9 @@ function centreDeGravite(pts) {
 
 // Une étiquette qui tient dans sa case : deux lignes, une ligne, le nom seul, ou rien.
 function etiquette(nom, cotes, x, y, dx, dy, police, encre) {
-  const largeurTexte = (t, f) => t.length * f * 0.56;
+  const largeurTexte = (texte, f) => texte.length * f * 0.56;
   const taille = Math.min(police * 1.4, Math.max(police * 0.8, dy * 0.22));
-  const variantes = [[[nom, cotes], taille], [[`${nom} · ${cotes}`], taille], [[nom], taille * 0.9]];
+  const variantes = [[[nom, cotes], taille], [[t`${nom} · ${cotes}`], taille], [[nom], taille * 0.9]];
   for (const [lignes, f] of variantes) {
     const lignesUtiles = lignes.filter(Boolean);
     if (Math.max(...lignesUtiles.map(l => largeurTexte(l, f))) <= dx * 0.95 && lignesUtiles.length * f * 1.15 <= dy * 0.95) {
@@ -570,14 +575,14 @@ function rendreImpression() {
   const zone = $("#impression");
   zone.replaceChildren();
   if (!r) return;
-  zone.append(el("h3", { text: (etat.nomProjet || "Feuille de débit") + ` — ${r.bilan.nb_posees}/${r.bilan.nb_demandees} pièce(s), rendement ${pct(r.bilan.rendement)} %, ${r.bilan.nb_planches_entamees} planche(s), pertes ${m2(r.bilan.surface_perdue)} m²` }));
+  zone.append(el("h3", { text: (etat.nomProjet || t("Feuille de débit")) + t` — ${r.bilan.nb_posees}/${r.bilan.nb_demandees} pièce(s), rendement ${pct(r.bilan.rendement)} %, ${r.bilan.nb_planches_entamees} planche(s), pertes ${m2(r.bilan.surface_perdue)} m²` }));
   r.debits.forEach((d, i) => {
     const lots = {};
-    for (const p of d.poses) { const k = `${p.reference} ${mm(p.dim_x)} × ${mm(p.dim_y)}`; lots[k] = (lots[k] || 0) + 1; }
+    for (const p of d.poses) { const k = t`${p.reference} ${mm(p.dim_x)} × ${mm(p.dim_y)}`; lots[k] = (lots[k] || 0) + 1; }
     zone.append(el("p", {}, el("b", { text: `${i + 1}.  ` }), Object.entries(lots).map(([k, n]) => k + (n > 1 ? ` ×${n}` : "")).join("   ·   ")));
-    zone.append(el("p", { text: d.imbriquee ? "découpe CNC : contours imbriqués, à exporter en SVG" : "coupes :  " + d.coupes.map(c => `${c.ordre} ${c.sens === "tronconnage" ? "↕" : "↔"} ${mm(c.position)}`).join("   ·   ") }));
+    zone.append(el("p", { text: d.imbriquee ? t("découpe CNC : contours imbriqués, à exporter en SVG") : t("coupes :  ") + d.coupes.map(c => t`${c.ordre} ${c.sens === "tronconnage" ? "↕" : "↔"} ${mm(c.position)}`).join("   ·   ") }));
   });
-  zone.append(el("p", { class: "discret", text: "↕ tronçonnage, en travers du fil, à x mm du bout gauche — ↔ délignage, le long du fil, à y mm de la rive basse." }));
+  zone.append(el("p", { class: "discret", text: t("↕ tronçonnage, en travers du fil, à x mm du bout gauche — ↔ délignage, le long du fil, à y mm de la rive basse.") }));
 }
 
 // -- fichiers ------------------------------------------------------------------------------
@@ -591,7 +596,7 @@ function lireFichier(input, binaire = false) { return new Promise((resolve) => {
 async function ouvrirProjet() {
   const f = await lireFichier($("#f-projet")); if (!f) return;
   const d = JSON.parse(await appeler("depuis_projet", f.texte));
-  if (d.erreur) { alerter("Ouverture impossible : " + d.erreur); return; }
+  if (d.erreur) { alerter(t("Ouverture impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.stock = [...d.stock.filter(s => !s.atelier).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
   etat.parametres = { ...etat.parametres, ...d.parametres };
@@ -607,33 +612,33 @@ async function enregistrerProjet() {
 async function importerCsv() {
   const f = await lireFichier($("#f-csv")); if (!f) return;
   const d = JSON.parse(await appeler("depuis_csv", f.texte));
-  if (d.erreur) { alerter("Import impossible : " + d.erreur); return; }
+  if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat();
 }
 async function importerFcstd() {
   const f = await lireFichier($("#f-fcstd"), true); if (!f) return;
   const d = JSON.parse(await appeler("depuis_fcstd", f.texte));
-  if (d.erreur) { alerter("Import impossible : " + d.erreur); return; }
+  if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
-  $("#etat").textContent = `${d.pieces.length} pièce(s) lues dans ${f.nom}`;
+  $("#etat").textContent = t`${d.pieces.length} pièce(s) lues dans ${f.nom}`;
 }
 async function exporterCsv() { telecharger((etat.nomProjet || "pieces") + ".csv", await appeler("vers_csv", JSON.stringify(etat.pieces)), "text/csv"); }
 async function importerSvg() {
   const f = await lireFichier($("#f-svg")); if (!f) return;
   const d = JSON.parse(await appeler("depuis_svg", f.texte));
-  if (d.erreur) { alerter("Import impossible : " + d.erreur); return; }
-  if (!d.formes.length) { alerter("Aucun tracé fermé dans ce SVG.\n" + d.avertissements.join("\n")); return; }
+  if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
+  if (!d.formes.length) { alerter(t("Aucun tracé fermé dans ce SVG.\n") + d.avertissements.join("\n")); return; }
   window.chutier.ajouterFormes(d.formes);
   etat.aJour = false; rafraichirEtat();
-  if (d.avertissements.length) alerter(`${d.formes.length} contour(s) importé(s)\n\n` + d.avertissements.join("\n"));
-  else $("#etat").textContent = `${d.formes.length} contour(s) importé(s)`;
+  if (d.avertissements.length) alerter(t`${d.formes.length} contour(s) importé(s)\n\n` + d.avertissements.join("\n"));
+  else $("#etat").textContent = t`${d.formes.length} contour(s) importé(s)`;
 }
 const FORMATS_DECOUPE = { svg: ["svg", "image/svg+xml"], dxf: ["dxf", "application/dxf"], lbrn: ["lbrn", "application/xml"] };
 async function exporterDecoupe(format) {
-  if (!etat.resultat) { alerter("Calculez d'abord le débit."); return; }
-  const titre = etat.nomProjet || "Feuille de débit";
+  if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; }
+  const titre = etat.nomProjet || t("Feuille de débit");
   const [extension, type] = FORMATS_DECOUPE[format];
   for (const [i, d] of etat.resultat.debits.entries()) {
     const texte = await appeler("decoupe", format, JSON.stringify(d.epingle), i + 1, titre);
@@ -641,22 +646,23 @@ async function exporterDecoupe(format) {
     await new Promise(r => setTimeout(r, 300));
   }
 }
-function exporterFiche() { if (!etat.resultat) { alerter("Calculez d'abord le débit."); return; } telecharger((etat.nomProjet || "fiche-atelier") + ".txt", (etat.nomProjet || "Feuille de débit") + "\n\n" + etat.resultat.fiche + "\n"); }
+function exporterFiche() { if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; } telecharger((etat.nomProjet || "fiche-atelier") + ".txt", (etat.nomProjet || t("Feuille de débit")) + "\n\n" + etat.resultat.fiche + "\n"); }
 
 function rangerChutes() {
   const r = etat.resultat;
-  if (!r || !etat.aJour) { alerter("Recalculez avant de ranger les chutes : la saisie a changé depuis le dernier calcul."); return; }
-  if (!window.confirm("Le stock sera mis à jour comme si le débit était fait : planches entamées en moins, chutes créées en plus, à l'atelier de ce navigateur. Continuer ?")) return;
+  if (!r || !etat.aJour) { alerter(t("Recalculez avant de ranger les chutes : la saisie a changé depuis le dernier calcul.")); return; }
+  if (!window.confirm(t("Le stock sera mis à jour comme si le débit était fait : planches entamées en moins, chutes créées en plus, à l'atelier de ce navigateur. Continuer ?"))) return;
   etat.stock = r.stock_apres.map(s => ({ ...DEFAUTS_LIGNE.stock, ...s, defauts_texte: defautsTexte(s) }));
   etat.aJour = false; rendreTable("stock"); rafraichirEtat(); enregistrerAtelier();
-  $("#etat").textContent = "Stock de l'atelier mis à jour dans ce navigateur.";
+  $("#etat").textContent = t("Stock de l'atelier mis à jour dans ce navigateur.");
 }
 function defautsTexte(s) {
-  const t = [];
-  if (s.recoupe_bouts > 0) t.push("bouts " + mm(s.recoupe_bouts));
-  if (s.recoupe_rives > 0) t.push("rives " + mm(s.recoupe_rives));
-  for (const [x, y, dx, dy] of s.defauts || []) t.push(y === 0 && y + dy === s.largeur ? `${mm(x)}-${mm(x + dx)}` : [x, y, dx, dy].map(mm).join(","));
-  return t.join(" ; ");
+  // « bouts » et « rives » sont la SYNTAXE que Python relit : jamais traduites.
+  const morceaux = [];
+  if (s.recoupe_bouts > 0) morceaux.push("bouts " + mm(s.recoupe_bouts));
+  if (s.recoupe_rives > 0) morceaux.push("rives " + mm(s.recoupe_rives));
+  for (const [x, y, dx, dy] of s.defauts || []) morceaux.push(y === 0 && y + dy === s.largeur ? `${mm(x)}-${mm(x + dx)}` : [x, y, dx, dy].map(mm).join(","));
+  return morceaux.join(" ; ");
 }
 
 // -- épingles et planche imposée --------------------------------------------------------
@@ -671,23 +677,66 @@ function menuContextuel(e) {
   const menu = $("#menu-contextuel");
   menu.replaceChildren();
   const epinglee = numero <= etat.epingles.length;
-  menu.append(el("button", { text: epinglee ? `Relâcher la planche ${numero}` : `Épingler la planche ${numero} — la garder telle quelle`, onclick: () => { fermerMenu(); if (epinglee) etat.epingles.splice(numero - 1, 1); else etat.epingles.push(etat.resultat.debits[numero - 1].epingle); calculer(); } }));
+  menu.append(el("button", { text: epinglee ? t`Relâcher la planche ${numero}` : t`Épingler la planche ${numero} — la garder telle quelle`, onclick: () => { fermerMenu(); if (epinglee) etat.epingles.splice(numero - 1, 1); else etat.epingles.push(etat.resultat.debits[numero - 1].epingle); calculer(); } }));
   if (pose) {
-    menu.append(el("div", { class: "sep" }), el("div", { class: "titre", text: `Tailler « ${pose.reference} » dans…` }));
+    menu.append(el("div", { class: "sep" }), el("div", { class: "titre", text: t`Tailler « ${pose.reference} » dans…` }));
     for (const ref of references()) menu.append(el("button", { text: ref, onclick: () => { fermerMenu(); imposerPlanche(pose.reference, ref); } }));
-    menu.append(el("button", { text: "Laisser le chutier choisir", onclick: () => { fermerMenu(); imposerPlanche(pose.reference, ""); } }));
+    menu.append(el("button", { text: t("Laisser le chutier choisir"), onclick: () => { fermerMenu(); imposerPlanche(pose.reference, ""); } }));
   }
   menu.style.left = e.clientX + "px"; menu.style.top = e.clientY + "px"; menu.hidden = false;
   etat.planche = numero; dessinerPlan();
 }
 function fermerMenu() { $("#menu-contextuel").hidden = true; }
+
+// -- glisser une pièce imbriquée -----------------------------------------------------------
+// Le pointeur prend la forme ; au relâchement, le cœur valide (dans le
+// bois, à l'écart des autres), refait les chutes, et la planche s'épingle
+// d'elle-même — sinon le prochain calcul déferait la main.
+let glisse = null;
+function debutGlisse(e) {
+  if (e.button !== 0 || !etat.resultat) return;
+  const forme = e.target.closest("[data-pose]");
+  if (!forme) return;
+  const numero = Number(forme.dataset.planche), ip = Number(forme.dataset.pose);
+  const d = etat.resultat.debits[numero - 1];
+  if (!d.imbriquee) return;
+  const svg = forme.ownerSVGElement;
+  const ctm = svg.getScreenCTM();
+  glisse = { forme, numero, ip, x0: e.clientX, y0: e.clientY, echelle: ctm.a, dx: 0, dy: 0 };
+  try { forme.setPointerCapture(e.pointerId); } catch (_) { /* pointeur synthétique */ }
+  forme.style.cursor = "grabbing";
+  e.preventDefault();
+}
+function mouvementGlisse(e) {
+  if (!glisse) return;
+  glisse.dx = (e.clientX - glisse.x0) / glisse.echelle;
+  glisse.dy = (e.clientY - glisse.y0) / glisse.echelle;
+  glisse.forme.setAttribute("transform", `translate(${glisse.dx} ${glisse.dy})`);
+}
+async function finGlisse(e) {
+  if (!glisse) return;
+  const g = glisse; glisse = null;
+  g.forme.style.cursor = "";
+  if (Math.abs(g.dx) < 0.5 && Math.abs(g.dy) < 0.5) { g.forme.removeAttribute("transform"); return; }
+  const d = etat.resultat.debits[g.numero - 1];
+  // Le SVG a y vers le bas, la planche vers le haut.
+  const sortie = JSON.parse(await appeler("deplacer", JSON.stringify(d.epingle), g.ip, Math.round(g.dx * 100) / 100, -Math.round(g.dy * 100) / 100, JSON.stringify(etat.parametres)));
+  if (sortie.refus) { $("#etat").textContent = sortie.refus; dessinerPlan(); return; }
+  const debits = etat.resultat.debits;
+  debits[g.numero - 1] = sortie;
+  if (g.numero <= etat.epingles.length) etat.epingles[g.numero - 1] = sortie.epingle;
+  else { debits.splice(etat.epingles.length, 0, debits.splice(g.numero - 1, 1)[0]); etat.epingles.push(sortie.epingle); }
+  etat.planche = etat.epingles.length;
+  $("#etat").textContent = t("Pièce déplacée — planche épinglée : reprise telle quelle au prochain calcul.");
+  consigner(); enregistrerBrouillon(); marquerChangement(); dessinerPlan(); rendreImpression();
+}
 function imposerPlanche(reference, planche) { for (const p of etat.pieces) if (p.reference === reference) p.planche = planche; etat.avancees = etat.avancees || Boolean(planche); rendreTable("pieces"); calculer(); }
 
 // -- fenêtre --------------------------------------------------------------------------------
 
 function rafraichirEtat() {
-  if (!etat.resultat) $("#etat").textContent = pythonPret ? "Aucun calcul" : $("#etat").textContent;
-  else if (!etat.aJour) $("#etat").textContent = "⚠ Saisie modifiée — F5 pour recalculer";
+  if (!etat.resultat) $("#etat").textContent = pythonPret ? t("Aucun calcul") : $("#etat").textContent;
+  else if (!etat.aJour) $("#etat").textContent = t("⚠ Saisie modifiée — F5 pour recalculer");
 }
 function rendreTout() { rendreTable("pieces"); rendreTable("stock"); rendreReglages(); rafraichirEtat(); }
 
@@ -722,13 +771,13 @@ async function demarrer() {
     etat.parametres = { ...etat.parametres, ...(b.parametres || {}) };
     etat.epingles = b.epingles || []; etat.nomProjet = b.nomProjet || "";
     rendreTout(); historique.courant = instantane(); calculer();
-    $("#etat").textContent = "Brouillon repris" + (b.nomProjet ? " : " + b.nomProjet : "");
+    $("#etat").textContent = t("Brouillon repris") + (b.nomProjet ? " : " + b.nomProjet : "");
   } else if (atelier().length) nouveau(); else await chargerExemple();
   historique.courant = instantane();
 }
 
 function aide() {
-  alerter(`Le geste : les pièces à débiter, le stock où les tailler, les réglages de scie, puis Calculer (F5). Le plan se lit à droite, toutes planches empilées.
+  alerter(t`Le geste : les pièces à débiter, le stock où les tailler, les réglages de scie, puis Calculer (F5). Le plan se lit à droite, toutes planches empilées.
 
 Saisie : Ctrl+V colle un bloc venu d'un tableur (colonnes séparées par une tabulation ou un point-virgule) ; Entrée passe à la ligne suivante ; Ctrl+Suppr ôte la ligne ; clic sur une ligne pour la choisir, Ctrl-clic pour en ajouter.
 
@@ -742,7 +791,7 @@ Tout est en millimètres. La longueur court le long du fil. Une planche plus ép
 }
 
 function brancher() {
-  $("#b-nouveau").onclick = () => { if (window.confirm("Vider les pièces et le stock du projet ? (l'atelier reste)")) nouveau(); };
+  $("#b-nouveau").onclick = () => { if (window.confirm(t("Vider les pièces et le stock du projet ? (l'atelier reste)"))) nouveau(); };
   $("#b-ouvrir").onclick = ouvrirProjet;
   $("#b-enregistrer").onclick = enregistrerProjet;
   $("#b-calculer").onclick = calculer;
@@ -771,6 +820,10 @@ function brancher() {
   $("#b-ajuster").onclick = () => { etat.zoom = 1; ajusterZoom(); };
   $("#plan").addEventListener("wheel", (e) => { if (!e.ctrlKey) return; e.preventDefault(); etat.zoom = Math.min(20, Math.max(0.25, etat.zoom * (e.deltaY < 0 ? 1.25 : 0.8))); ajusterZoom(); }, { passive: false });
   $("#plan").addEventListener("contextmenu", menuContextuel);
+  $("#plan").addEventListener("pointerdown", debutGlisse);
+  $("#plan").addEventListener("pointermove", mouvementGlisse);
+  $("#plan").addEventListener("pointerup", finGlisse);
+  $("#plan").addEventListener("pointercancel", () => { if (glisse) { glisse.forme.removeAttribute("transform"); glisse = null; } });
   $("#plan").addEventListener("click", (e) => { const c = e.target.closest("[data-planche]"); if (c) { etat.planche = Number(c.dataset.planche); dessinerPlan(); } });
   document.addEventListener("click", (e) => { if (!e.target.closest("#menu-contextuel")) fermerMenu(); });
   for (const b of document.querySelectorAll("[data-onglet]")) b.onclick = () => { for (const x of document.querySelectorAll("[data-onglet]")) x.classList.toggle("actif", x === b); for (const o of document.querySelectorAll(".onglet")) o.classList.toggle("actif", o.id === "o-" + b.dataset.onglet); if (b.dataset.onglet === "plan") ajusterZoom(); };
@@ -783,6 +836,20 @@ function brancher() {
   window.addEventListener("resize", ajusterZoom);
   window.addEventListener("beforeprint", () => { etat.zoom = 1; ajusterZoom(); });
   $("#menu-contextuel").hidden = true;
+  // La langue : le bouton montre celle qu'on prendra en le touchant.
+  const bLangue = $("#b-langue");
+  const marquerLangue = () => { bLangue.textContent = langue === "fr" ? "EN" : "FR"; };
+  marquerLangue();
+  bLangue.onclick = () => {
+    changerLangue(langue === "fr" ? "en" : "fr");
+    marquerLangue();
+    traduirePage();
+    rendreTout();
+    if (etat.aJour) $("#etat").textContent = t("Plan à jour");
+    dessinerPlan();
+    if (etat.resultat) afficherResultat();
+  };
+  traduirePage();
   // Le menu « Plus… » se referme quand on y choisit une entrée, et quand
   // on clique ailleurs — un <details> ne le fait pas de lui-même.
   const plus = document.querySelector(".menu");

@@ -68,6 +68,12 @@ est compté chute
 pour les deux bandes rectangulaires (à droite, au-dessus) qui passent
 les minis, perte pour le reste — le chutier range des rectangles.
 
+**Déplacer une pièce à la main.** Sur une planche imbriquée, glisser une
+pièce la déplace — au bureau comme sur le web. Le cœur valide le geste
+(dans le bois, à l'écart des autres du même écart de fraise) et refait
+les chutes ; la planche s'épingle d'elle-même, sinon le prochain calcul
+déferait la main. Un déplacement impossible est refusé, avec sa raison.
+
 **Les chutes biscornues.** Ce qui reste d'une planche imbriquée garde
 sa forme : la planche moins les pièces élargies du passage de la fraise,
 morceau par morceau. Un morceau rectangulaire à un demi pour cent près
@@ -295,6 +301,15 @@ premier chargement télécharge une quinzaine de Mo (ensuite en cache).
 Sans multicœur ni impression d'étiquettes : pour ces deux-là, le
 bureau. Pour l'essayer en local : `python3 -m http.server` à la racine,
 puis <http://localhost:8000/>.
+
+La page est **bilingue** : un bouton « EN / FR » près du titre bascule
+toute l'interface, et le choix est retenu dans le navigateur (au premier
+passage, la langue du navigateur décide). Le dictionnaire est
+`web/langue.js`, dont la clé EST le texte français : un texte sans
+traduction s'affiche en français plutôt que de disparaître, et
+`tests/test_langue.py` refuse qu'une chaîne de `web/app.js` ou
+d'`index.html` n'ait pas sa traduction, ou qu'une traduction ne serve
+plus. L'application de bureau, elle, reste en français.
 
 La page **fonctionne hors-ligne** après une première visite : un
 service worker (`sw.js`) garde la page, les modules Python et les

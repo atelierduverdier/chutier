@@ -169,5 +169,28 @@ class Fichiers(unittest.TestCase):
                 self.assertNotIn(interdit, source, module)
 
 
+class Deplacement(unittest.TestCase):
+
+    def test_deplacer_renvoie_le_debit_ou_un_refus(self):
+        cale = {"reference": "cale", "longueur": 100, "largeur": 50,
+                "epaisseur": 15, "matiere": "cp", "quantite": 2,
+                "fil": "indifferent",
+                "contour": [[0, 0], [100, 0], [100, 50], [0, 50]]}
+        stock = [{"reference": "cp", "longueur": 400, "largeur": 200,
+                  "epaisseur": 15, "matiere": "cp", "quantite": 1, "fil": False}]
+        r = json.loads(pont_web.calculer(json.dumps(
+            {"pieces": [cale], "stock": stock,
+             "parametres": {"essais_melanges": 0, "processus": 1}})))
+        d = r["resultat"]["debits"][0]
+        ok = json.loads(pont_web.deplacer(json.dumps(d["epingle"]), 1, 150, 50,
+                                          json.dumps({"essais_melanges": 0})))
+        self.assertNotIn("refus", ok)
+        self.assertAlmostEqual(ok["poses"][1]["x"], d["poses"][1]["x"] + 150)
+        self.assertIn("epingle", ok)
+        refus = json.loads(pont_web.deplacer(json.dumps(d["epingle"]), 1, 1000,
+                                             0, "{}"))
+        self.assertIn("refus", refus)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -23,6 +23,7 @@ input, select { font: inherit; color: var(--texte); background: var(--carte); bo
 .ver { font-size: 10.5px; font-weight: bold; letter-spacing: .02em; padding: 2px 7px; border-radius: 6px; color: var(--mid); background: transparent; cursor: default; }
 .ver.ok { background: #2f7d43; border-color: #2f7d43; color: #fff; }
 .ver.vieux { background: var(--orange); border-color: var(--orange); color: #1a1e23; cursor: pointer; }
+.langue { font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 6px; }
 .barre { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--carte); border-bottom: 1px solid var(--bord); flex-wrap: wrap; }
 .logo { height: 26px; }
 .menu { position: relative; }
