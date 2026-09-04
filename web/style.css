@@ -22,7 +22,9 @@ input, select { font: inherit; color: var(--texte); background: var(--carte); bo
 .menu { position: relative; }
 .menu summary { cursor: pointer; padding: 4px 10px; border: 1px solid var(--bord); border-radius: 4px; list-style: none; }
 .menu > div { position: absolute; right: 0; top: 110%; background: var(--carte); border: 1px solid var(--bord); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; z-index: 20; min-width: 260px; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
-.menu > div button { text-align: left; border: none; }
+.menu > div button { text-align: left; border: none; padding: 6px 10px; }
+.menu > div button:hover { background: rgba(255,138,0,.15); }
+.menu summary:hover { border-color: var(--mid); }
 main { flex: 1; display: grid; grid-template-columns: minmax(420px, 34%) 1fr; gap: 10px; padding: 10px; min-height: 0; }
 .saisie { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow: auto; }
 .bloc { background: var(--carte); border: 1px solid var(--bord); border-radius: 6px; padding: 8px 10px; }

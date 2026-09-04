@@ -635,6 +635,11 @@ function brancher() {
   window.addEventListener("resize", ajusterZoom);
   window.addEventListener("beforeprint", () => { etat.zoom = 1; ajusterZoom(); });
   $("#menu-contextuel").hidden = true;
+  // Le menu « Plus… » se referme quand on y choisit une entrée, et quand
+  // on clique ailleurs — un <details> ne le fait pas de lui-même.
+  const plus = document.querySelector(".menu");
+  plus.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { plus.open = false; }));
+  document.addEventListener("click", (e) => { if (!e.target.closest(".menu")) plus.open = false; });
 }
 
 brancher();
