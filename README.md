@@ -68,6 +68,12 @@ est compté chute
 pour les deux bandes rectangulaires (à droite, au-dessus) qui passent
 les minis, perte pour le reste — le chutier range des rectangles.
 
+**Le temps de fraisage.** Une planche imbriquée n'a pas de coupes à
+compter mais des contours à suivre : la tuile Pertes, le cartouche de
+chaque planche et la fiche d'atelier donnent la **longueur de fraisage**
+(contours et trous) et le temps qu'elle demande à la vitesse d'avance du
+réglage (1 500 mm/min par défaut), sans les déplacements à vide.
+
 ## L'atelier
 
 Le stock commun vit dans un fichier à part,
@@ -142,6 +148,13 @@ Les tailles de texte du plan sont réglées pour un rendu d'environ
 1600 px de large et **grossies à proportion** au-delà : réglées en
 pixels, elles sortaient à 0,4 mm de haut sur une page à 1200 points par
 pouce.
+
+**Coupe en bandes** (réglages de la scie) : pour une scie à panneaux ou
+à format, qui déligne d'abord la planche en bandes pleine longueur puis
+tronçonne chaque bande. Le plan ne comporte alors que ces coupes en deux
+étapes — une recoupe de largeur dans la bande à la rigueur, jamais une
+recoupe de longueur —, là où le guillotine libre produit des plans
+qu'une telle scie exécute mal. Ça coûte en général un peu de bois.
 
 Le trait de scie, les surcotes et les seuils de chute sont **retenus
 d'une séance à l'autre** — ce sont des propriétés de la scie et de
@@ -271,6 +284,18 @@ premier chargement télécharge une quinzaine de Mo (ensuite en cache).
 Sans multicœur ni impression d'étiquettes : pour ces deux-là, le
 bureau. Pour l'essayer en local : `python3 -m http.server` à la racine,
 puis <http://localhost:8000/>.
+
+La page **fonctionne hors-ligne** après une première visite : un
+service worker (`sw.js`) garde la page, les modules Python et les
+fichiers de Pyodide — réseau d'abord quand il répond, cache sinon. Elle
+s'installe comme une application (manifeste) depuis le menu du
+navigateur. La **pastille de version** près du titre dit si c'est bien
+la dernière : verte à jour, orange avec « ⟳ » quand `version.json` en
+ligne annonce plus récent — la toucher recharge tout ; neutre
+hors-ligne, elle n'affirme rien. L'application de bureau porte la même
+pastille dans sa barre d'état, et interroge la même adresse au
+démarrage (`CHUTIER_SANS_RESEAU=1` la coupe) ; un clone git se met à
+jour par `git pull`.
 
 ## Tests
 

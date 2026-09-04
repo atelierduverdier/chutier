@@ -16,13 +16,14 @@ import dataclasses
 import json
 import os
 import sys
+import threading
 from xml.etree.ElementTree import ParseError as ET_ParseError
 
 from PySide6.QtCore import (
-    QEvent, QRectF, QSettings, Qt, QThread, QTimer, Signal,
+    QEvent, QObject, QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
-    QAction, QFont, QIcon, QKeySequence, QPageLayout, QPainter,
+    QAction, QDesktopServices, QFont, QIcon, QKeySequence, QPageLayout, QPainter,
 )
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
@@ -42,6 +43,7 @@ import fcstd_io
 import optimiseur as opt
 import projet_io
 import tables_saisie as tsa
+import verifier_version
 import vue_plan
 from stock_atelier import (  # noqa: F401 — les tests les prennent ici
     chutes_groupees, planches_consommees, stock_apres_debit,
@@ -58,6 +60,11 @@ ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
 PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
+
+
+class _Messager(QObject):
+    """Porte la réponse du fil de vérification de version au fil de Qt."""
+    version = Signal(str)
 
 
 class _Calcul(QThread):
@@ -159,7 +166,58 @@ class FenetrePrincipale(QMainWindow):
         self.etat_calcul = QLabel()
         self.statusBar().addWidget(self.etat_fichier, 1)
         self.statusBar().addPermanentWidget(self.etat_calcul)
+        self.statusBar().addPermanentWidget(self._pastille_version())
         self._rafraichir_etat()
+
+    # -- version et mise à jour --------------------------------------------
+
+    def _pastille_version(self):
+        """La petite pastille de version, comme sur l'appli web : neutre
+        tant qu'on ne sait pas, verte à jour, orange avec ⟳ quand une
+        version plus récente est en ligne — un clic ouvre la page du
+        projet. La vérification part dans un fil, et ne dit rien si le
+        réseau ne répond pas (CHUTIER_SANS_RESEAU la coupe : les tests)."""
+        self.pastille_version = QToolButton()
+        self.pastille_version.setAutoRaise(True)
+        self.pastille_version.setText("v" + opt.VERSION)
+        self.pastille_version.setToolTip(
+            "Version %s du chutier — vérification de la mise à jour…"
+            % opt.VERSION)
+        self.pastille_version.setStyleSheet(
+            "QToolButton { color: palette(mid); font-size: 10px;"
+            " font-weight: bold; padding: 1px 6px; border-radius: 6px; }")
+        self.pastille_version.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(verifier_version.PAGE_PROJET)))
+        self._messager = _Messager()
+        self._messager.version.connect(self._version_en_ligne)
+        if not os.environ.get("CHUTIER_SANS_RESEAU"):
+            threading.Thread(target=lambda: self._messager.version.emit(
+                verifier_version.version_en_ligne() or ""), daemon=True).start()
+        return self.pastille_version
+
+    def _version_en_ligne(self, en_ligne: str):
+        verdict = verifier_version.comparer(opt.VERSION, en_ligne)
+        b = self.pastille_version
+        if verdict == verifier_version.A_JOUR:
+            b.setText("v" + opt.VERSION + " ✓")
+            b.setToolTip("À jour : c'est bien la dernière version (%s)."
+                         % opt.VERSION)
+            b.setStyleSheet(
+                "QToolButton { color: white; background: #2f7d43;"
+                " font-size: 10px; font-weight: bold; padding: 1px 6px;"
+                " border-radius: 6px; }")
+        elif verdict == verifier_version.EN_RETARD:
+            b.setText("v" + opt.VERSION + " ⟳")
+            b.setToolTip(
+                "Version %s disponible — cliquer ouvre la page du projet.\n"
+                "Un clone git se met à jour par « git pull »." % en_ligne)
+            b.setStyleSheet(
+                "QToolButton { color: #1a1e23; background: %s;"
+                " font-size: 10px; font-weight: bold; padding: 1px 6px;"
+                " border-radius: 6px; }" % apparence.ORANGE.name())
+        else:
+            b.setToolTip("Version %s. Hors-ligne : mise à jour non vérifiable."
+                         % opt.VERSION)
 
     def _acte(self, texte, methode, raccourci=None, icone=None, info=None):
         action = QAction(texte, self)

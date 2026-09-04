@@ -44,6 +44,7 @@ os.environ["CHUTIER_ATELIER"] = _ATELIER
 # écrivait depuis le début dans ~/.config/AtelierDuVerdier/Chutier.conf
 # (le dernier dossier ouvert y pointait sur /tmp/chutier-tests-…, et la
 # géométrie de la fenêtre y était celle d'un test). Vu le 03/09/2026.
+os.environ["CHUTIER_SANS_RESEAU"] = "1"
 os.environ["XDG_CONFIG_HOME"] = _JETABLE
 
 APP = QApplication.instance() or QApplication([])

@@ -95,6 +95,47 @@ const pct = (v) => (100 * v).toFixed(1).replace(".", ",");
 let worker = null;
 const attentes = new Map();
 let compteur = 0;
+
+// -- version et mise à jour ------------------------------------------------------
+// La même valeur qu'optimiseur.VERSION, sw.js et version.json —
+// tests/test_version.py y veille. version.json, lui, est lu au réseau à
+// chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
+
+export const VERSION = "1.0.0";
+
+function controlerVersion() {
+  const b = $("#b-version");
+  b.textContent = VERSION; b.className = "ver";
+  b.title = "Version " + VERSION + " du chutier. Vérification de la mise à jour…";
+  fetch(new URL("../version.json?t=" + Date.now(), import.meta.url), { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null)
+    .then(j => {
+      if (!j || !j.version) return;
+      if (j.version === VERSION) {
+        b.className = "ver ok"; b.title = "À jour : c'est bien la dernière version (" + VERSION + ").";
+      } else {
+        b.className = "ver vieux"; b.textContent = VERSION + " ⟳";
+        b.title = "Version " + j.version + " disponible. Toucher pour mettre à jour (Ctrl + Maj + R).";
+        b.onclick = forcerMaj;
+      }
+    })
+    .catch(() => { b.title = "Version " + VERSION + ". Hors-ligne : mise à jour non vérifiable."; });
+}
+
+function forcerMaj() {
+  const recharger = () => location.replace(location.pathname + "?maj=" + Date.now());
+  if (!("serviceWorker" in navigator)) { recharger(); return; }
+  navigator.serviceWorker.getRegistrations()
+    .then(rs => Promise.all(rs.map(r => r.unregister())))
+    .then(() => caches.keys())
+    .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+    .then(recharger, recharger);
+}
+
+controlerVersion();
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  navigator.serviceWorker.register(new URL("../sw.js", import.meta.url)).catch(() => {});
+}
 let pythonPret = false;
 let demarre = false;
 

@@ -261,6 +261,30 @@ fifteen MB (cached afterwards). No multicore and no label printing: for
 those two, the desktop. To try it locally: `python3 -m http.server` at
 the root, then <http://localhost:8000/>. The interface is in French.
 
+The page **works offline** after a first visit: a service worker
+(`sw.js`) keeps the page, the Python modules and the Pyodide files —
+network first when it answers, cache otherwise. It installs as an
+application (manifest) from the browser menu. The **version badge**
+next to the title says whether this is the latest: green when up to
+date, orange with "⟳" when the online `version.json` announces a newer
+one — touching it reloads everything; neutral offline, it claims
+nothing. The desktop application carries the same badge in its status
+bar and asks the same address at startup (`CHUTIER_SANS_RESEAU=1`
+disables it); a git clone updates with `git pull`.
+
+**Milling time.** A nested board has no cuts to count but contours to
+follow: the Losses tile, each board's title and the workshop sheet give
+the **milling length** (contours and holes) and the time it takes at
+the configured feed rate (1,500 mm/min by default), rapid moves
+excluded.
+
+**Strip cutting** (saw settings): for a panel saw or sliding table saw,
+which first rips the board into full-length strips and then crosscuts
+each strip. The plan then only contains such two-stage cuts — at most a
+width recut inside the strip, never a length recut — where free
+guillotine plans are awkward on such a saw. It usually costs a little
+wood.
+
 ## Tests
 
 ```bash

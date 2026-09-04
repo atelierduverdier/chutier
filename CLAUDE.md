@@ -23,7 +23,7 @@ python3 tests/lancer.py
 sans-écran :
 
 ```bash
-CHUTIER_ATELIER=/tmp/chutier-essai/atelier.json XDG_CONFIG_HOME=/tmp/chutier-essai QT_QPA_PLATFORM=offscreen python3 -c "import interface,sys;from PySide6.QtWidgets import QApplication;a=QApplication(sys.argv);f=interface.FenetrePrincipale();f.resize(1680,960);f.show();a.processEvents();f._calculer();a.processEvents();f.grab().save('/tmp/chutier.png')"
+CHUTIER_ATELIER=/tmp/chutier-essai/atelier.json XDG_CONFIG_HOME=/tmp/chutier-essai CHUTIER_SANS_RESEAU=1 QT_QPA_PLATFORM=offscreen python3 -c "import interface,sys;from PySide6.QtWidgets import QApplication;a=QApplication(sys.argv);f=interface.FenetrePrincipale();f.resize(1680,960);f.show();a.processEvents();f._calculer();a.processEvents();f.grab().save('/tmp/chutier.png')"
 ```
 
 Les deux variables d'environnement ne sont pas décoratives : sans elles,
@@ -37,5 +37,13 @@ Trois défauts n'ont été vus que comme ça, jamais en relisant le code :
 deux références du même vert, une étiquette « chute » écrite par-dessus
 le titre d'une planche, et des cartouches tombés à huit pixels sur un
 brin de 4 m. Le dessin est le produit — il se regarde.
+
+**La version** est `VERSION` dans `optimiseur.py`, recopiée dans
+`web/app.js`, `sw.js` et `version.json` — `tests/test_version.py` refuse
+qu'elles divergent. On la monte, aux quatre endroits et en un seul commit,
+à chaque publication qui change quelque chose pour l'utilisateur : c'est
+`version.json` en ligne, comparé à la version embarquée, qui allume la
+pastille « ⟳ » sur le web et dans la barre d'état du bureau. Un
+changement purement documentaire ne monte pas la version.
 
 Commits directement sur `main`, sans « Co-Authored-By ».
