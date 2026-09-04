@@ -132,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.2.3";
+export const VERSION = "1.2.4";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -415,9 +415,17 @@ function cellule(nom, ligne, c, i) {
     if (c.genre === "matiere" || c.genre === "planche") {
       const liste = "l-" + nom + "-" + c.cle;
       input.setAttribute("list", liste);
-      let dl = document.getElementById(liste);
-      if (!dl) { dl = el("datalist", { id: liste }); document.body.append(dl); }
-      dl.replaceChildren(...(c.genre === "matiere" ? matieres() : references()).map(v => el("option", { value: v })));
+      // Relue À CHAQUE OUVERTURE, comme le menu du bureau : garnie une
+      // fois pour toutes au dessin de la table, elle datait de l'état
+      // d'alors — après un import en douglas, la table du stock n'étant
+      // pas redessinée, sa liste ne proposait toujours que l'ancien bois.
+      const garnir = () => {
+        let dl = document.getElementById(liste);
+        if (!dl) { dl = el("datalist", { id: liste }); document.body.append(dl); }
+        dl.replaceChildren(...(c.genre === "matiere" ? matieres() : references()).map(v => el("option", { value: v })));
+      };
+      garnir();
+      input.addEventListener("focus", garnir);
     }
     td.append(input);
   }
@@ -760,8 +768,28 @@ async function importerCsv() {
   const d = JSON.parse(brut);
   if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
-  etat.aJour = false; rendreTable("pieces"); rafraichirEtat();
+  etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
+  signalerMatieresOrphelines(d.pieces.length, f.nom);
 }
+
+/**
+ * Des pièces importées dans un bois que le stock n'a pas, c'est un débit
+ * qui ne placera rien — et le seul endroit où on le lisait était l'onglet
+ * des pièces non placées, après un calcul. On le dit tout de suite, avec
+ * les deux mots en présence : la faute est presque toujours une majuscule
+ * ou une espace. (Le bureau le fait depuis la 1.2.3 ; la page se taisait.)
+ */
+function signalerMatieresOrphelines(nombre, source) {
+  const duStock = new Set(etat.stock.map(s => (s.matiere || "").trim()).filter(Boolean));
+  const orphelines = [...new Set(etat.pieces.map(p => (p.matiere || "").trim()).filter(Boolean))]
+    .filter(m => !duStock.has(m));
+  if (!orphelines.length || !duStock.size) {
+    $("#etat").textContent = t`${nombre} pièce(s) lue(s) dans ${source}`;
+    return;
+  }
+  $("#etat").textContent = t`${nombre} pièce(s) lue(s) dans ${source} — mais aucune planche en ${orphelines.join(", ")} dans le stock (il y a : ${[...duStock].sort().join(", ")}). Corrigez la colonne Matière, des deux côtés le même mot.`;
+}
+
 async function importerFcstd() {
   const f = await lireFichier($("#f-fcstd"), true); if (!f) return;
   const brut = await tenter("depuis_fcstd", f.texte); if (brut === null) return;
@@ -769,7 +797,7 @@ async function importerFcstd() {
   if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
-  $("#etat").textContent = t`${d.pieces.length} pièce(s) lues dans ${f.nom}`;
+  signalerMatieresOrphelines(d.pieces.length, f.nom);
 }
 async function exporterCsv() { const texte = await tenter("vers_csv", JSON.stringify(etat.pieces)); if (texte !== null) telecharger((etat.nomProjet || "pieces") + ".csv", texte, "text/csv"); }
 async function importerSvg() {

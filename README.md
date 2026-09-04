@@ -38,6 +38,7 @@ même mot, et chercher dans sa propre liste celui qui manque n'y menait
 jamais. Une matière neuve se tape par-dessus. Un import dont la matière
 n'existe pas au stock le dit **tout de suite**, avec les deux mots en
 présence — la faute est presque toujours une majuscule ou une espace.
+Bureau et navigateur disent la même chose, au même moment.
 
 ## La CNC : des formes quelconques, imbriquées
 

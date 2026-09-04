@@ -196,7 +196,8 @@ const ANGLAIS = {
   // -- fichiers
   "Ouverture impossible : ": "Could not open: ",
   "Import impossible : ": "Could not import: ",
-  "{} pièce(s) lues dans {}": "{} part(s) read from {}",
+  "{} pièce(s) lue(s) dans {}": "{} part(s) read from {}",
+  "{} pièce(s) lue(s) dans {} — mais aucune planche en {} dans le stock (il y a : {}). Corrigez la colonne Matière, des deux côtés le même mot.": "{} part(s) read from {} — but no board in {} in the stock (there is: {}). Fix the Material column, the same word on both sides.",
   "Aucun tracé fermé dans ce SVG.\n": "No closed path in this SVG.\n",
   "{} contour(s) importé(s)\n\n": "{} outline(s) imported\n\n",
   "{} contour(s) importé(s)": "{} outline(s) imported",
