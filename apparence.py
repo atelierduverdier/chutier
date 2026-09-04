@@ -10,14 +10,14 @@ papier, il reste clair pour être imprimé et lu à l'établi.
 
 from __future__ import annotations
 
-import zlib
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton,
     QVBoxLayout, QWidget,
 )
+
+import couleurs
 
 # -- couleurs du plan (feuille de papier, indépendantes du thème) --------
 
@@ -35,63 +35,24 @@ PLAN_CARTOUCHE = QColor("#2f3540")
 ORANGE = QColor("#ff8a00")             # l'orange de l'Atelier du Verdier
 ALERTE = QColor("#c0392b")
 
-# Douze teintes tenues à l'écart les unes des autres : deux références
-# voisines ne doivent pas se ressembler. Prises en pastel, elles portent
-# du texte ardoise sans le noyer.
-_TEINTES = (14, 38, 60, 92, 120, 152, 178, 200, 224, 262, 288, 322)
-
-
-_NUANCES = ((48, 250), (80, 232), (112, 214))
-_CASES = len(_TEINTES) * len(_NUANCES)
-
+# La palette elle-même vit dans couleurs.py, sans Qt, partagée avec la
+# page web : ici on n'en fait que des QColor.
 
 def _couleur_case(case: int) -> QColor:
-    saturation, clarte = _NUANCES[case // len(_TEINTES)]
-    return QColor.fromHsv(_TEINTES[case % len(_TEINTES)], saturation, clarte)
+    return QColor.fromHsv(*couleurs.hsv_de_case(case))
 
 
 def couleur_piece(reference: str) -> QColor:
-    """La teinte d'une référence prise isolément.
-
-    ``hash()`` d'une chaîne est **salé au démarrage** de Python : il
-    donnait une couleur différente à chaque lancement, alors que le
-    propos est justement de reconnaître une pièce d'une séance à
-    l'autre. ``crc32`` ne bouge pas.
-    """
-    return _couleur_case(zlib.crc32(reference.encode("utf-8")) % _CASES)
+    """La teinte d'une référence prise isolément — voir
+    :func:`couleurs.case_de`."""
+    return _couleur_case(couleurs.case_de(reference))
 
 
 def palette_pieces(references) -> dict:
-    """Une teinte par référence, toutes DIFFÉRENTES entre elles.
-
-    Le seul hachage ne suffit pas : « montant » et « taquet » tombaient
-    sur le même vert, et deux pièces indiscernables sur le plan valent
-    moins qu'un plan en noir et blanc. Les collisions se résolvent en
-    sondant les cases suivantes, dans l'ordre des références triées —
-    déterministe, donc stable tant que la liste de pièces ne change pas.
-    """
-    prises, teintes_servies, palette = set(), set(), {}
-    for reference in sorted(references):
-        depart = zlib.crc32(reference.encode("utf-8")) % _CASES
-        case = depart
-        for saut in range(_CASES):
-            candidate = (depart + saut) % _CASES
-            if candidate in prises:
-                continue
-            # Tant qu'il reste une teinte inutilisée, ne pas en resservir
-            # une : c'est la TEINTE qui distingue à l'œil, pas la nuance.
-            # Deux verts d'éclat voisin se valent sur le plan — le premier
-            # essai ne gardait que la case libre, et « montant » comme
-            # « taquet » sortaient du même vert.
-            if (len(teintes_servies) < len(_TEINTES)
-                    and candidate % len(_TEINTES) in teintes_servies):
-                continue
-            case = candidate
-            break
-        prises.add(case)
-        teintes_servies.add(case % len(_TEINTES))
-        palette[reference] = _couleur_case(case)
-    return palette
+    """Une teinte par référence, toutes DIFFÉRENTES entre elles — voir
+    :func:`couleurs.cases_de`."""
+    return {ref: _couleur_case(case)
+            for ref, case in couleurs.cases_de(references).items()}
 
 
 def fond_etabli(widget=None) -> QColor:

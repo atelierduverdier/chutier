@@ -899,6 +899,10 @@ def parse_svg_file(filepath):
     return parse_svg_root(ET.parse(filepath).getroot())
 
 
+def parse_svg_texte(texte):
+    return parse_svg_root(ET.fromstring(texte))
+
+
 # ==========================================================================
 # CONSTRUCTION FREECAD (imports locaux uniquement)
 # ==========================================================================
@@ -970,10 +974,20 @@ def _normaliser(points, trous=()):
 
 
 def formes_depuis_svg(chemin):
+    """(formes, avertissements) lues dans le fichier ``chemin``."""
+    return _formes(*parse_svg_file(chemin))
+
+
+def formes_depuis_texte(texte):
+    """(formes, avertissements) lues dans un SVG déjà en mémoire — la
+    page web n'a pas de fichier, elle a le texte."""
+    return _formes(*parse_svg_texte(texte))
+
+
+def _formes(records, avertissements):
     """(formes, avertissements). Une forme : ``{"nom", "contour",
     "trous", "longueur", "largeur", "groupe"}``, le contour en mm, sens
     direct, coin bas-gauche en (0, 0), les trous déplacés d'autant."""
-    records, avertissements = parse_svg_file(chemin)
     formes = []
     ouverts = 0
     for index, record in enumerate(records, 1):
@@ -1034,11 +1048,17 @@ def _chemin_d(points, hauteur, trous=()):
 
 
 def ecrire_svg(chemin, debit, numero=1, titre=""):
+    """Écrit :func:`svg_planche` dans le fichier ``chemin``."""
+    with open(chemin, "w", encoding="utf-8") as f:
+        f.write(svg_planche(debit, numero, titre))
+
+
+def svg_planche(debit, numero=1, titre=""):
     """Une planche imbriquée, à l'échelle 1 (unités mm), pour la CNC :
     le contour de la planche en bleu fin, chaque pièce en chemin fermé
     noir, son nom en <text> dans un calque à part (à masquer avant de
     générer le parcours). Une pose sans contour (un rectangle) s'écrit
-    comme son rectangle."""
+    comme son rectangle. Rend le texte du SVG."""
     pl = debit.planche
     L, H = pl.longueur, pl.largeur
     lignes = [
@@ -1075,5 +1095,4 @@ def ecrire_svg(chemin, debit, numero=1, titre=""):
                          .replace("<", "&lt;"), pose.exemplaire))
     lignes.append('  </g>')
     lignes.append('</svg>')
-    with open(chemin, "w", encoding="utf-8") as f:
-        f.write("\n".join(lignes) + "\n")
+    return "\n".join(lignes) + "\n"

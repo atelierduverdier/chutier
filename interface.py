@@ -38,6 +38,9 @@ import optimiseur as opt
 import projet_io
 import tables_saisie as tsa
 import vue_plan
+from stock_atelier import (  # noqa: F401 — les tests les prennent ici
+    chutes_groupees, planches_consommees, stock_apres_debit,
+)
 from tables_saisie import ErreurSaisie
 
 TITRE = "Chutier — feuille de débit"
@@ -47,66 +50,6 @@ ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
 PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
-
-
-def chutes_groupees(resultat) -> dict:
-    """Les chutes créées rassemblées par cotes identiques, la plus grande
-    d'abord. Deux chutes de 505 × 41 sont un lot de deux, pas deux lignes."""
-    groupes = {}
-    for c in resultat.chutes_creees:
-        cle = (round(c.dim_x, 1), round(c.dim_y, 1), round(c.epaisseur, 1),
-               c.matiere, c.fil)
-        groupes[cle] = groupes.get(cle, 0) + 1
-    return dict(sorted(groupes.items(), key=lambda kv: -kv[0][0] * kv[0][1]))
-
-
-def planches_consommees(resultat) -> dict:
-    """Combien d'exemplaires de chaque planche le débit a entamés.
-
-    La clé est la :class:`~optimiseur.Planche` ENTIÈRE, pas sa seule
-    référence : rien n'interdit deux lignes de stock du même nom à des
-    cotes différentes (« chute douglas » deux fois), et décompter sur le
-    nom seul aurait retiré les exemplaires de la mauvaise.
-
-    Un profil de catalogue n'y figure pas : il ne sort pas de l'atelier,
-    il s'achète — c'est ``Resultat.achats`` qui le compte."""
-    consommees = {}
-    for debit in resultat.debits:
-        if debit.planche.illimite:
-            continue
-        consommees[debit.planche] = consommees.get(debit.planche, 0) + 1
-    return consommees
-
-
-def stock_apres_debit(stock: list, resultat) -> list:
-    """Le stock tel qu'il sera une fois le débit fait à l'établi : les
-    planches entamées en moins, les chutes créées en plus.
-
-    C'est la seule opération du chutier qui réécrive une saisie de
-    l'utilisateur — elle est donc écrite ici, séparée de la boîte de
-    dialogue qui la propose, pour être vérifiable par un test.
-    """
-    restant = dict(planches_consommees(resultat))
-    nouveau = []
-    for planche in stock:
-        pris = min(restant.get(planche, 0), planche.quantite)
-        if pris and not planche.illimite:
-            restant[planche] -= pris
-            reste = planche.quantite - pris
-            if reste <= 0:
-                continue          # tout ce lot est passé sous la scie
-            planche = dataclasses.replace(planche, quantite=reste)
-        nouveau.append(planche)
-
-    # Une chute rangée va à l'ATELIER, pas au projet : c'est là qu'on la
-    # retrouvera au débit suivant.
-    for (dim_x, dim_y, epaisseur, matiere, fil), nombre in \
-            chutes_groupees(resultat).items():
-        modele = opt.ChuteCreee(dim_x, dim_y, 0, 0, epaisseur, matiere, fil)
-        reference = "Chute %s %s×%s" % (matiere, opt._mm(dim_x), opt._mm(dim_y))
-        nouveau.append(dataclasses.replace(modele.en_planche(reference),
-                                           quantite=nombre, atelier=True))
-    return nouveau
 
 
 class FenetrePrincipale(QMainWindow):

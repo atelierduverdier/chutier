@@ -21,6 +21,7 @@ Aucune de ces colonnes n'est Qt ni FreeCAD — ce module reste, comme
 from __future__ import annotations
 
 import csv
+import io
 
 import optimiseur as opt
 
@@ -38,13 +39,20 @@ def ecrire_pieces(chemin: str, pieces: list) -> None:
     un tableur.
     """
     with open(chemin, "w", newline="", encoding="utf-8") as f:
-        graveur = csv.writer(f)
-        graveur.writerow(COLONNES_REQUISES + ("fil", "composable"))
-        for p in pieces:
-            graveur.writerow([p.reference, _nombre(p.longueur),
-                              _nombre(p.largeur), _nombre(p.epaisseur),
-                              p.matiere, p.quantite, p.fil,
-                              "1" if p.composable else "0"])
+        f.write(texte_pieces(pieces))
+
+
+def texte_pieces(pieces: list) -> str:
+    """Le CSV en mémoire — la page web n'écrit pas de fichier."""
+    tampon = io.StringIO()
+    graveur = csv.writer(tampon)
+    graveur.writerow(COLONNES_REQUISES + ("fil", "composable"))
+    for p in pieces:
+        graveur.writerow([p.reference, _nombre(p.longueur),
+                          _nombre(p.largeur), _nombre(p.epaisseur),
+                          p.matiere, p.quantite, p.fil,
+                          "1" if p.composable else "0"])
+    return tampon.getvalue()
 
 
 def _nombre(valeur: float) -> str:
@@ -61,14 +69,19 @@ def lire_pieces(chemin: str) -> list:
     ``OSError`` (fichier introuvable) — à l'appelant de les rattraper.
     """
     with open(chemin, newline="", encoding="utf-8") as f:
-        lecteur = csv.DictReader(f)
-        manquantes = set(COLONNES_REQUISES) - set(lecteur.fieldnames or [])
-        if manquantes:
-            raise ValueError(
-                "colonnes manquantes dans le CSV : %s (attendu : %s)"
-                % (", ".join(sorted(manquantes)), ", ".join(COLONNES_REQUISES)))
-        return [_ligne_vers_piece(ligne, num)
-                for num, ligne in enumerate(lecteur, start=2)]
+        return lire_pieces_texte(f.read())
+
+
+def lire_pieces_texte(texte: str) -> list:
+    """Comme :func:`lire_pieces`, sur un CSV déjà en mémoire."""
+    lecteur = csv.DictReader(io.StringIO(texte))
+    manquantes = set(COLONNES_REQUISES) - set(lecteur.fieldnames or [])
+    if manquantes:
+        raise ValueError(
+            "colonnes manquantes dans le CSV : %s (attendu : %s)"
+            % (", ".join(sorted(manquantes)), ", ".join(COLONNES_REQUISES)))
+    return [_ligne_vers_piece(ligne, num)
+            for num, ligne in enumerate(lecteur, start=2)]
 
 
 def _ligne_vers_piece(ligne: dict, num_ligne: int):

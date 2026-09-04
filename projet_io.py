@@ -91,12 +91,34 @@ def enregistrer(chemin: str, pieces: list, stock: list,
                 parametres: "opt.Parametres", epingles: list = ()) -> None:
     """``epingles`` : les :class:`~optimiseur.Debit` épinglés — le plan
     qu'on a validé à l'œil doit survivre à la fermeture."""
-    _ecrire_atomique(chemin, {
+    _ecrire_atomique(chemin, donnees_projet(pieces, stock, parametres,
+                                            epingles))
+
+
+def donnees_projet(pieces, stock, parametres, epingles=()) -> dict:
+    """Le projet tel qu'il s'écrit, avant JSON — la page web en fait un
+    fichier à télécharger."""
+    return {
         "pieces": [dataclasses.asdict(p) for p in pieces],
         "stock": [dataclasses.asdict(s) for s in stock],
         "parametres": dataclasses.asdict(parametres),
         "epingles": [dataclasses.asdict(d) for d in epingles],
-    })
+    }
+
+
+def depuis_donnees(donnees: dict):
+    """(pieces, stock, parametres, epingles) depuis le dictionnaire d'un
+    projet — le chemin inverse de :func:`donnees_projet`. Lève
+    ``ValueError`` s'il est mal formé."""
+    try:
+        pieces = [opt.Piece(**d) for d in donnees["pieces"]]
+        stock = _planches(donnees["stock"], "fichier de projet")
+        parametres = opt.Parametres(**donnees.get("parametres", {}))
+        epingles = [_debit(d) for d in donnees.get("epingles", [])]
+    except (KeyError, TypeError) as erreur:
+        raise ValueError("fichier de projet mal formé : %s" % erreur) \
+            from erreur
+    return pieces, stock, parametres, epingles
 
 
 def _debit(brut: dict) -> "opt.Debit":
