@@ -180,7 +180,7 @@ def decoupe(format_: str, debit, numero: int = 1, titre: str = "",
         return lightburn_planche(debit, numero, titre)
     if format_ == "gcode":
         import gcode
-        texte, _avertissements = gcode.programme(debit, reglages, numero,
-                                                 titre)
+        texte, _fautes, _remarques = gcode.programme(debit, reglages,
+                                                    numero, titre)
         return texte
     raise ValueError("format de découpe inconnu : %s" % format_)

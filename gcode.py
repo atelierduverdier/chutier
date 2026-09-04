@@ -282,23 +282,31 @@ def _parcours(pose, reglages: Reglages, avertissements: list) -> list:
     return chemins
 
 
-def _verifier(debit, parcours, reglages: Reglages,
-              avertissements: list) -> None:
-    """La vraie question n'est pas « deux tracés se croisent-ils », mais
-    « la fraise entre-t-elle dans la pièce d'à côté ». On compare donc ce
-    que l'outil BALAYE — le parcours élargi de son rayon — à la matière
-    finie des autres pièces. Une pièce imbriquée dans le trou d'une autre
-    est ainsi comptée juste, là où comparer les tracés pleins la donnait
-    toujours en conflit.
+def _verifier(debit, parcours, reglages: Reglages, avertissements: list,
+              remarques: list) -> None:
+    """Deux choses à vérifier, et elles n'ont pas la même gravité.
 
-    Sans cela le fichier reste valide et deux pièces se mangent l'une
-    l'autre : la fraise est plus large que l'écart entre contours du plan,
-    et rien ne le dit."""
+    **Une faute** : la fraise entre dans la pièce d'à côté. La vraie
+    question n'est pas « deux traces se croisent-ils » mais « l'outil
+    balaye-t-il la matière du voisin » — on compare donc le parcours
+    élargi du rayon à la matière finie des autres pièces, ce qui compte
+    juste une pièce imbriquée dans le trou d'une autre. Sans cela le
+    fichier reste valide et deux pièces se mangent l'une l'autre.
+
+    **Une faute aussi** : le CENTRE de l'outil sort de la planche. La
+    machine promène alors la fraise au-delà de la matière, là où sont les
+    serre-joints.
+
+    **Une simple remarque** : le FLANC de la fraise déborde du bord. Une
+    pièce à 5 mm du bord, fraisée à Ø 6, laisse l'outil raser l'arête sur
+    un millimètre — c'est le quotidien d'une découpe en panneau, et le
+    signaler comme une faute a fait sonner six alarmes pour rien
+    (4 septembre 2026). On dit de combien, et on passe."""
     Polygon, boite, LineString = _shapely()
     pl = debit.planche
     planche = boite(0, 0, pl.longueur, pl.largeur)
     rayon = reglages.diametre_fraise / 2.0
-    matiere, balaye, noms = [], [], []
+    matiere, balaye, centres, noms = [], [], [], []
     for pose, chemins in parcours:
         exterieur, trous = _anneaux_pose(pose)
         piece = Polygon(exterieur, holes=trous or None)
@@ -313,12 +321,25 @@ def _verifier(debit, parcours, reglages: Reglages,
         matiere.append(piece)
         balaye.append(passages[0] if len(passages) == 1
                       else passages[0].union(_union(passages[1:])))
+        traces = [LineString(list(points) + [points[0]])
+                  for points, _genre in chemins]
+        centres.append(traces[0] if len(traces) == 1
+                       else _union(traces))
     for i, nom_a in enumerate(noms):
-        if not planche.buffer(1e-6).contains(balaye[i]):
+        if not planche.buffer(1e-6).contains(centres[i]):
             avertissements.append(
-                "« %s » : la fraise sort de la planche — la marge au bord"
-                " doit valoir au moins le diamètre (%s mm), ou prenez une"
-                " fraise plus fine" % (nom_a, _n(reglages.diametre_fraise)))
+                "« %s » : le CENTRE de la fraise sort de la planche — la"
+                " marge au bord doit valoir au moins le rayon (%s mm)"
+                % (nom_a, _n(reglages.diametre_fraise / 2.0)))
+        elif not planche.buffer(1e-6).contains(balaye[i]):
+            debord = balaye[i].difference(planche)
+            largeur = max(-debord.bounds[0], -debord.bounds[1],
+                          debord.bounds[2] - pl.longueur,
+                          debord.bounds[3] - pl.largeur, 0.0)
+            remarques.append(
+                "« %s » : la fraise rase le bord de la planche et le"
+                " dépasse de %s mm — sans conséquence si rien n'est bridé"
+                " là" % (nom_a, _n(round(largeur, 1))))
         for j, nom_b in enumerate(noms):
             if i == j:
                 continue
@@ -417,11 +438,13 @@ def _passe(anneau: _Anneau, reglages: Reglages, z_haut: float, z_bas: float,
 
 def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
               titre: str = "") -> tuple:
-    """Le programme G-code d'une planche débitée, et ses avertissements.
+    """Le programme G-code d'une planche débitée, et ce qu'il faut en dire.
 
-    Rend ``(texte, avertissements)``. Les avertissements sont recopiés en
-    commentaires en tête du fichier : celui qui l'ouvre à la machine ne
-    lit pas forcément l'écran d'où il sort.
+    Rend ``(texte, avertissements, remarques)`` — les fautes d'un côté
+    (la fraise mord dans une voisine, son centre sort de la planche), ce
+    qui mérite seulement d'être su de l'autre (le flanc rase le bord).
+    Les deux sont recopiés en commentaires en tête du fichier : celui qui
+    l'ouvre à la machine ne lit pas forcément l'écran d'où il sort.
     """
     reglages = reglages or Reglages()
     pl = debit.planche
@@ -430,14 +453,14 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
             "l'épaisseur de la planche « %s » n'est pas renseignée : le"
             " G-code ne saurait pas jusqu'où descendre" % pl.reference)
     reglages.valider(pl.epaisseur)
-    avertissements = []
+    avertissements, remarques = [], []
 
     # Les pièces du bas vers le haut, de gauche à droite : on suit le
     # programme des yeux, à la machine, sans chercher où il en est.
     poses = sorted(debit.poses, key=lambda p: (round(p.y, 3), round(p.x, 3)))
     parcours = [(pose, _parcours(pose, reglages, avertissements))
                 for pose in poses]
-    _verifier(debit, parcours, reglages, avertissements)
+    _verifier(debit, parcours, reglages, avertissements, remarques)
 
     haut = reglages.hauteur_securite
     minutes = debit.longueur_fraisage / reglages.vitesse_avance
@@ -465,6 +488,8 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
     lignes.append("(origine en bas a gauche de la planche, Z0 = dessus)")
     for mot in avertissements:
         lignes.append("(ATTENTION : %s)" % _sans_parentheses(mot))
+    for mot in remarques:
+        lignes.append("(note : %s)" % _sans_parentheses(mot))
 
     lignes.append("G21 G90 G94 G17")
     if reglages.dialecte == "linuxcnc":
@@ -526,4 +551,4 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
         lignes.append("M9")
     lignes.append("G0 Z%s" % _n(haut))
     lignes.append("M2" if reglages.dialecte == "linuxcnc" else "M30")
-    return "\n".join(lignes) + "\n", avertissements
+    return "\n".join(lignes) + "\n", avertissements, remarques

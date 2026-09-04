@@ -1944,15 +1944,17 @@ class FenetrePrincipale(QMainWindow):
             if self._chemin else "Feuille de débit"
         ecrits = []
         avertissements = []
+        remarques = []
         try:
             for numero, debit in planches:
                 nom = ("%s%s" % (chemin, extension) if len(planches) == 1
                        else "%s-planche-%d%s" % (chemin, numero, extension))
                 if format_ == "gcode":
-                    texte, dits = gcode_mod.programme(debit, reglages, numero,
-                                                      titre)
+                    texte, fautes, dits = gcode_mod.programme(
+                        debit, reglages, numero, titre)
                     avertissements += ["planche %d : %s" % (numero, d)
-                                       for d in dits]
+                                       for d in fautes]
+                    remarques += dits
                 else:
                     texte = export_cnc.decoupe(format_, debit, numero, titre)
                 with open(nom, "w", encoding="utf-8") as f:
@@ -1962,13 +1964,22 @@ class FenetrePrincipale(QMainWindow):
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
         if avertissements:
-            # Ils sont déjà en tête des fichiers ; encore faut-il les voir
-            # avant de lancer la machine.
+            # Une faute arrête l'œil : la fraise mordrait dans une pièce
+            # voisine, ou promènerait son centre hors de la planche. Une
+            # remarque, elle, reste en tête du fichier — six alarmes pour
+            # un flanc qui rase le bord d'un millimètre, c'était crier au
+            # loup (4 septembre 2026).
             QMessageBox.warning(
                 self, "G-code écrit, avec des réserves",
                 "Le programme est écrit, mais :\n\n• %s"
                 % "\n• ".join(avertissements[:12]))
         self._retenir_dossier(ecrits[0])
+        if remarques and not avertissements:
+            self.statusBar().showMessage(
+                "%d fichier(s) écrit(s) · %d remarque(s) en tête des"
+                " programmes : %s" % (len(ecrits), len(remarques),
+                                      remarques[0]), 12000)
+            return
         self.statusBar().showMessage(
             "%d fichier(s) écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)
 

@@ -50,7 +50,9 @@ outwards around a part, inwards in its holes, the compensation usually
 left to a brittle G41/G42 —, in **passes** down into the spoilboard, with
 **tabs** so the part does not come free under the cutter, **ramps**
 instead of straight plunges, and holes cut **before** the outline. Two
-dialects, LinuxCNC (RS274) and GRBL. `tests/test_gcode.py` does not judge
+dialects, LinuxCNC (RS274) and GRBL. The header separates a **fault**
+(the cutter bites a neighbouring part, or its centre leaves the board)
+from a **remark** (its flank merely grazes the edge). `tests/test_gcode.py` does not judge
 the text: it **replays** the program in a simulator and checks what the
 cutter does. No laser here — on the workshop's machine that needs
 LaserAtelier. Or a **LightBurn** project (.lbrn, opened in a real

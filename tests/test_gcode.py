@@ -136,7 +136,7 @@ class Geometrie(unittest.TestCase):
         la pièce sortirait trop petite d'un diamètre entier."""
         debit = _debit_carre()
         for diametre in (4.0, 6.0, 10.0):
-            texte, _ = gcode.programme(
+            texte, _, _ = gcode.programme(
                 debit, gcode.Reglages(diametre_fraise=diametre, attaches=0))
             deplacements, _ = rejouer(texte)
             rayon = diametre / 2.0
@@ -164,7 +164,7 @@ class Geometrie(unittest.TestCase):
         tromper de sens, sur du contreplaqué, c'est un chant éclaté."""
         debit = _debit_carre()
         for sens, tour_horaire in (("avalant", True), ("opposition", False)):
-            texte, _ = gcode.programme(
+            texte, _, _ = gcode.programme(
                 debit, gcode.Reglages(sens=sens, attaches=0, longueur_rampe=0))
             deplacements, _ = rejouer(texte)
             for commentaire, attendu in (("tour de piece", tour_horaire),
@@ -180,7 +180,7 @@ class Geometrie(unittest.TestCase):
 
     def test_les_trous_se_percent_avant_le_tour(self):
         """L'inverse évide une pièce déjà libre, qui a bougé."""
-        texte, _ = gcode.programme(_debit_carre())
+        texte, _, _ = gcode.programme(_debit_carre())
         ordre = [c for c in re.findall(r"^\((trou|tour de piece)\)$", texte,
                                        re.M)]
         self.assertEqual(ordre, ["trou", "tour de piece"])
@@ -191,7 +191,7 @@ class Geometrie(unittest.TestCase):
                       trous=(((48, 48), (52, 48), (52, 52), (48, 52)),))
         debit = optimiser([piece], [Planche("cp", 400, 300, 15, "cp", 1,
                                             fil=False)], RAPIDE).debits[0]
-        texte, avertissements = gcode.programme(
+        texte, avertissements, _ = gcode.programme(
             debit, gcode.Reglages(diametre_fraise=6))
         self.assertTrue(any("plus petit que la fraise" in a
                             for a in avertissements))
@@ -204,8 +204,8 @@ class Passes(unittest.TestCase):
     def test_on_descend_par_passes_et_on_traverse(self):
         reglages = gcode.Reglages(profondeur_passe=4, depassement=0.5,
                                   attaches=0)
-        texte, _ = gcode.programme(_debit_carre(epaisseur=15))
-        texte, _ = gcode.programme(_debit_carre(epaisseur=15), reglages)
+        texte, _, _ = gcode.programme(_debit_carre(epaisseur=15))
+        texte, _, _ = gcode.programme(_debit_carre(epaisseur=15), reglages)
         deplacements, _ = rejouer(texte)
         fonds = sorted({round(d.a[2], 3) for d in deplacements if d.coupe})
         self.assertAlmostEqual(min(fonds), -15.5, places=3)
@@ -228,7 +228,7 @@ class Passes(unittest.TestCase):
     def test_aucun_rapide_ne_traverse_la_matiere(self):
         """Un G0 sous le dessus de la planche, c'est la fraise qui traverse
         le bois à vitesse de transit."""
-        texte, _ = gcode.programme(_debit_carre())
+        texte, _, _ = gcode.programme(_debit_carre())
         deplacements, _ = rejouer(texte)
         for d in deplacements:
             if not d.rapide:
@@ -243,7 +243,7 @@ class Passes(unittest.TestCase):
     def test_la_plongee_a_sa_propre_vitesse(self):
         reglages = gcode.Reglages(longueur_rampe=0, vitesse_plongee=250,
                                   vitesse_avance=1800)
-        texte, _ = gcode.programme(_debit_carre(), reglages)
+        texte, _, _ = gcode.programme(_debit_carre(), reglages)
         deplacements, _ = rejouer(texte)
         plongees = [d for d in deplacements
                     if not d.rapide and abs(d.a[2] - d.de[2]) > 1e-9
@@ -256,7 +256,7 @@ class Passes(unittest.TestCase):
     def test_la_rampe_descend_en_avancant(self):
         """Une plongée droite à pleine profondeur casse la fraise."""
         reglages = gcode.Reglages(longueur_rampe=25, attaches=0)
-        texte, _ = gcode.programme(_debit_carre(), reglages)
+        texte, _, _ = gcode.programme(_debit_carre(), reglages)
         deplacements, _ = rejouer(texte)
         obliques = [d for d in deplacements
                     if not d.rapide and abs(d.a[2] - d.de[2]) > 1e-6
@@ -274,7 +274,7 @@ class Attaches(unittest.TestCase):
     def test_elles_laissent_du_bois_sous_la_piece(self):
         reglages = gcode.Reglages(attaches=3, longueur_attache=6,
                                   hauteur_attache=1.5, depassement=0.5)
-        texte, _ = gcode.programme(_debit_carre(epaisseur=15), reglages)
+        texte, _, _ = gcode.programme(_debit_carre(epaisseur=15), reglages)
         deplacements, _ = rejouer(texte)
         hauteur = -(15 - 1.5)
         remontees = [d for d in deplacements
@@ -290,7 +290,7 @@ class Attaches(unittest.TestCase):
         """Une remontée en pleine coupe n'a qu'une raison d'être : une
         attache. Sans attaches, le Z ne fait que descendre — les rampes
         comprises — jusqu'au dégagement en rapide."""
-        texte, _ = gcode.programme(_debit_carre(), gcode.Reglages(attaches=0))
+        texte, _, _ = gcode.programme(_debit_carre(), gcode.Reglages(attaches=0))
         deplacements, _ = rejouer(texte)
         self.assertTrue([d for d in deplacements if d.coupe])
         for d in deplacements:
@@ -309,7 +309,7 @@ class Attaches(unittest.TestCase):
 class Dialectes(unittest.TestCase):
 
     def test_linuxcnc_melange_change_d_outil_et_finit_par_m2(self):
-        texte, _ = gcode.programme(_debit_carre(),
+        texte, _, _ = gcode.programme(_debit_carre(),
                                    gcode.Reglages(dialecte="linuxcnc", outil=3))
         _, mots = rejouer(texte)
         self.assertIn("G64", texte)
@@ -321,7 +321,7 @@ class Dialectes(unittest.TestCase):
     def test_grbl_refuse_ces_mots(self):
         """GRBL mélange nativement ($11) et n'a pas de table d'outils :
         G64, T/M6 et G43 y sont des erreurs."""
-        texte, _ = gcode.programme(_debit_carre(),
+        texte, _, _ = gcode.programme(_debit_carre(),
                                    gcode.Reglages(dialecte="grbl", outil=3))
         _, mots = rejouer(texte)
         for interdit in ("G64", "G43", "M6"):
@@ -338,7 +338,7 @@ class Dialectes(unittest.TestCase):
         n'est pas câblée ne fait rien du tout, et le fichier tourne sans
         air sans que rien ne le dise."""
         for code in ("", "M7", "M8"):
-            texte, _ = gcode.programme(_debit_carre(),
+            texte, _, _ = gcode.programme(_debit_carre(),
                                        gcode.Reglages(aspiration=code))
             _, mots = rejouer(texte)
             self.assertEqual(code in mots, bool(code))
@@ -347,7 +347,7 @@ class Dialectes(unittest.TestCase):
             gcode.programme(_debit_carre(), gcode.Reglages(aspiration="M42"))
 
     def test_la_broche_a_zero_ne_lance_rien(self):
-        texte, _ = gcode.programme(_debit_carre(),
+        texte, _, _ = gcode.programme(_debit_carre(),
                                    gcode.Reglages(vitesse_broche=0))
         _, mots = rejouer(texte)
         self.assertNotIn("M3", mots)
@@ -366,11 +366,41 @@ class Avertissements(unittest.TestCase):
                           Parametres(essais_melanges=0, processus=1,
                                      ecart_contours=6, marge_bord=8)).debits[0]
         self.assertEqual(len(debit.poses), 2)
-        _, fine = gcode.programme(debit, gcode.Reglages(diametre_fraise=3))
+        _, fine, _ = gcode.programme(debit, gcode.Reglages(diametre_fraise=3))
         self.assertEqual([a for a in fine if "mord" in a], [])
-        _, large = gcode.programme(debit, gcode.Reglages(diametre_fraise=12))
+        _, large, _ = gcode.programme(debit, gcode.Reglages(diametre_fraise=12))
         self.assertTrue(any("mord dans" in a for a in large))
         self.assertTrue(any("écart entre contours" in a for a in large))
+
+    def test_le_flanc_qui_rase_le_bord_n_est_qu_une_remarque(self):
+        """Une pièce à 5 mm du bord, fraisée à Ø 6, laisse l'outil raser
+        l'arête sur un millimètre : c'est le quotidien d'une découpe en
+        panneau. En faire une faute, c'était six alarmes pour rien."""
+        import dataclasses
+
+        import exemples
+        pieces, stock, params = exemples.formes_biscornues()
+        r = optimiser(pieces, stock, dataclasses.replace(params, processus=1))
+        for numero, debit in enumerate(r.debits, 1):
+            _, fautes, remarques = gcode.programme(
+                debit, gcode.Reglages(diametre_fraise=6), numero)
+            self.assertEqual(fautes, [], "une faute sur un plan cuttable")
+            self.assertTrue(remarques)
+            for mot in remarques:
+                self.assertIn("rase le bord", mot)
+                self.assertIn("sans conséquence", mot)
+
+    def test_le_centre_hors_de_la_planche_est_une_faute(self):
+        """Là, la machine promène la fraise au-delà de la matière, où sont
+        les serre-joints."""
+        import dataclasses
+
+        import exemples
+        pieces, stock, params = exemples.formes_biscornues()
+        r = optimiser(pieces, stock, dataclasses.replace(params, processus=1))
+        _, fautes, _ = gcode.programme(r.debits[0],
+                                       gcode.Reglages(diametre_fraise=12))
+        self.assertTrue(any("CENTRE" in f for f in fautes))
 
     def test_ils_sont_recopies_en_tete_du_fichier(self):
         """Celui qui ouvre le fichier à la machine ne lit pas l'écran d'où
@@ -380,11 +410,12 @@ class Avertissements(unittest.TestCase):
                       trous=(((48, 48), (52, 48), (52, 52), (48, 52)),))
         debit = optimiser([piece], [Planche("cp", 400, 300, 15, "cp", 1,
                                             fil=False)], RAPIDE).debits[0]
-        texte, avertissements = gcode.programme(debit)
+        texte, avertissements, remarques = gcode.programme(debit)
         self.assertTrue(avertissements)
         entete = texte.split("G21")[0]
-        for mot in avertissements:
+        for mot in avertissements + remarques:
             self.assertIn(mot.split(" — ")[0][:40].replace("(", "["), entete)
+        self.assertIn("ATTENTION", entete)
 
 
 class Robustesse(unittest.TestCase):
@@ -396,7 +427,7 @@ class Robustesse(unittest.TestCase):
                       FIL_INDIFFERENT, contour=CARRE)
         debit = optimiser([piece], [Planche("cp (chute)", 400, 300, 15, "cp",
                                             1, fil=False)], RAPIDE).debits[0]
-        texte, _ = gcode.programme(debit, titre="Projet (essai)")
+        texte, _, _ = gcode.programme(debit, titre="Projet (essai)")
         rejouer(texte)          # lève si un commentaire n'est pas refermé
 
     def test_une_planche_sciee_se_fraise_aussi(self):
@@ -405,7 +436,7 @@ class Robustesse(unittest.TestCase):
         r = optimiser([Piece("montant", 400, 60, 18, "sapin", 2)],
                       [Planche("sapin", 1000, 200, 18, "sapin", 1)],
                       Parametres(essais_melanges=0))
-        texte, _ = gcode.programme(r.debits[0], gcode.Reglages(attaches=2))
+        texte, _, _ = gcode.programme(r.debits[0], gcode.Reglages(attaches=2))
         deplacements, _ = rejouer(texte)
         self.assertTrue([d for d in deplacements if d.coupe])
 
@@ -417,7 +448,7 @@ class Robustesse(unittest.TestCase):
         r = optimiser(pieces, stock, dataclasses.replace(params, processus=1))
         reglages = gcode.Reglages(diametre_fraise=3)
         for numero, debit in enumerate(r.debits, 1):
-            texte, avertissements = gcode.programme(debit, reglages, numero)
+            texte, avertissements, _ = gcode.programme(debit, reglages, numero)
             self.assertEqual(avertissements, [], debit.planche.reference)
             deplacements, _ = rejouer(texte)
             pl = debit.planche

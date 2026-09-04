@@ -58,8 +58,13 @@ libère pas sous la fraise, des **rampes** au lieu de plongées droites, et
 les trous percés **avant** le tour. Deux dialectes : LinuxCNC (RS274) et
 GRBL. Réglages : diamètre, sens (avalant ou opposition), profondeur de
 passe, dépassement, avances XY et Z, broche, outil, attaches, rampe,
-aspiration M7/M8. Le programme dit en tête, en commentaires, si la fraise
-mord dans une pièce voisine ou sort de la planche.
+aspiration M7/M8. Le programme dit en tête, en commentaires, ce qu'il
+faut savoir — en séparant les deux gravités : une **faute** quand la
+fraise mord dans une pièce voisine ou promène son centre hors de la
+planche, une **remarque** quand son flanc rase seulement le bord. Une
+pièce à 5 mm du bord fraisée à Ø 6 laisse l'outil dépasser d'un
+millimètre : c'est le quotidien d'une découpe en panneau, et en faire une
+alarme ne servait qu'à les faire ignorer toutes.
 
 `tests/test_gcode.py` ne juge pas le texte : il **rejoue** le programme
 dans un simulateur qui tient l'état modal, et vérifie ce que la fraise
