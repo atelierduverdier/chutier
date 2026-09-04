@@ -38,6 +38,25 @@ deux références du même vert, une étiquette « chute » écrite par-dessus
 le titre d'une planche, et des cartouches tombés à huit pixels sur un
 brin de 4 m. Le dessin est le produit — il se regarde.
 
+**Les exports CNC se jugent dans les vrais logiciels**, pas sur le
+texte produit. Le DXF passe l'audit d'`ezdxf` (`pip install ezdxf` dans
+un venv jetable ; `tests/test_export_cnc.py` saute le test s'il manque).
+Le .lbrn s'ouvre dans le LightBurn 1.3.01 de la machine, sur un écran
+virtuel pour ne pas déranger la session :
+
+```bash
+Xvfb :99 -screen 0 1700x1050x24 &
+cp -r ~/.config/LightBurn /tmp/essai-lb/          # jamais la vraie config
+cd ~/Applications/LightBurn-1.3 && DISPLAY=:99 XDG_CONFIG_HOME=/tmp/essai-lb ./LightBurn fichier.lbrn
+DISPLAY=:99 import -window root /tmp/vue.png
+```
+
+Deux défauts n'ont été vus que comme ça : une `AppVersion` déclarée trop
+récente ouvrait sur un avertissement de perte de données (bouton par
+défaut sur NON), et un `<Shape Type="Text">` écrit à la main fait planter
+LightBurn par une faute de segmentation — d'où un .lbrn sans noms de
+pièces.
+
 **La version** est `VERSION` dans `optimiseur.py`, recopiée dans
 `web/app.js`, `sw.js` et `version.json` — `tests/test_version.py` refuse
 qu'elles divergent. On la monte, aux quatre endroits et en un seul commit,

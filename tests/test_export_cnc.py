@@ -38,6 +38,55 @@ def _paires_dxf(texte):
             for i in range(0, len(lignes) - 1, 2)]
 
 
+class LightBurn(unittest.TestCase):
+    """Ouvert dans un vrai LightBurn 1.3.01 le 4 septembre 2026 : la
+    géométrie arrive à l'échelle 1 en millimètres, trous compris, origine
+    en bas à gauche, les deux calques de coupe nommés. Ce que ce test
+    garde, c'est ce qui s'était trouvé faux ce jour-là."""
+
+    def test_la_version_declaree_n_est_pas_dans_le_futur(self):
+        """« AppVersion 1.4.00 » faisait ouvrir LightBurn 1.3 sur « This
+        file was saved with a newer version… resaving it could cause data
+        loss. Continue ? », bouton par défaut sur NON. On déclare la plus
+        ANCIENNE version qui comprenne ce format."""
+        texte = export_cnc.lightburn_planche(_debit(), 1, "essai")
+        version = re.search(r'AppVersion="([\d.]+)"', texte).group(1)
+        self.assertLessEqual([int(n) for n in version.split(".")],
+                             [1, 3, 1], "version déclarée trop récente")
+
+    def test_pas_de_texte_dans_le_projet(self):
+        """Un <Shape Type="Text"> écrit à la main, même sur un calque
+        outil, fait planter LightBurn 1.3.01 par une faute de
+        segmentation — deux fois sur deux. Le .lbrn ne porte que de la
+        géométrie ; les noms sont dans le SVG et le calque NOMS du DXF."""
+        texte = export_cnc.lightburn_planche(_debit(), 1, "essai")
+        self.assertNotIn('Type="Text"', texte)
+        self.assertIn('Type="Path"', texte)
+
+    def test_les_deux_calques_de_coupe_sont_nommes(self):
+        racine = ET.fromstring(export_cnc.lightburn_planche(_debit(), 1, "e"))
+        noms = [c.find("name").get("Value")
+                for c in racine.iter("CutSetting")]
+        self.assertEqual(noms, ["Pièces", "Tour de planche (repère)"])
+
+    def test_la_planche_donne_la_boite_du_projet(self):
+        """Une sélection totale, dans LightBurn, doit mesurer exactement
+        les cotes de la planche : c'est ce qui prouve l'échelle 1."""
+        d = _debit()
+        racine = ET.fromstring(export_cnc.lightburn_planche(d, 1, "e"))
+        points = []
+        for forme in racine.iter("Shape"):
+            for x, y in re.findall(r"V(-?[\d.]+) (-?[\d.]+)",
+                                   forme.find("VertList").text):
+                points.append((float(x), float(y)))
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        self.assertAlmostEqual(min(xs), 0.0, places=3)
+        self.assertAlmostEqual(min(ys), 0.0, places=3)
+        self.assertAlmostEqual(max(xs), d.planche.longueur, places=3)
+        self.assertAlmostEqual(max(ys), d.planche.largeur, places=3)
+
+
 class XmlValide(unittest.TestCase):
     """Une référence de planche ou de pièce vient de la saisie : elle peut
     porter « & », « < » ou une apostrophe. Le SVG de découpe s'écrivait

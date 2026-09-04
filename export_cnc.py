@@ -13,7 +13,17 @@ comme sur la machine, sans rien d'autre que la bibliothèque standard :
 - **LightBurn** (.lbrn) : un ``<Shape Type="Path">`` par contour, sommets
   ``V`` et segments ``L`` comme LaserAtelier les relit, deux calques de
   coupe (0 les pièces, 1 le tour de planche, à désactiver dans
-  LightBurn si on ne veut pas le brûler).
+  LightBurn si on ne veut pas le brûler). **De la géométrie, et rien
+  d'autre** : pas de noms de pièces. Un ``<Shape Type="Text">`` écrit à
+  la main, même sur un calque outil, fait planter LightBurn 1.3.01 par
+  une faute de segmentation — deux fois sur deux, le 4 septembre 2026.
+  Pour lire les noms, c'est le SVG ou le DXF (calque NOMS).
+
+Vérifié le 4 septembre 2026 en ouvrant les fichiers produits dans un
+**vrai LightBurn 1.3.01** : les deux calques de coupe portent leur nom
+français, la géométrie arrive à l'échelle 1 en millimètres (une sélection
+totale mesure exactement les cotes de la planche), les trous des pièces
+sont là, et l'origine est en bas à gauche.
 
 Une pose sans contour (un rectangle) s'écrit comme son rectangle.
 """
@@ -107,7 +117,14 @@ def lightburn_planche(debit, numero: int = 1, titre: str = "") -> str:
     pl = debit.planche
     lignes = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        '<LightBurnProject AppVersion="1.4.00" FormatVersion="1"'
+        # AppVersion : la plus ANCIENNE qui comprenne ce format, pas la
+        # plus récente. Déclarer « 1.4.00 » faisait ouvrir LightBurn 1.3
+        # sur « This file was saved with a newer version… resaving it
+        # could cause data loss. Continue ? », bouton par défaut sur NON
+        # (vu le 4 septembre 2026 sur LightBurn 1.3.01). Le fichier se
+        # chargeait bien, mais il fallait passer outre un avertissement de
+        # perte de données pour le voir.
+        '<LightBurnProject AppVersion="1.0.06" FormatVersion="1"'
         ' MaterialHeight="0" MirrorX="False" MirrorY="False">',
         '  <!-- %s — planche %d : %s (chutier, mm, Y vers le haut) -->'
         % (escape(titre or "Chutier"), numero, escape(pl.reference)),

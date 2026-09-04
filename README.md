@@ -46,7 +46,12 @@ pièce à fil indifférent. Fichier → **Exporter la découpe** sort chaque
 planche à l'échelle 1 (mm), contour de la planche et contours fermés des
 pièces, en **SVG**, en **DXF** (R12, calques PIECES, PLANCHE, NOMS) ou en
 projet **LightBurn** (.lbrn, calque 0 les pièces, calque 1 le tour de
-planche), pour la chaîne CNC ou le laser.
+planche), pour la chaîne CNC ou le laser. Le DXF est relu sans une
+correction par l'audit d'`ezdxf`, et le .lbrn a été ouvert dans un vrai
+**LightBurn 1.3.01** : géométrie à l'échelle 1 en millimètres, trous
+compris, origine en bas à gauche, les deux calques nommés. Le .lbrn ne
+porte pas les noms des pièces — pour eux, le SVG ou le calque NOMS du
+DXF.
 
 Le moteur (`imbrication.py`, sur `shapely` ≥ 2.1) est un vrai
 **no-fit polygon**, comme SVGnest, Deepnest et libnest2d : pour chaque

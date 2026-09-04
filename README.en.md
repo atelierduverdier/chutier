@@ -43,7 +43,11 @@ Settings "La CNC": gap between contours (bit diameter + clearance),
 margin to the edge, number of orientations tried for a part with free
 grain. File → **Export the cut** writes every board at scale 1 (mm),
 board outline and closed contours of the parts, as **SVG**, **DXF**
-(R12, layers PIECES, PLANCHE, NOMS) or a **LightBurn** project (.lbrn,
+(R12, layers PIECES, PLANCHE, NOMS; read back by `ezdxf`'s audit
+without a single fix) or a **LightBurn** project (.lbrn, opened in a real
+LightBurn 1.3.01: geometry at scale 1 in millimetres, holes included,
+origin bottom left, both layers named — but no part names, for those use
+the SVG or the DXF's NOMS layer;
 layer 0 the parts, layer 1 the board outline), for the CNC chain or the
 laser.
 
