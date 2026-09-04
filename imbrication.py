@@ -47,6 +47,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import random
+import sys
 
 import numpy as np
 import shapely
@@ -123,9 +124,11 @@ def _minkowski(a, b_retournee):
 
 
 # Les caches vivent au niveau du module, pas de la stratégie : un NFP
-# vaut pour toutes les stratégies, et un processus fils créé par fork
-# hérite du cache déjà rempli — le précalcul se fait une fois, en
-# parallèle, avant de lancer les stratégies.
+# vaut pour toutes les stratégies. Le précalcul se fait une fois, en
+# parallèle, avant de lancer les stratégies ; les processus fils
+# reçoivent les caches par l'initialiseur du pool (_recevoir_caches),
+# quel que soit le mode de démarrage — forkserver de préférence : un
+# fork depuis un processus Qt, avec ses fils C++, peut se bloquer.
 _VARIANTES = {}        # (cle forme, angle) -> (exact, simplifié élargi, w, h)
 _NFPS = {}             # (ecart, cle_a, cle_b) -> NFP, cle_a <= cle_b
 _CADRES = {}           # (wkb du bord utile, cle_b) -> NFP du bord
@@ -533,6 +536,24 @@ def _tache(args):
     return opt._score_solution(sol, params), sol
 
 
+def _emballer_caches():
+    """Les caches en WKB, transportables vers un processus fils."""
+    return ({cle: (e.wkb, s.wkb, w, h) for cle, (e, s, w, h)
+             in _VARIANTES.items()},
+            {cle: g.wkb for cle, g in _NFPS.items()},
+            {cle: g.wkb for cle, g in _CADRES.items()})
+
+
+def _recevoir_caches(variantes, nfps, cadres):
+    """Initialiseur des fils : reconstruit les caches du parent."""
+    for cle, (e, s, w, h) in variantes.items():
+        _VARIANTES[cle] = (shapely.from_wkb(e), shapely.from_wkb(s), w, h)
+    for cle, wkb in nfps.items():
+        _NFPS[cle] = shapely.from_wkb(wkb)
+    for cle, wkb in cadres.items():
+        _CADRES[cle] = shapely.from_wkb(wkb)
+
+
 def _tache_nfp(args):
     genre, cle, ecart = args
     if genre == "nfp":
@@ -590,6 +611,22 @@ def _ranger_nfp(resultats, ecart):
             _CADRES[cle] = geom
 
 
+def _contexte():
+    """forkserver de préférence : un fork depuis un processus Qt, avec
+    ses fils C++, peut se bloquer, et Python le dénonce. Mais forkserver
+    réimporte le module principal, ce qu'un script lu sur l'entrée
+    standard n'a pas — fork alors, et séquentiel en dernier recours."""
+    methodes = multiprocessing.get_all_start_methods()
+    principal = sys.modules.get("__main__")
+    fichier = getattr(principal, "__file__", None)
+    reimportable = bool(fichier) and os.path.exists(fichier)
+    if "forkserver" in methodes and reimportable:
+        return multiprocessing.get_context("forkserver")
+    if "fork" in methodes:
+        return multiprocessing.get_context("fork")
+    return None
+
+
 def _nb_processus(params, nb_taches):
     voulu = params.processus if params.processus > 0 else (os.cpu_count() or 1)
     return max(1, min(voulu, nb_taches))
@@ -608,20 +645,20 @@ def imbriquer(unites: list, stock_unites: list,
     taches_nfp = _taches_nfp(unites, stock_unites, params)
     ecart = params.ecart_contours
     resultats = None
-    if nb > 1 and len(unites) >= 6:
+    contexte = _contexte() if nb > 1 and len(unites) >= 6 else None
+    if contexte is not None:
         try:
-            methodes = multiprocessing.get_all_start_methods()
-            contexte = multiprocessing.get_context(
-                "fork" if "fork" in methodes else None)
             # Deux pools, dans l'ordre : les NFP d'abord ; les fils du
-            # second pool héritent du cache rempli, sans rien recalculer.
+            # second reçoivent le cache rempli, sans rien recalculer.
             if taches_nfp:
-                with contexte.Pool(min(nb, len(taches_nfp))) as pool:
+                with contexte.Pool(min(nb, len(taches_nfp)), _recevoir_caches,
+                                   _emballer_caches()) as pool:
                     _ranger_nfp(pool.map(_tache_nfp, taches_nfp), ecart)
                 taches_nfp = []
-            with contexte.Pool(min(nb, len(taches))) as pool:
+            with contexte.Pool(min(nb, len(taches)), _recevoir_caches,
+                               _emballer_caches()) as pool:
                 resultats = pool.map(_tache, taches)
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError, ImportError):
             resultats = None            # on repasse en séquentiel
     if resultats is None:
         if taches_nfp:
