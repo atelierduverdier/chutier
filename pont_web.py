@@ -13,14 +13,13 @@ telle qu'on la tape) à la place des trois champs : on la traduit ici.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 
 import contours_svg
 import couleurs
 import csv_io
-import base64
-
 import exemples
 import export_cnc
 import fcstd_io
@@ -73,20 +72,54 @@ def _planche(d: dict) -> opt.Planche:
     return opt.Planche(**champs)
 
 
-def deplacer(epingle_json: str, indice: int, dx: float, dy: float,
-             parametres_json: str) -> str:
-    """Une pièce glissée à la souris sur une planche imbriquée : le débit
-    modifié (même forme que dans ``calculer``), ou ``{"refus": …}``."""
+def deplacer(entree: str, resultat_json: str, numero: int, indice: int,
+             dx: float, dy: float, nb_epingles: int = 0) -> str:
+    """Une pièce glissée à la souris sur une planche imbriquée.
+
+    Rend le résultat ENTIER refait — pas seulement la planche touchée :
+    le bilan, les chutes groupées et le stock d'après en dépendent, et
+    « Ranger les chutes au stock » rangeait sinon les chutes d'avant le
+    déplacement, du bois qui n'existe pas.
+
+    ``{"refus": …}`` si le déplacement sort de la planche ou approche
+    trop une voisine ; ``{"erreur": …}`` si l'entrée est mal formée."""
     import imbrication
-    import projet_io
-    debit = projet_io._debit(json.loads(epingle_json))
-    params = _parametres(json.loads(parametres_json or "{}"))
-    nouveau = imbrication.deplacer(debit, int(indice), float(dx), float(dy),
-                                   params)
-    if nouveau is None:
-        return json.dumps({"refus": "Déplacement refusé : hors de la planche"
-                           " (marge comprise) ou trop près d'une autre pièce."})
-    return json.dumps(_debit(nouveau))
+    try:
+        donnees = json.loads(entree)
+        stock = [_planche(d) for d in donnees.get("stock", [])
+                 if (d.get("reference") or "").strip()]
+        params = _parametres(donnees.get("parametres") or {})
+        precedent = json.loads(resultat_json)
+        debits = [projet_io._debit(d) for d in precedent.get("debits", [])]
+        numero, indice = int(numero), int(indice)
+        if not 1 <= numero <= len(debits):
+            raise ValueError("planche %d inconnue" % numero)
+        debit = debits[numero - 1]
+        if not 0 <= indice < len(debit.poses):
+            raise ValueError("pièce %d inconnue sur cette planche" % indice)
+        nouveau = imbrication.deplacer(debit, indice, float(dx), float(dy),
+                                       params)
+        if nouveau is None:
+            return json.dumps(
+                {"refus": "Déplacement refusé : hors de la planche (marge"
+                          " comprise) ou trop près d'une autre pièce."},
+                ensure_ascii=False)
+        debits[numero - 1] = nouveau
+        # Une planche qu'on retouche s'épingle, et les épinglées ouvrent la
+        # liste : elle prend donc rang juste après les épingles déjà là.
+        if numero - 1 >= int(nb_epingles):
+            debits.insert(int(nb_epingles), debits.pop(numero - 1))
+        non_placees = [opt.NonPlacee(opt.Piece(n.get("reference", ""), 1, 1),
+                                     int(n.get("exemplaires", 0)),
+                                     n.get("raison", ""))
+                       for n in precedent.get("non_placees", [])]
+        r = opt.Resultat(debits, non_placees, opt._bilan(debits, non_placees))
+        return json.dumps({"ok": True, "resultat": _resultat(r, stock)},
+                          ensure_ascii=False)
+    except Exception as erreur:              # noqa: BLE001 — rien ne doit
+        return json.dumps({"erreur": str(erreur)}, ensure_ascii=False)
+        #  remonter au navigateur : une exception Python y devient un rejet
+        #  de promesse que personne n'attrape, et le geste reste sans réponse.
 
 
 def _parametres(d: dict) -> opt.Parametres:
@@ -182,7 +215,9 @@ def calculer(entree: str) -> str:
         return json.dumps({"ok": True, "resultat": _resultat(r, stock),
                            "epingles_relachees": relachees},
                           ensure_ascii=False)
-    except (ValueError, TypeError, KeyError) as erreur:
+    except Exception as erreur:              # noqa: BLE001 — une exception
+        # inattendue devient un rejet de promesse que la page n'attrape
+        # pas : le calcul resterait sans réponse, bouton grisé.
         return json.dumps({"ok": False, "erreur": str(erreur)},
                           ensure_ascii=False)
 
@@ -311,9 +346,14 @@ def svg_planche(debit_json: str, numero: int = 1, titre: str = "") -> str:
 
 def decoupe(format_: str, debit_json: str, numero: int = 1,
             titre: str = "") -> str:
-    """La découpe d'une planche en svg, dxf ou lbrn."""
-    debit = projet_io._debit(json.loads(debit_json))
-    return export_cnc.decoupe(format_, debit, numero, titre)
+    """La découpe d'une planche en svg, dxf ou lbrn — ou, si le débit
+    reçu est mal formé, ``{"erreur": …}`` (un JSON commençant par « { » :
+    la page le reconnaît à cela, un SVG commence par « <?xml »)."""
+    try:
+        debit = projet_io._debit(json.loads(debit_json))
+        return export_cnc.decoupe(format_, debit, numero, titre)
+    except Exception as erreur:              # noqa: BLE001
+        return json.dumps({"erreur": str(erreur)}, ensure_ascii=False)
 
 
 def depuis_fcstd(base64_du_fichier: str) -> str:

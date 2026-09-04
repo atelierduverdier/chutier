@@ -776,8 +776,13 @@ def _meilleure_dans(o: _Ouverte, piece: Piece, params: Parametres, fit: str,
         for ior, (dx, dy, piv) in enumerate(_orientations(piece, o.planche,
                                                           params)):
             if split == "bandes" and not o.pleine_largeur(r) \
-                    and dy < r.h - EPS and dx < r.w - EPS:
-                continue        # ni la hauteur de bande, ni sa longueur
+                    and dy < r.h - EPS:
+                continue        # dans une bande ouverte, on ne fait que
+                                # tronçonner : une pièce qui remplit la
+                                # LONGUEUR du reste sans sa hauteur y
+                                # provoquait un refend, puis un tronçonnage
+                                # dans le sous-morceau — la recoupe de
+                                # longueur que ce mode exclut.
             if dx <= r.w + EPS and dy <= r.h + EPS:
                 cle = (_score_pose(r, dx, dy, fit), ir, ior)
                 if meilleur is None or cle < meilleur[0]:
@@ -918,7 +923,12 @@ def _preparer(o: _Ouverte, params: Parametres, split: str):
     o.largeur_utile = x1 - x0
     _liberer(o, x0, y0, x1 - x0, y1 - y0)
     for zone in pl.defauts:
-        _retirer_zone(o, zone, trait, split)
+        # En coupe en bandes, un défaut s'écarte par des délignages pleine
+        # longueur : _retirer_zone ne connaît pas « bandes » et retombait
+        # sur « auto », qui tronçonnait d'abord — plus aucun reste ne
+        # courait alors sur toute la longueur, et la planche ne recevait
+        # plus RIEN (13 pièces non placées pour un nœud de 100 × 80).
+        _retirer_zone(o, zone, trait, "h" if split == "bandes" else split)
 
 
 def _liberer(o: _Ouverte, x: float, y: float, w: float, h: float):
@@ -1202,9 +1212,14 @@ def _score_solution(sol: _Solution, params: Parametres):
     encombrent."""
     nb_non = sum(n.exemplaires for n in sol.non_placees)
     cout = sum(d.planche.prix for d in sol.debits if not d.planche.chute)
-    neuve = sum(d.planche.aire * d.planche.epaisseur for d in sol.debits
+    # « ou 1 » : une colonne Épaisseur vide vaut zéro partout (csv_io la
+    # lit ainsi), et le volume annulait deux critères sur six — le plan ne
+    # se jugeait plus qu'au nombre de coupes, 129 000 mm² de chutes
+    # réutilisables partant aux pertes sans un mot.
+    neuve = sum(d.planche.aire * (d.planche.epaisseur or 1.0) for d in sol.debits
                if not d.planche.chute)
-    perte = round(sum(d.perte * d.planche.epaisseur for d in sol.debits), 3)
+    perte = round(sum(d.perte * (d.planche.epaisseur or 1.0)
+                      for d in sol.debits), 3)
     coupes = sum(len(d.coupes) for d in sol.debits)
     subsistantes = [c.aire for d in sol.debits for c in d.chutes]
     subsistantes += [pl.aire for pl, _ex in sol.dispo_restant if pl.chute]
@@ -1465,6 +1480,12 @@ def _valider(pieces: list, stock: list, params: Parametres):
         if p.contour and len(p.contour) < 3:
             raise ValueError("pièce « %s » : un contour demande au moins"
                              " trois points" % p.reference)
+        if p.contour and abs(_aire_polygone(p.contour)) <= EPS:
+            # Trois points alignés, ou un contour croisé en papillon :
+            # shapely les réduisait à un polygone vide, et l'imbrication
+            # cassait sur un NaN bien plus loin.
+            raise ValueError("pièce « %s » : contour d'aire nulle"
+                             % p.reference)
         if p.trous and not p.contour:
             raise ValueError("pièce « %s » : des trous sans contour"
                              % p.reference)

@@ -409,6 +409,162 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class CorrectionsDAudit(unittest.TestCase):
+    """Six défauts trouvés par un audit le 4 septembre 2026 — chacun se
+    reproduisait à l'exécution, aucun ne se voyait à la lecture."""
+
+    def setUp(self):
+        # Hors écran, une boîte modale n'a personne pour la fermer : la
+        # suite entière s'y fige. On les remplace par des espions.
+        self._muettes = contextlib.ExitStack()
+        self.boites = {}
+        for nom in ("information", "warning", "critical"):
+            self.boites[nom] = self._muettes.enter_context(mock.patch.object(
+                interface.QMessageBox, nom,
+                return_value=interface.QMessageBox.StandardButton.Ok))
+        self.addCleanup(self._muettes.close)
+
+    def _textes_dits(self):
+        return [str(a) for espion in self.boites.values()
+                for appel in espion.call_args_list for a in appel.args]
+
+    def _atelier_intact(self):
+        """Le fichier d'atelier est partagé par toute la suite : un test
+        qui y ajoute une planche ouvre les fenêtres suivantes SANS pièces
+        (l'accueil ne charge alors pas son exemple), et le premier calcul
+        venu se plante sur une modale que personne ne ferme."""
+        avant = (open(_ATELIER, encoding="utf-8").read()
+                 if os.path.exists(_ATELIER) else None)
+
+        def remettre():
+            if avant is None:
+                if os.path.exists(_ATELIER):
+                    os.remove(_ATELIER)
+            else:
+                with open(_ATELIER, "w", encoding="utf-8") as f:
+                    f.write(avant)
+        self.addCleanup(remettre)
+
+    def test_recharger_l_atelier_garde_ce_qui_vient_d_etre_tape(self):
+        """« Recharger le stock de l'atelier » relisait le fichier sans
+        y écrire d'abord : la ligne cochée Atelier qu'on venait de taper
+        disparaissait de la table ET du fichier."""
+        self._atelier_intact()
+        f = _fenetre()
+        f.table_stock.ajouter_ligne(reference="rayon chêne neuf", longueur=2000,
+                                    largeur=150, epaisseur=27, matiere="chêne",
+                                    atelier=True)
+        f._recharger_atelier()
+        APP.processEvents()
+        references = [s.reference for s in f.table_stock.stock()]
+        self.assertIn("rayon chêne neuf", references)
+        self.assertIn("rayon chêne neuf",
+                      [s.reference for s in projet_io.lire_atelier(_ATELIER)])
+        f._modifie = False
+        f.close()
+
+    def test_un_document_neuf_ouvre_une_pile_d_annulation_neuve(self):
+        """Ctrl+Z sur un projet fraîchement ouvert rejouait la saisie du
+        PRÉCÉDENT — et Ctrl+S l'écrivait dans son fichier."""
+        f = _fenetre()
+        f._charger_exemple()
+        APP.processEvents()
+        self.assertTrue([p.reference for p in f.table_pieces.pieces()])
+        chemin = os.path.join(tempfile.mkdtemp(), "projet-b.json")
+        projet_io.enregistrer(
+            chemin, [opt.Piece("plateau chêne", 900, 400, 27, "chêne")],
+            [opt.Planche("chêne", 2000, 500, 27, "chêne")], opt.Parametres())
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               staticmethod(lambda *a, **k: (chemin, ""))):
+            f._ouvrir()
+        APP.processEvents()
+        self.assertEqual([p.reference for p in f.table_pieces.pieces()],
+                         ["plateau chêne"])
+        f._annuler()
+        APP.processEvents()
+        self.assertEqual([p.reference for p in f.table_pieces.pieces()],
+                         ["plateau chêne"], "l'annulation a rejoué l'ancien")
+        self.assertIn("Rien à annuler", f.statusBar().currentMessage())
+        f._modifie = False
+        f.close()
+
+    def test_annuler_rend_au_plan_ses_epingles(self):
+        """Le liseré ÉPINGLÉE vient de vue.epinglees : sans mise à jour,
+        « Relâcher la planche » restait proposé sur une planche qui ne
+        l'était plus, et ne faisait rien."""
+        f = _fenetre()
+        f._calculer()
+        APP.processEvents()
+        f._epingler(1)
+        APP.processEvents()
+        self.assertEqual(f.vue.epinglees, {1})
+        f._annuler()
+        APP.processEvents()
+        self.assertEqual(len(f._epingles), len(f.vue.epinglees))
+        f._modifie = False
+        f.close()
+
+    def test_supprimer_un_contour_efface_aussi_la_forme(self):
+        """Suppr effaçait « ◇ 6 pts » en laissant le polygone dans la
+        donnée de la cellule : la table montrait un rectangle, la fraise
+        découpait toujours la forme."""
+        f = _fenetre()
+        f._charger_exemple_formes()
+        APP.processEvents()
+        table = f.table_pieces
+        colonne = table.COLONNE_CONTOUR
+        self.assertTrue(table.item(0, colonne).data(tsa.ROLE_VALEUR))
+        table.setCurrentCell(0, colonne)
+        table.vider_cellules()
+        self.assertEqual(table.item(0, colonne).text(), "")
+        self.assertFalse(table.item(0, colonne).data(tsa.ROLE_VALEUR))
+        self.assertFalse(table.pieces()[0].contour)
+        f._modifie = False
+        f.close()
+
+    def test_les_cotes_d_une_chute_biscornue_ne_se_tapent_pas(self):
+        """Elles viennent du polygone : la table acceptait 999 × 888 et
+        le débit continuait de scier 400 × 300."""
+        f = _fenetre()
+        contour = ((0, 0), (400, 0), (400, 300), (0, 300))
+        f.table_stock.ajouter_ligne(reference="biscornue", longueur=400,
+                                    largeur=300, epaisseur=15,
+                                    matiere="contreplaqué", chute=True,
+                                    contour=contour, trous=())
+        ligne = f.table_stock.rowCount() - 1
+        for colonne in (1, 2):
+            drapeaux = f.table_stock.item(ligne, colonne).flags()
+            self.assertFalse(bool(drapeaux & Qt.ItemFlag.ItemIsEditable),
+                             "la cote se tape encore")
+        f._modifie = False
+        f.close()
+
+    def test_glisser_refuse_un_plan_perime_et_marque_le_projet(self):
+        f = _fenetre()
+        f._charger_exemple_formes()
+        APP.processEvents()
+        f._calculer()
+        APP.processEvents()
+        debit = f._resultat.debits[-1]
+        f._a_jour = False
+        f._deplacer_pose(len(f._resultat.debits), debit.poses[0], 1, 0)
+        self.assertEqual(f._epingles, [], "déplacement accepté sur plan périmé")
+        self.assertTrue(any("Recalculez" in d for d in self._textes_dits()))
+        f._a_jour = True
+        for indice, pose in enumerate(debit.poses):
+            for dx, dy in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)):
+                f._deplacer_pose(len(f._resultat.debits), pose, dx, dy)
+                if f._epingles:
+                    break
+            if f._epingles:
+                break
+        self.assertTrue(f._epingles)
+        self.assertTrue(f._modifie)
+        self.assertIn("●", f.windowTitle())
+        f._modifie = False
+        f.close()
+
+
 class Deplacement(unittest.TestCase):
 
     def test_une_piece_glissee_epingle_sa_planche(self):

@@ -159,6 +159,21 @@ function lancerWorker() {
   };
 }
 
+/**
+ * Comme `appeler`, mais qui ne laisse jamais un rejet filer : une
+ * interruption (Échap rejette les promesses en attente) ou une exception
+ * Python laissaient sinon le geste sans réponse, et le message d'erreur
+ * dans la console plutôt que sous les yeux. Rend `null` en cas d'échec.
+ */
+async function tenter(fn, ...args) {
+  try {
+    return await appeler(fn, ...args);
+  } catch (erreur) {
+    $("#etat").textContent = t("Le calcul a échoué : ") + erreur.message;
+    return null;
+  }
+}
+
 function appeler(fn, ...args) {
   return new Promise((resolve, reject) => {
     const id = ++compteur;
@@ -266,7 +281,10 @@ const instantane = () => JSON.stringify({ pieces: etat.pieces, stock: etat.stock
 function consigner() {
   const nouveau = instantane();
   if (nouveau === historique.courant) return;
-  historique.passe.push(historique.courant); historique.passe.splice(0, historique.passe.length - 100);
+  // Tant que Python charge, `courant` peut valoir null (rien n'a encore
+  // été consigné) alors que les boutons répondent déjà : le pousser
+  // mettait un null dans la pile, et Annuler explosait dessus.
+  if (historique.courant !== null) { historique.passe.push(historique.courant); historique.passe.splice(0, historique.passe.length - 100); }
   historique.futur = []; historique.courant = nouveau;
 }
 function marquerChangement() {
@@ -282,7 +300,16 @@ function rejouer(texte) {
   rendreTable("pieces"); rendreTable("stock"); rafraichirEtat(); enregistrerAtelier(); brouillonPlusTard();
 }
 function annuler() { clearTimeout(historique.minuterie); consigner(); if (!historique.passe.length) { $("#etat").textContent = t("Rien à annuler"); return; } historique.futur.push(historique.courant); rejouer(historique.passe.pop()); }
-function refaire() { if (!historique.futur.length) { $("#etat").textContent = t("Rien à refaire"); return; } historique.passe.push(historique.courant); rejouer(historique.futur.pop()); }
+function refaire() {
+  // La saisie en cours se consigne d'abord, comme dans annuler() : sinon
+  // ce qu'on vient de taper dans les 500 ms de la minuterie est perdu.
+  clearTimeout(historique.minuterie);
+  const avant = historique.futur.length;
+  consigner();
+  historique.futur = historique.futur.length ? historique.futur : [];
+  if (!avant || !historique.futur.length) { $("#etat").textContent = t("Rien à refaire"); return; }
+  historique.passe.push(historique.courant); rejouer(historique.futur.pop());
+}
 
 // -- brouillon : le projet en cours survit à un rechargement ----------------------------
 
@@ -354,7 +381,7 @@ function cellule(nom, ligne, c, i) {
     td.textContent = n ? t`◇ ${n} pts` + (nt ? t` · ${nt} trou${nt > 1 ? "s" : ""}` : "") : "";
     td.title = t(c.info);
   } else {
-    const input = el("input", { type: "text", title: c.info, value: ligne[c.cle] ?? "", "data-colonne": c.cle,
+    const input = el("input", { type: "text", title: t(c.info), value: ligne[c.cle] ?? "", "data-colonne": c.cle,
       oninput: (e) => { ligne[c.cle] = e.target.value; e.target.classList.toggle("faux", (c.genre === "nombre" || c.genre === "entier") && e.target.value.trim() !== "" && Number.isNaN(Number(e.target.value.replace(",", ".")))); changer(); if (nom === "stock") enregistrerAtelier(); },
       onpaste: (e) => coller(nom, i, c, e), onkeydown: (e) => touche(nom, i, e) });
     if (c.genre === "matiere" || c.genre === "planche") {
@@ -676,7 +703,8 @@ function lireFichier(input, binaire = false) { return new Promise((resolve) => {
 
 async function ouvrirProjet() {
   const f = await lireFichier($("#f-projet")); if (!f) return;
-  const d = JSON.parse(await appeler("depuis_projet", f.texte));
+  const brut = await tenter("depuis_projet", f.texte); if (brut === null) return;
+  const d = JSON.parse(brut);
   if (d.erreur) { alerter(t("Ouverture impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.stock = [...d.stock.filter(s => !s.atelier).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
@@ -686,29 +714,33 @@ async function ouvrirProjet() {
   rendreTout(); calculer(); marquerChangement();
 }
 async function enregistrerProjet() {
-  const texte = await appeler("vers_projet", JSON.stringify({ pieces: etat.pieces, stock: etat.stock.filter(s => !s.atelier), parametres: etat.parametres, epingles: etat.epingles }));
+  const texte = await tenter("vers_projet", JSON.stringify({ pieces: etat.pieces, stock: etat.stock.filter(s => !s.atelier), parametres: etat.parametres, epingles: etat.epingles }));
+  if (texte === null) return;
   telecharger((etat.nomProjet || "debit") + ".json", texte, "application/json");
   enregistrerAtelier();
 }
 async function importerCsv() {
   const f = await lireFichier($("#f-csv")); if (!f) return;
-  const d = JSON.parse(await appeler("depuis_csv", f.texte));
+  const brut = await tenter("depuis_csv", f.texte); if (brut === null) return;
+  const d = JSON.parse(brut);
   if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat();
 }
 async function importerFcstd() {
   const f = await lireFichier($("#f-fcstd"), true); if (!f) return;
-  const d = JSON.parse(await appeler("depuis_fcstd", f.texte));
+  const brut = await tenter("depuis_fcstd", f.texte); if (brut === null) return;
+  const d = JSON.parse(brut);
   if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
   $("#etat").textContent = t`${d.pieces.length} pièce(s) lues dans ${f.nom}`;
 }
-async function exporterCsv() { telecharger((etat.nomProjet || "pieces") + ".csv", await appeler("vers_csv", JSON.stringify(etat.pieces)), "text/csv"); }
+async function exporterCsv() { const texte = await tenter("vers_csv", JSON.stringify(etat.pieces)); if (texte !== null) telecharger((etat.nomProjet || "pieces") + ".csv", texte, "text/csv"); }
 async function importerSvg() {
   const f = await lireFichier($("#f-svg")); if (!f) return;
-  const d = JSON.parse(await appeler("depuis_svg", f.texte));
+  const brut = await tenter("depuis_svg", f.texte); if (brut === null) return;
+  const d = JSON.parse(brut);
   if (d.erreur) { alerter(t("Import impossible : ") + d.erreur); return; }
   if (!d.formes.length) { alerter(t("Aucun tracé fermé dans ce SVG.\n") + d.avertissements.join("\n")); return; }
   window.chutier.ajouterFormes(d.formes);
@@ -722,7 +754,11 @@ async function exporterDecoupe(format) {
   const titre = etat.nomProjet || t("Feuille de débit");
   const [extension, type] = FORMATS_DECOUPE[format];
   for (const [i, d] of etat.resultat.debits.entries()) {
-    const texte = await appeler("decoupe", format, JSON.stringify(d.epingle), i + 1, titre);
+    const texte = await tenter("decoupe", format, JSON.stringify(d.epingle), i + 1, titre);
+    if (texte === null) return;
+    // Un débit mal formé revient en JSON d'erreur, pas en dessin : un SVG
+    // commence par « <?xml », un DXF par « 999 », jamais par « { ».
+    if (texte.startsWith('{"erreur"')) { alerter(t("Le calcul a échoué : ") + JSON.parse(texte).erreur); return; }
     telecharger(`${titre}-planche-${i + 1}.${extension}`, texte, type);
     await new Promise(r => setTimeout(r, 300));
   }
@@ -799,17 +835,28 @@ async function finGlisse(e) {
   const g = glisse; glisse = null;
   g.forme.style.cursor = "";
   if (Math.abs(g.dx) < 0.5 && Math.abs(g.dy) < 0.5) { g.forme.removeAttribute("transform"); return; }
-  const d = etat.resultat.debits[g.numero - 1];
-  // Le SVG a y vers le bas, la planche vers le haut.
-  const sortie = JSON.parse(await appeler("deplacer", JSON.stringify(d.epingle), g.ip, Math.round(g.dx * 100) / 100, -Math.round(g.dy * 100) / 100, JSON.stringify(etat.parametres)));
-  if (sortie.refus) { $("#etat").textContent = sortie.refus; dessinerPlan(); return; }
-  const debits = etat.resultat.debits;
-  debits[g.numero - 1] = sortie;
-  if (g.numero <= etat.epingles.length) etat.epingles[g.numero - 1] = sortie.epingle;
-  else { debits.splice(etat.epingles.length, 0, debits.splice(g.numero - 1, 1)[0]); etat.epingles.push(sortie.epingle); }
-  etat.planche = etat.epingles.length;
-  $("#etat").textContent = t("Pièce déplacée — planche épinglée : reprise telle quelle au prochain calcul.");
-  consigner(); enregistrerBrouillon(); marquerChangement(); dessinerPlan(); rendreImpression();
+  try {
+    const entree = JSON.stringify({ pieces: etat.pieces.filter(p => (p.reference || "").trim()), stock: etat.stock.filter(s => (s.reference || "").trim()), parametres: { ...etat.parametres, processus: 1 } });
+    const avant = JSON.stringify({ debits: etat.resultat.debits.map(d => d.epingle), non_placees: etat.resultat.non_placees });
+    // Le SVG a y vers le bas, la planche vers le haut.
+    const sortie = JSON.parse(await appeler("deplacer", entree, avant, g.numero, g.ip, Math.round(g.dx * 100) / 100, -Math.round(g.dy * 100) / 100, etat.epingles.length));
+    if (!sortie.ok) { $("#etat").textContent = sortie.refus || (t("Le calcul a échoué : ") + sortie.erreur); dessinerPlan(); return; }
+    // Le résultat ENTIER est refait : bilan, chutes groupées et stock
+    // d'après en dépendent, et « Ranger les chutes au stock » rangerait
+    // sinon les chutes d'avant le déplacement.
+    etat.resultat = sortie.resultat;
+    if (g.numero <= etat.epingles.length) etat.epingles[g.numero - 1] = sortie.resultat.debits[g.numero - 1].epingle;
+    else etat.epingles.push(sortie.resultat.debits[etat.epingles.length].epingle);
+    etat.planche = etat.epingles.length;
+    afficherResultat();
+    $("#etat").textContent = t("Pièce déplacée — planche épinglée : reprise telle quelle au prochain calcul.");
+    consigner(); enregistrerBrouillon(); brouillonPlusTard();
+  } catch (erreur) {
+    // Un calcul interrompu (Échap) rejette les promesses en attente : la
+    // pièce garderait sinon le décalage que la souris lui a donné.
+    $("#etat").textContent = t("Le calcul a échoué : ") + erreur.message;
+    dessinerPlan();
+  }
 }
 function imposerPlanche(reference, planche) { for (const p of etat.pieces) if (p.reference === reference) p.planche = planche; etat.avancees = etat.avancees || Boolean(planche); rendreTable("pieces"); calculer(); }
 
@@ -830,7 +877,8 @@ function nouveau() {
 }
 
 async function chargerExemple(fn = "exemple") {
-  const d = JSON.parse(await appeler(fn));
+  const brut = await tenter(fn); if (brut === null) return;
+  const d = JSON.parse(brut);
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.stock = [...d.stock.map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
   etat.parametres = { ...etat.parametres, ...d.parametres };
@@ -924,8 +972,8 @@ function brancher() {
   bLangue.onclick = () => {
     changerLangue(langue === "fr" ? "en" : "fr");
     marquerLangue();
+    rendreTout();          // avant traduirePage : elle rebâtit les tables
     traduirePage();
-    rendreTout();
     if (etat.aJour) $("#etat").textContent = t("Plan à jour");
     dessinerPlan();
     if (etat.resultat) afficherResultat();

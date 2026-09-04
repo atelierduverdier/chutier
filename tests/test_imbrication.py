@@ -226,6 +226,37 @@ class Invariants(unittest.TestCase):
         dy = d.poses[0].y - d.poses[1].y
         self.assertIsNone(imbrication.deplacer(d, 1, dx, dy, RAPIDE))
 
+    def test_une_chute_rectangulaire_est_vraiment_un_rectangle(self):
+        """Le rapport d'aires disait « rectangle » d'un panneau entier
+        troué d'une seule petite pièce : la chute rendue recouvrait la
+        pièce, la perte de la planche passait sous zéro, et « Ranger les
+        chutes au stock » réécrivait un panneau intact qui ne l'est pas."""
+        from shapely.geometry import Polygon as Poly, box as boite
+        cadre = ((0, 0), (60, 0), (60, 60), (0, 60))
+        r = optimiser([Piece("p", 60, 60, 15, "cp", 1, FIL_INDIFFERENT,
+                             contour=cadre)],
+                      [Planche("cp", 2500, 1250, 15, "cp", 1, fil=False)],
+                      RAPIDE)
+        d = r.debits[0]
+        self.assertGreaterEqual(d.perte, 0.0)
+        piece = Poly(d.poses[0].contour)
+        for c in d.chutes:
+            forme = (Poly(c.contour, holes=c.trous or None) if c.biscornue
+                     else boite(c.x, c.y, c.x + c.dim_x, c.y + c.dim_y))
+            self.assertLessEqual(forme.intersection(piece).area, 1e-3)
+            self.assertAlmostEqual(c.aire, forme.area, places=2)
+
+    def test_une_marge_plus_grande_que_la_planche_ne_casse_pas(self):
+        """Le bord utile est vide, ses bornes sont des NaN : le cadre
+        cassait dessus (GEOSException) au lieu de rendre « non placée »."""
+        r = optimiser([Piece("p", 50, 50, 15, "cp", 1, FIL_INDIFFERENT,
+                             contour=((0, 0), (50, 0), (50, 50), (0, 50)))],
+                      [Planche("cp", 200, 200, 15, "cp", 1, fil=False)],
+                      Parametres(essais_melanges=0, processus=1,
+                                 marge_bord=100))
+        self.assertEqual(r.bilan.nb_posees, 0)
+        self.assertEqual(r.bilan.nb_non_placees, 1)
+
     def test_lot_rectangles_seuls_reste_guillotine(self):
         stock = [Planche("cp", 600, 400, 18, "cp", 1, fil=False)]
         r = optimiser([Piece("cale", 120, 40, 18, "cp", 2)], stock, RAPIDE)

@@ -25,6 +25,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from collections import Counter
+from xml.sax.saxutils import escape, quoteattr
 
 
 class SvgParseError(ValueError):
@@ -1065,8 +1066,12 @@ def svg_planche(debit, numero=1, titre=""):
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<svg xmlns="http://www.w3.org/2000/svg" width="%smm" height="%smm"'
         ' viewBox="0 0 %s %s">' % (_nombre(L), _nombre(H), _nombre(L), _nombre(H)),
-        '  <title>%s — planche %d : %s</title>' % (titre or "Chutier", numero,
-                                                    pl.reference),
+        # Tout ce qui vient de la saisie passe par l'échappement XML : une
+        # référence « chêne & pin » suffisait à rendre le fichier illisible
+        # par Inkscape et par la chaîne CNC, sans le moindre avertissement.
+        '  <title>%s — planche %d : %s</title>' % (escape(titre or "Chutier"),
+                                                   numero,
+                                                   escape(pl.reference)),
         '  <g id="planche" fill="none" stroke="#1f5fbf" stroke-width="0.3">',
         '    <rect x="0" y="0" width="%s" height="%s"/>' % (_nombre(L), _nombre(H)),
         '  </g>',
@@ -1080,9 +1085,10 @@ def svg_planche(debit, numero=1, titre=""):
                       (pose.x + pose.dim_x, pose.y + pose.dim_y),
                       (pose.x, pose.y + pose.dim_y))
             trous = ()
-        lignes.append('    <path id="%s-%d" fill-rule="evenodd" d="%s"/>'
-                      % (pose.piece.reference.replace('"', "'"),
-                         pose.exemplaire, _chemin_d(points, H, trous)))
+        lignes.append('    <path id=%s fill-rule="evenodd" d="%s"/>'
+                      % (quoteattr("%s-%d" % (pose.piece.reference,
+                                              pose.exemplaire)),
+                         _chemin_d(points, H, trous)))
     lignes.append('  </g>')
     lignes.append('  <g id="noms" font-family="sans-serif" font-size="6"'
                   ' fill="#555555">')
@@ -1091,8 +1097,7 @@ def svg_planche(debit, numero=1, titre=""):
         cy = pose.y + pose.dim_y / 2
         lignes.append('    <text x="%s" y="%s" text-anchor="middle">%s %d</text>'
                       % (_nombre(cx), _nombre(H - cy),
-                         pose.piece.reference.replace("&", "&amp;")
-                         .replace("<", "&lt;"), pose.exemplaire))
+                         escape(pose.piece.reference), pose.exemplaire))
     lignes.append('  </g>')
     lignes.append('</svg>')
     return "\n".join(lignes) + "\n"

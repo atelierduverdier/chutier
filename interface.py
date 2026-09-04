@@ -917,6 +917,10 @@ class FenetrePrincipale(QMainWindow):
         self._instantane = instantane
         self._modifie = True
         self._a_jour = False
+        # Le liseré ÉPINGLÉE du plan vient de vue.epinglees, pas de
+        # _epingles : sans cette ligne, « Relâcher la planche » restait
+        # proposé sur une planche qui ne l'était plus, et ne faisait rien.
+        self.vue.epinglees = set(range(1, len(self._epingles) + 1))
         self._rafraichir_etat()
 
     def _annuler(self):
@@ -1356,6 +1360,12 @@ class FenetrePrincipale(QMainWindow):
         calcul déferait la main de l'utilisateur."""
         if self._resultat is None:
             return
+        if not self._a_jour:
+            QMessageBox.information(
+                self, "Plan périmé",
+                "Recalculez (F5) avant de déplacer une pièce : la planche"
+                " affichée ne correspond plus à la saisie.")
+            return
         debit = self._resultat.debits[numero - 1]
         if pose not in debit.poses:
             return
@@ -1381,6 +1391,7 @@ class FenetrePrincipale(QMainWindow):
                                                  self._resultat.non_placees))
         self._modifie = True
         self._afficher_resultat()
+        self._rafraichir_etat()      # le « ● » du titre et de la barre
         self.statusBar().showMessage(
             "Pièce déplacée — planche épinglée : elle sera reprise telle"
             " quelle au prochain calcul.", 6000)
@@ -1512,7 +1523,11 @@ class FenetrePrincipale(QMainWindow):
         except ErreurSaisie as erreur:
             QMessageBox.warning(self, "Saisie invalide", str(erreur))
             return
-        atelier = self._atelier()
+        # _atelier_frais et non _atelier : les lignes cochées « Atelier »
+        # de la table viennent d'être écartées ci-dessus, et une lecture
+        # sèche du fichier ne les ramènerait pas — celle qu'on venait de
+        # taper disparaissait, table ET fichier.
+        atelier = self._atelier_frais()
         self._chargement = True
         self.table_stock.remplir(stock + atelier)
         self._chargement = False
@@ -2180,6 +2195,12 @@ class FenetrePrincipale(QMainWindow):
         self.table_pieces.remplir(pieces)
         self._appliquer_parametres(parametres)
         self._chargement = precedent
+        # Un autre document, une autre pile : sans ce retour à zéro, Ctrl+Z
+        # sur un projet fraîchement ouvert y rejouait la saisie du
+        # PRÉCÉDENT — et Ctrl+S l'écrivait dans son fichier.
+        self._historique.clear()
+        self._futur.clear()
+        self._instantane = self._prendre_instantane()
         self._rafraichir_etat()
 
     def _charger_exemple(self):

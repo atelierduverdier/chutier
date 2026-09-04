@@ -38,6 +38,38 @@ def _paires_dxf(texte):
             for i in range(0, len(lignes) - 1, 2)]
 
 
+class XmlValide(unittest.TestCase):
+    """Une référence de planche ou de pièce vient de la saisie : elle peut
+    porter « & », « < » ou une apostrophe. Le SVG de découpe s'écrivait
+    sans les échapper — « chêne & pin » suffisait à rendre le fichier
+    illisible par Inkscape et par la chaîne CNC, sans un mot."""
+
+    def _debit_biscornu(self):
+        import contours_svg
+        cadre = ((0, 0), (100, 0), (100, 100), (0, 100))
+        r = optimiser(
+            [Piece("équerre \'A\' & B", 100, 100, 15, "chêne & pin", 1,
+                   FIL_INDIFFERENT, contour=cadre)],
+            [Planche("panneau <2400>", 300, 200, 15, "chêne & pin", 1,
+                     fil=False)],
+            Parametres(essais_melanges=0, processus=1))
+        return contours_svg, r.debits[0]
+
+    def test_le_svg_reste_du_xml(self):
+        contours_svg, debit = self._debit_biscornu()
+        texte = contours_svg.svg_planche(debit, 1, "Projet & Cie")
+        racine = ET.fromstring(texte)          # lève si mal formé
+        titre = racine.find("{http://www.w3.org/2000/svg}title").text
+        self.assertIn("Projet & Cie", titre)
+        self.assertIn("panneau <2400>", titre)
+        chemins = racine.iter("{http://www.w3.org/2000/svg}path")
+        self.assertIn("équerre \'A\' & B-1", [c.get("id") for c in chemins])
+
+    def test_le_lightburn_reste_du_xml(self):
+        _contours_svg, debit = self._debit_biscornu()
+        ET.fromstring(export_cnc.lightburn_planche(debit, 1, "Projet & Cie"))
+
+
 class Dxf(unittest.TestCase):
 
     def test_relu_par_ezdxf(self):
@@ -138,8 +170,11 @@ class Pont(unittest.TestCase):
         for fmt, marque in (("svg", "<svg"), ("dxf", "AC1009"),
                             ("lbrn", "<LightBurnProject")):
             self.assertIn(marque, pont_web.decoupe(fmt, json.dumps(debit), 1, "t"))
-        with self.assertRaises(ValueError):
-            pont_web.decoupe("pdf", json.dumps(debit))
+        # Le pont ne lève plus rien vers le navigateur : une exception
+        # Python y devient un rejet de promesse que personne n'attrape.
+        refus = json.loads(pont_web.decoupe("pdf", json.dumps(debit)))
+        self.assertIn("pdf", refus["erreur"])
+        self.assertIn("erreur", json.loads(pont_web.decoupe("svg", "{}")))
 
 
 if __name__ == "__main__":

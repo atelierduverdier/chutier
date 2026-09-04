@@ -340,7 +340,10 @@ export function traduirePage(racine = document) {
   while (marche.nextNode()) noeuds.push(marche.currentNode);
   for (const noeud of noeuds) {
     const parent = noeud.parentElement;
-    if (!parent || parent.closest("script, style, #plan, #impression, #tuiles, table, #menu-contextuel, #reglages")) continue;
+    // #plan est sauté (app.js le rebâtit en SVG à chaque dessin) — mais
+    // son message d'accueil, lui, est écrit dans la page et doit suivre.
+    if (!parent || (parent.closest("script, style, #plan, #impression, #tuiles, table, #menu-contextuel, #reglages")
+                    && parent.id !== "plan-vide")) continue;
     if (!ORIGINE.has(noeud)) {
       if (!noeud.nodeValue.trim()) continue;
       ORIGINE.set(noeud, noeud.nodeValue);

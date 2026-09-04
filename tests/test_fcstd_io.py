@@ -35,6 +35,29 @@ DEBIT = [
 ]
 
 
+class Arrondi(unittest.TestCase):
+    """FreeCAD arrondit à l'écart de zéro (std::round), Python au pair :
+    round(2.5) vaut 3 là-bas, 2 ici. Une feuille de débit qui montre 3 et
+    qu'on lit 2, c'est un millimètre de bois en moins sans un mot — et
+    « =round(x * 10) / 10 » est la forme la plus courante."""
+
+    def _longueur(self, formule):
+        donnees = fcstd_io.fabriquer({"Debit": [
+            ["Rep.", "Longueur", "Largeur"], ["A", "=" + formule, 10]]})
+        return fcstd_io.lire_pieces(donnees)[0].longueur
+
+    def test_les_demis_montent(self):
+        for formule, attendu in (("round(2.5)", 3.0), ("round(0.5)", 1.0),
+                                 ("round(1.5)", 2.0), ("round(1234.5)", 1235.0),
+                                 ("round(1.2345, 2)", 1.23),
+                                 ("round(2.4)", 2.0)):
+            self.assertEqual(self._longueur(formule), attendu, formule)
+
+    def test_les_puissances_s_enchainent_par_la_droite(self):
+        self.assertEqual(self._longueur("2^3^2"), 512.0)
+        self.assertEqual(self._longueur("2^3"), 8.0)
+
+
 class Lecture(unittest.TestCase):
 
     def setUp(self):

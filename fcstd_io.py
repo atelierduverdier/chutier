@@ -124,9 +124,23 @@ def _texte(contenu: str) -> str:
 _JETON = re.compile(r"\s*(?:(?P<nombre>\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)"
                     r"|(?P<nom>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?)"
                     r"|(?P<op>[-+*/^(),]))")
+def _arrondi(x: float, chiffres: int = 0) -> float:
+    """L'arrondi de FreeCAD, pas celui de Python.
+
+    ``round`` en Python arrondit au PAIR : round(2.5) vaut 2, round(0.5)
+    vaut 0. Le moteur d'expressions de FreeCAD s'appuie sur ``std::round``,
+    qui arrondit à l'écart de zéro : 3 et 1. Une feuille de débit qui
+    montre 3 et qu'on lit 2, c'est un millimètre de bois en moins, sans
+    rien pour le signaler — et ``=round(x * 10) / 10`` est la forme la plus
+    courante d'une telle feuille."""
+    facteur = 10.0 ** int(chiffres)
+    v = x * facteur
+    entier = math.floor(v + 0.5) if v >= 0 else math.ceil(v - 0.5)
+    return float(entier) / facteur
+
+
 _FONCTIONS = {
-    "round": lambda *a: float(round(*a)) if len(a) == 1
-    else float(round(a[0], int(a[1]))),
+    "round": _arrondi,
     "floor": lambda x: float(math.floor(x)), "ceil": lambda x: float(math.ceil(x)),
     "abs": lambda x: abs(x), "min": lambda *a: min(a), "max": lambda *a: max(a),
     "sqrt": math.sqrt, "int": lambda x: float(int(x)), "trunc": lambda x: float(int(x)),
@@ -253,10 +267,12 @@ class _Evaluateur:
         return valeur
 
     def _puissance(self):
+        # 2^3^2 vaut 2^(3^2) : l'exposant s'associe à DROITE. Une seule
+        # puissance était lue, et « formule illisible » suivait.
         base = self._unaire()
         if self._regarder() == ("op", "^"):
             self._prendre("op")
-            return base ** self._unaire()
+            return base ** self._puissance()
         return base
 
     def _unaire(self):

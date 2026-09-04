@@ -399,8 +399,28 @@ class TableEditable(QTableWidget):
             else:
                 item.setText("" if valeur is None else str(valeur))
             self.setItem(ligne, i, item)
+        self._verrouiller_cotes(ligne, valeurs.get("contour"))
         self.blockSignals(precedent)
         self._verifier_ligne(ligne)
+
+    def _verrouiller_cotes(self, ligne: int, contour) -> None:
+        """Une chute biscornue tient ses cotes de son polygone : la table
+        acceptait qu'on tape 999 × 888 sur une ligne à contour, le débit
+        continuait de scier 400 × 300 — un chiffre faux sous les yeux.
+        Les deux cellules passent en lecture seule, et le disent."""
+        if not any(c.genre == CONTOUR for c in self.COLONNES) or not contour:
+            return
+        for i, colonne in enumerate(self.COLONNES):
+            if colonne.cle not in ("longueur", "largeur"):
+                continue
+            item = self.item(ligne, i)
+            if item is None:
+                continue
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled
+                          | Qt.ItemFlag.ItemIsSelectable)
+            item.setToolTip("Cote donnée par le contour : c'est la boîte du"
+                            " polygone. Effacez le contour pour la saisir"
+                            " à la main.")
 
     def remplir(self, objets: list):
         precedent = self.blockSignals(True)
@@ -450,6 +470,13 @@ class TableEditable(QTableWidget):
                 continue
             if colonne.genre == CHOIX:
                 continue
+            if colonne.genre == CONTOUR:
+                # Un contour ne se tape ni ne se colle : Suppr effaçait
+                # « ◇ 6 pts » en laissant la forme dans la donnée de la
+                # cellule — la table montrait un rectangle, la fraise
+                # découpait toujours le polygone. Ici, on efface les deux.
+                item.setData(ROLE_VALEUR, ())
+                item.setData(ROLE_TROUS, ())
             item.setText("")
 
     # -- presse-papiers --------------------------------------------------

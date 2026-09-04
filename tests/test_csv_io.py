@@ -156,5 +156,27 @@ class EcriturePieces(unittest.TestCase):
             self.assertIn(colonne, entete.split(","))
 
 
+class MarqueDOrdre(unittest.TestCase):
+    """Excel écrit « CSV UTF-8 » avec une marque d'ordre d'octets, qui se
+    colle au premier nom de colonne : le fichier était refusé pour une
+    colonne manquante qui, elle, était bien là."""
+
+    LIGNES = ("reference,longueur,largeur,epaisseur,matiere,quantite\n"
+              "montant,1750,60,18,sapin,4\n")
+
+    def test_un_fichier_avec_bom(self):
+        chemin = os.path.join(tempfile.mkdtemp(), "avec-bom.csv")
+        with open(chemin, "w", encoding="utf-8-sig") as f:
+            f.write(self.LIGNES)
+        with open(chemin, "rb") as f:
+            self.assertTrue(f.read(3) == b"\xef\xbb\xbf")
+        pieces = csv_io.lire_pieces(chemin)
+        self.assertEqual([p.reference for p in pieces], ["montant"])
+
+    def test_un_texte_collé_avec_bom(self):
+        pieces = csv_io.lire_pieces_texte("\ufeff" + self.LIGNES)
+        self.assertEqual([p.reference for p in pieces], ["montant"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -11,6 +11,7 @@ Deux familles :
 Lancement : python3 tests/test_optimiseur.py
 """
 
+import dataclasses
 import itertools
 import os
 import random
@@ -315,20 +316,26 @@ class CoupeEnBandes(unittest.TestCase):
     longueur, puis chaque bande se tronçonne — jamais de recoupe de
     longueur dans une bande."""
 
-    def _verifier_bandes(self, resultat):
+    def _verifier_bandes(self, resultat, params=None):
+        """Un délignage court sur toute la LONGUEUR UTILE — celle de la
+        planche moins ses recoupes de bout, pas celle du rectangle brut :
+        exiger la seconde faisait passer le test à côté des vrais plans
+        (relevé par un audit le 4 septembre 2026). Un défaut écarté coûte
+        en plus un trait de scie de chaque côté."""
+        trait = (params or Parametres()).trait_de_scie
         for d in resultat.debits:
             pl = d.planche
+            # Chaque recoupe de bout mange sa zone PLUS le trait qui la
+            # sépare du bon bois ; un défaut écarté en coûte deux de plus.
+            utile = pl.longueur - 2 * pl.recoupe_bouts
+            if pl.recoupe_bouts:
+                utile -= 2 * trait
+            mini = utile - (2 * trait if pl.defauts else 0)
             for c in d.coupes:
                 if c.sens == "delignage":
-                    # un délignage court sur toute la longueur utile
-                    self.assertAlmostEqual(c.a - c.de, pl.longueur, places=3,
-                                           msg="délignage partiel")
-            # deux tronçonnages qui se suivent dans une même bande ne se
-            # coupent pas : les poses d'une bande ont toutes la même hauteur
-            # de bande, ou la bande entière
-            bandes = {}
-            for p in d.poses:
-                bandes.setdefault(round(p.y, 3), []).append(p)
+                    self.assertGreaterEqual(
+                        c.a - c.de, mini - 1e-6,
+                        "délignage partiel : %s sur %s" % (c.a - c.de, utile))
 
     def test_les_invariants_tiennent(self):
         params = Parametres(essais_melanges=2, coupe_en_bandes=True)
@@ -336,7 +343,55 @@ class CoupeEnBandes(unittest.TestCase):
             pieces, stock = _instance(graine)
             r = optimiser(pieces, stock, params)
             ProprietesGeometriques._verifier(self, r, pieces, params)
-            self._verifier_bandes(r)
+            self._verifier_bandes(r, params)
+
+    def test_avec_recoupes_et_defauts(self):
+        """Les mêmes invariants sur des planches qui ont des bouts à
+        recouper, des rives à dresser et un nœud à écarter — c'est là que
+        « bandes » retombait sur « auto » et vidait la planche."""
+        params = Parametres(essais_melanges=1, coupe_en_bandes=True)
+        for graine in range(6):
+            pieces, stock = _instance(graine)
+            stock = [dataclasses.replace(
+                s, recoupe_bouts=30, recoupe_rives=8,
+                defauts=(((300, 20, 90, min(40, s.largeur - 40)),)
+                         if s.longueur > 500 and s.largeur > 100 else ()))
+                for s in stock]
+            r = optimiser(pieces, stock, params)
+            ProprietesGeometriques._verifier(self, r, pieces, params)
+            self._verifier_bandes(r, params)
+
+    def test_un_defaut_ne_vide_pas_la_planche(self):
+        """Le nœud coûte du bois, pas la planche entière. _retirer_zone ne
+        connaît pas « bandes » : il retombait sur « auto », tronçonnait
+        d'abord, et plus aucun reste ne courait sur toute la longueur —
+        treize pièces non placées pour un nœud de 100 × 80."""
+        params = Parametres(essais_melanges=0, coupe_en_bandes=True)
+        pieces = [Piece("lame", 500, 80, 18, "b", 13)]
+        sans = optimiser(pieces, [Planche("p", 2000, 400, 18, "b", 1)], params)
+        avec = optimiser(pieces, [Planche("p", 2000, 400, 18, "b", 1,
+                                          defauts=((300, 100, 100, 80),))],
+                         params)
+        self.assertGreater(sans.bilan.nb_posees, 0)
+        self.assertGreaterEqual(avec.bilan.nb_posees, sans.bilan.nb_posees - 2)
+        self._verifier_bandes(avec, params)
+
+    def test_dans_une_bande_on_ne_fait_que_tronconner(self):
+        """Une pièce qui remplit la LONGUEUR d'un reste de bande sans sa
+        hauteur y provoquait un refend, puis un tronçonnage dans le
+        sous-morceau : la recoupe de longueur que ce mode exclut."""
+        params = Parametres(essais_melanges=0, coupe_en_bandes=True,
+                            trait_de_scie=0)
+        r = optimiser([Piece("a", 400, 100, 18, "b", 1),
+                       Piece("b", 600, 60, 18, "b", 1),
+                       Piece("c", 300, 40, 18, "b", 1)],
+                      [Planche("p", 1000, 300, 18, "b", 1)], params)
+        self.assertEqual(r.bilan.nb_non_placees, 0)
+        for d in r.debits:
+            for c in d.coupes:
+                if c.sens == "delignage":
+                    self.assertAlmostEqual(c.a - c.de, d.planche.longueur,
+                                           places=3, msg="délignage partiel")
 
     def test_pas_de_recoupe_de_longueur(self):
         """Des pièces de même largeur en bande : les tronçonnages d'une
@@ -346,12 +401,46 @@ class CoupeEnBandes(unittest.TestCase):
         pieces = [Piece("a", 500, 60, 18, "b", 6), Piece("b", 700, 90, 18, "b", 4)]
         r = optimiser(pieces, stock, params)
         self.assertEqual(r.bilan.nb_non_placees, 0)
-        self._verifier_bandes(r)
+        self._verifier_bandes(r, params)
         for d in r.debits:
             for c in d.coupes:
                 if c.sens == "tronconnage":
                     self.assertLess(c.a - c.de, 300 - 1e-6,
                                     "un tronçonnage traverse toute la planche")
+
+
+class EpaisseurNonRenseignee(unittest.TestCase):
+    """Une colonne Épaisseur vide vaut zéro partout (csv_io la lit ainsi).
+    Le score pesait deux de ses six critères par un VOLUME : à épaisseur
+    nulle ils s'annulaient, et le plan ne se jugeait plus qu'au nombre de
+    coupes — 129 000 mm² de chutes réutilisables partant aux pertes."""
+
+    def test_le_plan_vaut_celui_de_la_meme_instance_epaisse(self):
+        params = Parametres(essais_melanges=0)
+        for graine in range(6):
+            pieces, stock = _instance(graine)
+            creuses = [dataclasses.replace(p, epaisseur=0.0) for p in pieces]
+            plates = [dataclasses.replace(s, epaisseur=0.0) for s in stock]
+            avec = optimiser(pieces, stock, params)
+            sans = optimiser(creuses, plates, params)
+            self.assertEqual(sans.bilan.nb_posees, avec.bilan.nb_posees)
+            self.assertAlmostEqual(sans.bilan.surface_perdue,
+                                   avec.bilan.surface_perdue, places=3)
+
+
+class ContourDegenere(unittest.TestCase):
+
+    def test_un_contour_d_aire_nulle_se_refuse_en_nommant_la_piece(self):
+        """Trois points alignés, ou un contour croisé en papillon :
+        shapely les réduisait à un polygone vide, et l'imbrication cassait
+        sur un NaN bien plus loin."""
+        stock = [Planche("cp", 200, 200, 15, "cp", 1, fil=False)]
+        for contour in (((0, 0), (10, 0), (20, 0)),
+                        ((0, 0), (10, 10), (10, 0), (0, 10))):
+            with self.assertRaises(ValueError) as leve:
+                optimiser([Piece("plat", 10, 10, 15, "cp", 1, FIL_INDIFFERENT,
+                                 contour=contour)], stock, Parametres())
+            self.assertIn("plat", str(leve.exception))
 
 
 class Priorite(unittest.TestCase):

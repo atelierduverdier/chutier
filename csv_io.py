@@ -68,13 +68,17 @@ def lire_pieces(chemin: str) -> list:
     Lève ``ValueError`` (colonnes manquantes, ligne mal formée) ou
     ``OSError`` (fichier introuvable) — à l'appelant de les rattraper.
     """
-    with open(chemin, newline="", encoding="utf-8") as f:
+    with open(chemin, newline="", encoding="utf-8-sig") as f:
         return lire_pieces_texte(f.read())
 
 
 def lire_pieces_texte(texte: str) -> list:
     """Comme :func:`lire_pieces`, sur un CSV déjà en mémoire."""
-    lecteur = csv.DictReader(io.StringIO(texte))
+    # Excel écrit « CSV UTF-8 » avec une marque d'ordre d'octets, qui se
+    # colle au premier nom de colonne : « reference » devenait
+    # « \ufeffreference » et le fichier était refusé pour une colonne
+    # manquante qui, elle, était bien là.
+    lecteur = csv.DictReader(io.StringIO(texte.lstrip("\ufeff")))
     manquantes = set(COLONNES_REQUISES) - set(lecteur.fieldnames or [])
     if manquantes:
         raise ValueError(

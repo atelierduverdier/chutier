@@ -279,14 +279,25 @@ class Deplacement(unittest.TestCase):
             {"pieces": [cale], "stock": stock,
              "parametres": {"essais_melanges": 0, "processus": 1}})))
         d = r["resultat"]["debits"][0]
-        ok = json.loads(pont_web.deplacer(json.dumps(d["epingle"]), 1, 150, 50,
-                                          json.dumps({"essais_melanges": 0})))
-        self.assertNotIn("refus", ok)
-        self.assertAlmostEqual(ok["poses"][1]["x"], d["poses"][1]["x"] + 150)
-        self.assertIn("epingle", ok)
-        refus = json.loads(pont_web.deplacer(json.dumps(d["epingle"]), 1, 1000,
-                                             0, "{}"))
+        entree = json.dumps({"pieces": [cale], "stock": stock,
+                             "parametres": {"essais_melanges": 0,
+                                            "processus": 1}})
+        avant = json.dumps({"debits": [d["epingle"]],
+                            "non_placees": r["resultat"]["non_placees"]})
+        ok = json.loads(pont_web.deplacer(entree, avant, 1, 1, 150, 50))
+        self.assertTrue(ok.get("ok"), ok)
+        neuf = ok["resultat"]["debits"][0]
+        self.assertAlmostEqual(neuf["poses"][1]["x"], d["poses"][1]["x"] + 150)
+        self.assertIn("epingle", neuf)
+        # le résultat ENTIER est refait : bilan et chutes suivent la pièce
+        self.assertIn("bilan", ok["resultat"])
+        self.assertIn("chutes_groupees", ok["resultat"])
+        self.assertIn("stock_apres", ok["resultat"])
+        refus = json.loads(pont_web.deplacer(entree, avant, 1, 1, 1000, 0))
         self.assertIn("refus", refus)
+        # une entrée mal formée ne lève pas : elle se dit
+        self.assertIn("erreur", json.loads(
+            pont_web.deplacer(entree, avant, 9, 0, 1, 1)))
 
 
 if __name__ == "__main__":

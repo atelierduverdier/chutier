@@ -336,6 +336,11 @@ class _Plateau:
 
     def libre(self, cle_b):
         """La région des positions valides du coin de B."""
+        if self.utile.is_empty:
+            # Marge au bord plus grande que la demi-planche : il ne reste
+            # pas de bois. Les bornes d'un polygone vide sont des NaN, et
+            # le cadre cassait dessus au lieu de rendre « non placée ».
+            return self.utile
         forme_b = self.formes.simplifiee(cle_b)
         _, _, w, h = forme_b.bounds
         minx, miny, maxx, maxy = self.utile.bounds
@@ -547,7 +552,12 @@ def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
         if (max(dx, dy) < params.chute_mini_longueur - EPS
                 or min(dx, dy) < params.chute_mini_largeur - EPS):
             continue
-        if g.area >= 0.995 * dx * dy:
+        # Rectangulaire, c'est que la boîte rognée d'un demi-millimètre
+        # tient ENTIÈREMENT dans le morceau. Le rapport d'aires disait
+        # « rectangle » d'un panneau entier troué d'une seule petite
+        # pièce : la chute rendue recouvrait la pièce, et la perte de la
+        # planche passait sous zéro.
+        if box(minx, miny, maxx, maxy).buffer(-0.5).difference(g).is_empty:
             chutes.append(opt.ChuteCreee(dx, dy, minx, miny, pl.epaisseur,
                                          pl.matiere, pl.fil))
             continue
@@ -705,7 +715,8 @@ def _taches_nfp(unites, stock_unites, params, tout=False):
     bords = {}
     for pl in planches:
         utile = _bord_utile(pl, params)
-        bords[utile.wkb] = utile
+        if not utile.is_empty:
+            bords[utile.wkb] = utile
     for wkb in bords:
         for b in variantes:
             if tout or (wkb, b) not in _CADRES:
