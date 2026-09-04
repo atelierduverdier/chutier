@@ -9,7 +9,7 @@
 //
 // La VERSION ci-dessous suit celle d'optimiseur.py (tests/test_version.py
 // y veille) : un cache par version, les autres s'effacent à l'activation.
-const VERSION = "1.1.1";
+const VERSION = "1.1.2";
 const CACHE = "chutier-v" + VERSION;
 const PORTEE = new URL("./", self.location).pathname;
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/";
@@ -51,10 +51,14 @@ self.addEventListener("fetch", (e) => {
   }
   if (url.origin !== self.location.origin || !url.pathname.startsWith(PORTEE) || url.search) return;
   // « no-cache » : le navigateur revalide auprès du serveur au lieu de
-  // se fier à son propre cache HTTP — sans quoi un app.js d'hier peut
-  // survivre à une publication tant que sa fraîcheur heuristique dure.
-  const init = e.request.mode === "navigate" ? undefined : { cache: "no-cache" };
-  e.respondWith(fetch(e.request, init).then(r => garder(e.request, r))
+  // se fier à son propre cache HTTP — sans quoi un fichier d'hier peut
+  // survivre à une publication tant que dure sa fraîcheur heuristique.
+  // La NAVIGATION en fait partie : elle en était exclue, et la page
+  // elle-même revenait périmée alors que le réseau avait la neuve
+  // (vu le 4 septembre 2026 — une modification d'index.html invisible
+  // après rechargement, sur un serveur sans en-tête Cache-Control).
+  e.respondWith(fetch(e.request, { cache: "no-cache" })
+                  .then(r => garder(e.request, r))
     .catch(() => caches.match(e.request)
       .then(hit => hit || (e.request.mode === "navigate" ? caches.match("./index.html") : Response.error()))));
 });

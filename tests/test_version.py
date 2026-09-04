@@ -53,6 +53,25 @@ class VersionsSynchronisees(unittest.TestCase):
         self.assertRegex(opt.VERSION, r"^\d+\.\d+\.\d+$")
 
 
+class ServiceWorker(unittest.TestCase):
+
+    def test_tout_va_au_reseau_en_revalidant(self):
+        """Le service worker sert le réseau d'abord — encore faut-il que
+        le navigateur ne réponde pas depuis son PROPRE cache HTTP. La
+        navigation en était exclue : une modification d'index.html restait
+        invisible après rechargement, sur un serveur sans en-tête
+        Cache-Control (vu le 4 septembre 2026)."""
+        source = _lire("sw.js")
+        self.assertIn('fetch(e.request, { cache: "no-cache" })', source)
+        self.assertNotIn('mode === "navigate" ? undefined', source)
+
+    def test_version_json_ne_passe_jamais_par_le_cache(self):
+        """C'est lui qui dit quelle version est en ligne : servi du cache,
+        il comparerait la version installée à elle-même."""
+        source = _lire("sw.js")
+        self.assertIn('endsWith("/version.json")', source)
+
+
 class Comparaison(unittest.TestCase):
 
     def test_numerique_pas_textuelle(self):

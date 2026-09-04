@@ -272,6 +272,12 @@ example a first run goes from 7 to 4 seconds; whatever a previous run
 already cached is never redistributed, since redoing it in parallel would
 cost more than doing nothing.
 
+Between the input side and the plan, a **handle** sets how the two
+halves share the width, like the desktop application's splitter: twelve
+stock columns do not fit in a third of a screen, and the table used to
+scroll sideways under a bar that ran into its own summary line. The
+browser remembers the width; a double-click restores the original one.
+
 The page is **bilingual**: an "EN / FR" button next to the title
 switches the whole interface, and the choice is remembered in the
 browser (on a first visit, the browser's language decides). The

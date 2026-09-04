@@ -312,6 +312,12 @@ le refaire à plusieurs coûterait plus cher que de ne rien faire. Sans
 impression d'étiquettes : pour celle-là, le bureau. Pour l'essayer en local : `python3 -m http.server` à la racine,
 puis <http://localhost:8000/>.
 
+Entre la saisie et le plan, une **poignée** règle la largeur des deux
+moitiés, comme la séparation de l'application de bureau : douze colonnes
+de stock ne tiennent pas dans un tiers d'écran, et la table défilait en
+travers sous une barre qui venait buter sur sa ligne de résumé. Le
+navigateur retient la largeur ; un double-clic rend celle d'origine.
+
 La page est **bilingue** : un bouton « EN / FR » près du titre bascule
 toute l'interface, et le choix est retenu dans le navigateur (au premier
 passage, la langue du navigateur décide). Le dictionnaire est

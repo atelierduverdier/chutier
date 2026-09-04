@@ -269,6 +269,7 @@ const ANGLAIS = {
   "Plan de débit": "Cutting plan",
   "Pièces non placées": "Parts not placed",
   "Traits de scie": "Kerfs",
+  "Glisser pour élargir la saisie (double-clic : largeur d'origine)": "Drag to widen the input side (double-click: original width)",
   "Dézoomer": "Zoom out",
   "Zoomer": "Zoom in",
   "Revoir tout le plan": "See the whole plan again",

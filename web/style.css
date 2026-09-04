@@ -32,17 +32,31 @@ input, select { font: inherit; color: var(--texte); background: var(--carte); bo
 .menu > div button { text-align: left; border: none; padding: 6px 10px; }
 .menu > div button:hover { background: rgba(255,138,0,.15); }
 .menu summary:hover { border-color: var(--mid); }
-main { flex: 1; display: grid; grid-template-columns: minmax(420px, 34%) 1fr; gap: 10px; padding: 10px; min-height: 0; }
+/* La saisie, une poignée, le plan. La largeur de la saisie se règle à la
+   souris — douze colonnes de stock ne tiennent pas dans un tiers d'écran,
+   et c'est à l'établi qu'on sait laquelle des deux moitiés compte. */
+main { flex: 1; display: grid; grid-template-columns: var(--saisie, minmax(420px, 34%)) 6px 1fr; gap: 4px; padding: 10px; min-height: 0; }
+.poignee { cursor: col-resize; border-radius: 3px; background: transparent; align-self: stretch; }
+.poignee:hover, .poignee:focus-visible { background: var(--orange); outline: none; }
 .saisie { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow: auto; }
 .bloc { background: var(--carte); border: 1px solid var(--bord); border-radius: 6px; padding: 8px 10px; }
 .bloc h2 { font-size: 14px; margin: 0 0 6px; display: inline; }
 .compte { color: var(--mid); font-weight: normal; }
 details.bloc summary { cursor: pointer; }
-.table-cadre { overflow: auto; max-height: 38vh; }
+/* Une barre de défilement fine et discrète : celle du système prenait
+   quinze pixels sous chaque table et venait buter sur la ligne de
+   résumé, qu'on lisait à travers. */
+.table-cadre { overflow: auto; max-height: 38vh; scrollbar-width: thin; scrollbar-color: var(--bord) transparent; }
+.table-cadre::-webkit-scrollbar { height: 8px; width: 8px; }
+.table-cadre::-webkit-scrollbar-track { background: transparent; }
+.table-cadre::-webkit-scrollbar-thumb { background: var(--bord); border-radius: 4px; }
+.table-cadre::-webkit-scrollbar-thumb:hover { background: var(--mid); }
+.table-cadre + .discret { margin: 6px 0 0; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { text-align: left; font-weight: 600; color: var(--mid); padding: 2px 4px; border-bottom: 1px solid var(--bord); white-space: nowrap; position: sticky; top: 0; background: var(--carte); }
 td { padding: 1px 2px; border-bottom: 1px solid var(--bord); }
-td input[type=text], td input[type=number] { width: 100%; min-width: 3em; border: 1px solid transparent; background: transparent; }
+td input[type=text], td input[type=number] { width: 100%; min-width: 2.4em; border: 1px solid transparent; background: transparent; }
+td select { max-width: 8.2em; }
 td input:focus { border-color: var(--orange); background: var(--carte); }
 td.num input { text-align: right; }
 td.bool { text-align: center; }
@@ -88,7 +102,7 @@ footer a { color: inherit; }
 .menu-contextuel .sep { border-top: 1px solid var(--bord); margin: 3px 0; }
 .impression { display: none; }
 @media print {
-  header, main .saisie, .onglets, .outils-plan, footer, .legende, .discret, #tuiles { display: none !important; }
+  header, main .saisie, .poignee, .onglets, .outils-plan, footer, .legende, .discret, #tuiles { display: none !important; }
   main { display: block; padding: 0; }
   .resultats, .onglet.actif { display: block; }
   .onglet:not(.actif) { display: none; }

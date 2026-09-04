@@ -107,7 +107,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.1.1";
+export const VERSION = "1.1.2";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -805,6 +805,48 @@ function menuContextuel(e) {
 }
 function fermerMenu() { $("#menu-contextuel").hidden = true; }
 
+// -- la largeur de la saisie ----------------------------------------------------------
+// Douze colonnes de stock ne tiennent pas dans un tiers d'écran : la
+// table défilait en travers, et sa barre venait buter sur la ligne de
+// résumé. On donne la poignée, comme au bureau — et le navigateur s'en
+// souvient.
+
+const LARGEUR_MINI = 380;
+
+function poserLargeur(px) {
+  const maxi = Math.max(LARGEUR_MINI, window.innerWidth - 420);
+  const large = Math.min(Math.max(px, LARGEUR_MINI), maxi);
+  document.documentElement.style.setProperty("--saisie", large + "px");
+  stockage.ecrire("largeurSaisie", large);
+  ajusterZoom();
+}
+
+function brancherPoignee() {
+  const poignee = $("#poignee");
+  const garde = stockage.lire("largeurSaisie", 0);
+  if (garde) poserLargeur(garde);
+  let attrape = false;
+  poignee.addEventListener("pointerdown", (e) => {
+    attrape = true;
+    try { poignee.setPointerCapture(e.pointerId); } catch (_) { /* synthétique */ }
+    e.preventDefault();
+  });
+  poignee.addEventListener("pointermove", (e) => {
+    if (attrape) poserLargeur(e.clientX - $("main").getBoundingClientRect().left);
+  });
+  poignee.addEventListener("pointerup", () => { attrape = false; });
+  poignee.addEventListener("dblclick", () => {
+    document.documentElement.style.removeProperty("--saisie");
+    stockage.ecrire("largeurSaisie", 0);
+    ajusterZoom();
+  });
+  poignee.addEventListener("keydown", (e) => {
+    const pas = e.shiftKey ? 60 : 20;
+    if (e.key === "ArrowLeft") { poserLargeur($(".saisie").clientWidth - pas); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { poserLargeur($(".saisie").clientWidth + pas); e.preventDefault(); }
+  });
+}
+
 // -- glisser une pièce imbriquée -----------------------------------------------------------
 // Le pointeur prend la forme ; au relâchement, le cœur valide (dans le
 // bois, à l'écart des autres), refait les chutes, et la planche s'épingle
@@ -964,6 +1006,7 @@ function brancher() {
   });
   window.addEventListener("resize", ajusterZoom);
   window.addEventListener("beforeprint", () => { etat.zoom = 1; ajusterZoom(); });
+  brancherPoignee();
   $("#menu-contextuel").hidden = true;
   // La langue : le bouton montre celle qu'on prendra en le touchant.
   const bLangue = $("#b-langue");
