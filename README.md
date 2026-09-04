@@ -27,7 +27,17 @@ Fil), une pièce par ligne dessous, les titres de section sautés. Les
 formules sont calculées (alias, références entre feuilles comme
 `Parametres.HautVantail`, unités, `round`…) : une feuille de débit
 réelle en est faite. Ce que l'évaluateur ne sait pas, il le refuse en
-nommant la cellule.
+nommant la cellule. Un document **modelé**, sans cette feuille — un
+tableur de cotes pilotes n'en est pas une —, se refuse en indiquant le
+chemin : dans FreeCAD, une macro mesure les solides par leur boîte
+englobante et écrit un CSV, que l'import CSV relit ici.
+
+La colonne **Matière** des deux tables propose les matières écrites de
+part et d'autre, pas seulement les siennes : les deux doivent employer le
+même mot, et chercher dans sa propre liste celui qui manque n'y menait
+jamais. Une matière neuve se tape par-dessus. Un import dont la matière
+n'existe pas au stock le dit **tout de suite**, avec les deux mots en
+présence — la faute est presque toujours une majuscule ou une espace.
 
 ## La CNC : des formes quelconques, imbriquées
 

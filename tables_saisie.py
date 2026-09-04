@@ -653,6 +653,12 @@ class TablePieces(TableEditable):
             if self.texte(ligne, 0) == reference_piece:
                 self.item(ligne, self.COLONNE_PLANCHE).setText(reference_planche)
 
+    def matieres(self) -> list:
+        """Les matières écrites dans les pièces — ce que le stock doit
+        proposer, puisque les deux doivent employer le même mot."""
+        return sorted({self.texte(l, 4) for l in range(self.rowCount())
+                       if self.texte(l, 4)})
+
     def pieces(self) -> list:
         return [opt.Piece(**self.valeurs_ligne(l)) for l in self.lignes_utiles()]
 
@@ -740,9 +746,15 @@ class TableStock(TableEditable):
 
     AVANCEES = (8, 9, 10, 12)        # Fil, Catalogue, Prix, Contour
 
-    def __init__(self):
+    def __init__(self, matieres_connues=None):
         super().__init__()
-        self.setItemDelegateForColumn(4, DelegateListe(self.matieres, self))
+        # La liste propose les matières des DEUX tables, pas seulement les
+        # siennes : le stock d'un projet importé porte encore le bois du
+        # précédent, et « douglas », écrit vingt fois dans les pièces
+        # juste au-dessus, n'était pas proposé — le seul mot dont on ait
+        # besoin, absent de la seule liste où on le cherche.
+        self.setItemDelegateForColumn(
+            4, DelegateListe(matieres_connues or self.matieres, self))
 
     def stock(self) -> list:
         return [opt.Planche(**self.valeurs_ligne(l))

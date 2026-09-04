@@ -409,6 +409,65 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class MatieresDesDeuxCotes(unittest.TestCase):
+    """La colonne Matière n'a de sens que si les deux tables emploient le
+    même mot. Chacune ne proposait que sa propre liste : après un import
+    en douglas sur un stock en contreplaqué, « douglas » — écrit vingt
+    fois deux centimètres plus haut — n'était proposé nulle part."""
+
+    def _fenetre_douglas(self):
+        f = _fenetre()
+        f._charger_exemple_formes()
+        APP.processEvents()
+        chemin = os.path.join(tempfile.mkdtemp(), "volets.csv")
+        with open(chemin, "w", newline="", encoding="utf-8") as fichier:
+            fichier.write("reference,longueur,largeur,epaisseur,matiere,"
+                          "quantite,fil\n")
+            fichier.write("Volet_Lame1,1090,114,27,Douglas,1,longueur\n")
+        with mock.patch.object(interface.QFileDialog, "getOpenFileName",
+                               staticmethod(lambda *a, **k: (chemin, ""))), \
+             mock.patch.object(interface.QMessageBox, "warning",
+                               staticmethod(lambda *a, **k: None)):
+            f._importer_csv()
+        APP.processEvents()
+        return f
+
+    def test_les_deux_listes_proposent_les_deux_tables(self):
+        f = self._fenetre_douglas()
+        self.assertEqual(f.table_pieces.matieres(), ["Douglas"])
+        self.assertEqual(f.table_stock.matieres(), ["contreplaqué"])
+        connues = f._matieres_connues()
+        self.assertIn("Douglas", connues)
+        self.assertIn("contreplaqué", connues)
+        for table in (f.table_stock, f.table_pieces):
+            delegue = table.itemDelegateForColumn(4)
+            editeur = delegue.createEditor(table, None,
+                                           table.model().index(0, 4))
+            offert = [editeur.itemText(i) for i in range(editeur.count())]
+            self.assertIn("Douglas", offert)
+            self.assertIn("contreplaqué", offert)
+            self.assertTrue(editeur.isEditable(), "une matière neuve se tape")
+        f._modifie = False
+        f.close()
+
+    def test_l_import_dit_tout_de_suite_que_rien_ne_s_apparie(self):
+        """C'était écrit dans l'onglet des non placées, après un calcul :
+        trop tard et trop loin."""
+        f = self._fenetre_douglas()
+        message = f.statusBar().currentMessage()
+        self.assertIn("Douglas", message)
+        self.assertIn("contreplaqué", message)
+        self.assertIn("aucune planche", message)
+        # et plus rien à dire quand les mots concordent
+        for ligne in range(f.table_stock.rowCount()):
+            if f.table_stock.item(ligne, 4) is not None:
+                f.table_stock.item(ligne, 4).setText("Douglas")
+        f._signaler_matieres_orphelines(1, "volets.csv")
+        self.assertNotIn("aucune planche", f.statusBar().currentMessage())
+        f._modifie = False
+        f.close()
+
+
 class ReglagesDesExemples(unittest.TestCase):
 
     def test_les_orientations_de_l_exemple_arrivent_dans_l_interface(self):

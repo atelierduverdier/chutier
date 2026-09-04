@@ -614,8 +614,8 @@ class FenetrePrincipale(QMainWindow):
         deux. Trois onglets, c'était quatre lignes de pièces et 700 px de
         vide, pendant que le stock — dont le débit a besoin en même
         temps — se cachait derrière un clic."""
-        self.table_stock = tsa.TableStock()
-        self.table_pieces = tsa.TablePieces(self.table_stock.matieres,
+        self.table_stock = tsa.TableStock(self._matieres_connues)
+        self.table_pieces = tsa.TablePieces(self._matieres_connues,
                                             self.table_stock.references)
         self._table_active = self.table_pieces
 
@@ -1168,6 +1168,16 @@ class FenetrePrincipale(QMainWindow):
         if table is not None:
             table.supprimer_selection()
 
+    def _matieres_connues(self) -> list:
+        """Les matières écrites de part et d'autre. Les deux tables les
+        proposent toutes les deux : leur colonne Matière n'a de sens que
+        si elles emploient le MÊME mot, et chercher dans sa propre liste
+        celui qui manque justement n'y menait jamais."""
+        matieres = set(self.table_stock.matieres())
+        if getattr(self, "table_pieces", None) is not None:
+            matieres.update(self.table_pieces.matieres())
+        return sorted(matieres)
+
     def _matiere_en_lot(self):
         table = self._table_courante()
         if table is None:
@@ -1179,7 +1189,7 @@ class FenetrePrincipale(QMainWindow):
                 "Choisissez d'abord une ou plusieurs lignes (clic, puis"
                 " Ctrl ou Maj-clic pour en ajouter).")
             return
-        matieres = self.table_stock.matieres()
+        matieres = self._matieres_connues()
         depart = table.texte(lignes[0], 4)
         matiere, ok = QInputDialog.getItem(
             self, "Matière", "Matière à appliquer aux %d ligne(s) choisie(s) :"
@@ -1859,6 +1869,27 @@ class FenetrePrincipale(QMainWindow):
         self._retenir_dossier(chemin)
         self.table_pieces.setFocus()
         self._saisie_changee()
+        self._signaler_matieres_orphelines(len(pieces), os.path.basename(chemin))
+
+    def _signaler_matieres_orphelines(self, nombre: int, source: str) -> None:
+        """Des pièces importées dans un bois que le stock n'a pas, c'est
+        un débit qui ne placera rien — et le seul endroit où on le lisait
+        était l'onglet des non placées, après un calcul. On le dit tout de
+        suite, avec les deux mots en présence : la faute est presque
+        toujours une majuscule ou une espace."""
+        du_stock = set(self.table_stock.matieres())
+        orphelines = [m for m in self.table_pieces.matieres()
+                      if m not in du_stock]
+        if not orphelines or not du_stock:
+            self.statusBar().showMessage(
+                "%d pièce(s) lue(s) dans %s" % (nombre, source), 8000)
+            return
+        self.statusBar().showMessage(
+            "%d pièce(s) lue(s) dans %s — mais aucune planche en %s dans le"
+            " stock (il y a : %s). Corrigez la colonne Matière, des deux"
+            " côtés le même mot."
+            % (nombre, source, ", ".join(orphelines),
+               ", ".join(sorted(du_stock))), 20000)
 
     def _importer_contours(self):
         """Chaque tracé fermé du SVG devient une pièce à contour, AJOUTÉE
@@ -2013,9 +2044,8 @@ class FenetrePrincipale(QMainWindow):
         self._retenir_dossier(chemin)
         self.table_pieces.setFocus()
         self._saisie_changee()
-        self.statusBar().showMessage(
-            "%d pièce(s) lues dans %s" % (len(pieces), os.path.basename(chemin)),
-            8000)
+        self._signaler_matieres_orphelines(len(pieces),
+                                           os.path.basename(chemin))
 
     def _exporter_image(self):
         if self._resultat is None or not self._resultat.debits:

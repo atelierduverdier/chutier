@@ -132,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.2.2";
+export const VERSION = "1.2.3";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -359,7 +359,10 @@ function atelier() { return stockage.lire("atelier", []).map(s => ({ ...DEFAUTS_
 
 // -- tables ---------------------------------------------------------------------
 
-function matieres() { return [...new Set(etat.stock.map(s => (s.matiere || "").trim()).filter(Boolean))].sort(); }
+// Les matières des DEUX tables : leur colonne n'a de sens que si elles
+// emploient le même mot, et proposer à chacune sa propre liste laissait
+// justement de côté celui qui manque.
+function matieres() { return [...new Set([...etat.stock, ...etat.pieces].map(s => (s.matiere || "").trim()).filter(Boolean))].sort(); }
 function references() { return [...new Set(etat.stock.map(s => (s.reference || "").trim()).filter(Boolean))]; }
 
 function rendreTable(nom) {
