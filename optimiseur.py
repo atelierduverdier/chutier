@@ -147,6 +147,13 @@ def _aire_avec_trous(contour, trous) -> float:
             - sum(abs(_aire_polygone(t)) for t in trous))
 
 
+def _perimetre(points) -> float:
+    n = len(points)
+    return sum(((points[(i + 1) % n][0] - points[i][0]) ** 2
+                + (points[(i + 1) % n][1] - points[i][1]) ** 2) ** 0.5
+               for i in range(n))
+
+
 def _aire_polygone(points) -> float:
     aire = 0.0
     n = len(points)
@@ -261,6 +268,14 @@ class Parametres:
       à la circulaire, un plan qui range les pièces de même largeur en
       bandes se scie deux fois plus vite qu'un plan éparpillé de même
       rendement.
+    - ``coupe_en_bandes`` : pour une scie à panneaux ou à format, qui
+      déligne d'abord la planche en bandes pleine longueur puis tronçonne
+      chaque bande. Le plan ne comporte alors que des coupes en deux
+      étapes (plus une recoupe de largeur dans la bande, jamais une
+      recoupe de longueur) — le guillotine libre produit des plans qu'une
+      telle scie exécute mal.
+    - ``vitesse_fraisage`` : en mm/min, pour estimer le temps de découpe
+      d'une planche imbriquée à partir de la longueur des contours.
     - ``passes_amelioration`` : nombre de balayages de la recherche
       locale sur la meilleure solution gloutonne (0 pour s'en passer).
       Chaque balayage essaie, planche par planche, de la vider et de
@@ -290,6 +305,8 @@ class Parametres:
     marge_bord: float = 5.0
     pas_rotation: int = 90
     processus: int = 0
+    coupe_en_bandes: bool = False
+    vitesse_fraisage: float = 1500.0
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +410,22 @@ class Debit:
         return any(p.contour for p in self.poses)
 
     @property
+    def longueur_fraisage(self) -> float:
+        """La longueur totale des contours à fraiser, trous compris, en mm
+        — ce qui fait le temps de découpe d'une planche imbriquée. Zéro
+        pour une planche sciée."""
+        if not self.imbriquee:
+            return 0.0
+        total = 0.0
+        for p in self.poses:
+            anneaux = [p.contour] + list(p.trous) if p.contour else [
+                ((p.x, p.y), (p.x + p.dim_x, p.y), (p.x + p.dim_x, p.y + p.dim_y),
+                 (p.x, p.y + p.dim_y))]
+            for anneau in anneaux:
+                total += _perimetre(anneau)
+        return total
+
+    @property
     def surface(self) -> float:
         return self.planche.aire
 
@@ -435,6 +468,7 @@ class Bilan:
     surface_perdue: float
     rendement: float
     nb_coupes: int = 0
+    longueur_fraisage: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -519,7 +553,8 @@ class Resultat:
                    _mm(d.planche.largeur),
                    "chute du stock" if d.planche.chute else "neuve",
                    len(d.poses),
-                   "imbriquée pour la CNC" if d.imbriquee
+                   "imbriquée pour la CNC, %s de fraisage"
+                   % _m(d.longueur_fraisage) if d.imbriquee
                    else "%d coupe(s)" % len(d.coupes), _m2(d.perte)))
             for p in d.poses:
                 if p.contour:
@@ -555,6 +590,11 @@ def _mm(v: float) -> str:
     return "%g" % round(v, 2)
 
 
+def _m(v: float) -> str:
+    """Une longueur de fraisage : « 12,3 m »."""
+    return ("%.1f m" % (v / 1000.0)).replace(".", ",")
+
+
 def _m2(v: float) -> str:
     return ("%.3f" % (v / 1e6)).replace(".", ",")
 
@@ -587,7 +627,8 @@ class _Rect:
 class _Ouverte:
     """Une planche en cours de découpe : ses rectangles libres."""
 
-    __slots__ = ("planche", "exemplaire", "libres", "poses", "coupes")
+    __slots__ = ("planche", "exemplaire", "libres", "poses", "coupes",
+                 "largeur_utile")
 
     def __init__(self, planche: Planche, exemplaire: int):
         self.planche = planche
@@ -595,6 +636,12 @@ class _Ouverte:
         self.libres = [_Rect(0.0, 0.0, planche.longueur, planche.largeur)]
         self.poses = []
         self.coupes = []
+        self.largeur_utile = planche.longueur   # ce qu'une bande pleine parcourt
+
+    def pleine_largeur(self, r: "_Rect") -> bool:
+        """Ce reste court-il sur toute la longueur utile de la planche —
+        c'est-à-dire : peut-on encore y ouvrir une bande ?"""
+        return r.w >= self.largeur_utile - EPS
 
 
 @dataclass
@@ -656,12 +703,22 @@ def _score_pose(rect: _Rect, dx: float, dy: float, fit: str):
     return (rect.aire - dx * dy, min(rx, ry))
 
 
-def _meilleure_dans(o: _Ouverte, piece: Piece, params: Parametres, fit: str):
-    """La meilleure pose possible dans cette planche ouverte, ou None."""
+def _meilleure_dans(o: _Ouverte, piece: Piece, params: Parametres, fit: str,
+                    split: str = "auto"):
+    """La meilleure pose possible dans cette planche ouverte, ou None.
+
+    En coupe en bandes, un reste de bande (la partie à droite d'une pièce
+    déjà posée dans la bande) ne reçoit qu'une pièce de la MÊME largeur
+    — ou plus étroite, ce qui vaut une recoupe de largeur dans la bande,
+    jamais une recoupe de longueur ; un reste pleine largeur ouvre une
+    nouvelle bande."""
     meilleur = None
     for ir, r in enumerate(o.libres):
         for ior, (dx, dy, piv) in enumerate(_orientations(piece, o.planche,
                                                           params)):
+            if split == "bandes" and not o.pleine_largeur(r) \
+                    and dy < r.h - EPS and dx < r.w - EPS:
+                continue        # ni la hauteur de bande, ni sa longueur
             if dx <= r.w + EPS and dy <= r.h + EPS:
                 cle = (_score_pose(r, dx, dy, fit), ir, ior)
                 if meilleur is None or cle < meilleur[0]:
@@ -799,6 +856,7 @@ def _preparer(o: _Ouverte, params: Parametres, split: str):
         y0 = pl.recoupe_rives + trait
         y1 = pl.largeur - pl.recoupe_rives - trait
     o.libres = []
+    o.largeur_utile = x1 - x0
     _liberer(o, x0, y0, x1 - x0, y1 - y0)
     for zone in pl.defauts:
         _retirer_zone(o, zone, trait, split)
@@ -823,7 +881,7 @@ def _poser(o: _Ouverte, i_libre: int, piece: Piece, exemplaire: int,
     coupe_y = reste_y > EPS
 
     if coupe_x and coupe_y:
-        regle = split
+        regle = "h" if split == "bandes" else split
         if regle == "auto":
             # garder d'un seul tenant le plus grand des deux restes
             aire_droite_pleine = max(0.0, reste_x - trait) * r.h
@@ -880,7 +938,7 @@ def _ouvrir(ouvertes: list, dispo: list, piece: Piece, params: Parametres,
         # nœud peut ne plus loger la pièce qui entrait dans son rectangle
         # — on passe alors à la candidate suivante.
         _preparer(o, params, strat.split)
-        if _meilleure_dans(o, piece, params, strat.fit) is not None:
+        if _meilleure_dans(o, piece, params, strat.fit, strat.split) is not None:
             dispo.pop(idx)
             ouvertes.append(o)
             return len(ouvertes) - 1
@@ -940,7 +998,7 @@ def _placer(piece: Piece, exemplaire: int, ouvertes: list, dispo: list,
             continue                  # planche déjà ouverte, trop mince
         if not _admise(piece, o.planche):
             continue
-        local = _meilleure_dans(o, piece, params, strat.fit)
+        local = _meilleure_dans(o, piece, params, strat.fit, strat.split)
         if local is not None:
             score, ir, dx, dy, piv = local
             cle = (score, io)
@@ -965,7 +1023,7 @@ def _placer(piece: Piece, exemplaire: int, ouvertes: list, dispo: list,
             non.append((piece, exemplaire, raison))
             return
         score, ir, dx, dy, piv = _meilleure_dans(ouvertes[io], piece,
-                                                 params, strat.fit)
+                                                 params, strat.fit, strat.split)
         choix = ((score, io), io, ir, dx, dy, piv)
     _, io, ir, dx, dy, piv = choix
     _poser(ouvertes[io], ir, piece, exemplaire, dx, dy, piv, params,
@@ -1101,6 +1159,21 @@ def _score_solution(sol: _Solution, params: Parametres):
 
 
 def _strategies(params: Parametres):
+    if params.coupe_en_bandes:
+        # Scie à panneaux : on déligne d'abord, en bandes pleine longueur,
+        # et on tronçonne dans la bande. C'est la règle de partage « h »
+        # (délignage sur toute la largeur du reste), et rien d'autre ; les
+        # tris par largeur rangent d'eux-mêmes les pièces de même largeur
+        # dans la même bande.
+        for cle in ("largeur", "cote", "aire"):
+            for fit in ("bssf", "baf"):
+                for chutes in (True, False):
+                    yield _Strategie(cle, fit, "bandes", chutes)
+        rng = random.Random(params.graine)
+        for _ in range(params.essais_melanges):
+            yield _Strategie("largeur", "bssf", "bandes", True,
+                             melange=rng.randrange(2 ** 30))
+        return
     for cle in ("cote", "aire", "perimetre", "largeur"):
         for fit in ("bssf", "baf"):
             for split in ("auto", "h", "v"):
@@ -1376,7 +1449,8 @@ def _valider(pieces: list, stock: list, params: Parametres):
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0
             or params.surcote_joint < 0 or params.essais_melanges < 0
             or params.passes_amelioration < 0 or params.ecart_contours < 0
-            or params.marge_bord < 0 or params.processus < 0):
+            or params.marge_bord < 0 or params.processus < 0
+            or params.vitesse_fraisage < 0):
         raise ValueError("paramètres : valeurs négatives interdites")
     if not 1 <= params.pas_rotation <= 180 or 360 % params.pas_rotation:
         raise ValueError("paramètres : le pas de rotation doit diviser 360"
@@ -1504,6 +1578,7 @@ def _bilan(debits: list, non_placees: list) -> Bilan:
         surface_perdue=sum(d.perte for d in debits),
         rendement=surface_pieces / entamee if entamee > EPS else 0.0,
         nb_coupes=sum(len(d.coupes) for d in debits),
+        longueur_fraisage=sum(d.longueur_fraisage for d in debits),
     )
 
 

@@ -137,6 +137,20 @@ class Invariants(unittest.TestCase):
         grande = max(r.debits[0].chutes, key=lambda c: c.aire)
         self.assertGreater(grande.aire, 0.5 * 600 * 400)
 
+    def test_la_longueur_de_fraisage_est_celle_des_contours(self):
+        cadre = ((0, 0), (100, 0), (100, 100), (0, 100))
+        trou = ((20, 20), (80, 20), (80, 80), (20, 80))
+        pieces = [Piece("cadre", 100, 100, 15, "cp", 1, FIL_INDIFFERENT,
+                        contour=cadre, trous=(trou,)),
+                  Piece("cale", 60, 30, 15, "cp", 1)]
+        stock = [Planche("cp", 300, 200, 15, "cp", 1, fil=False)]
+        r = optimiser(pieces, stock, RAPIDE)
+        d = r.debits[0]
+        self.assertAlmostEqual(d.longueur_fraisage, 400 + 240 + 180, places=3)
+        self.assertAlmostEqual(r.bilan.longueur_fraisage, d.longueur_fraisage)
+        scie = optimiser([Piece("cale", 60, 30, 15, "cp", 1)], stock, RAPIDE)
+        self.assertEqual(scie.debits[0].longueur_fraisage, 0.0)
+
     def test_lot_rectangles_seuls_reste_guillotine(self):
         stock = [Planche("cp", 600, 400, 18, "cp", 1, fil=False)]
         r = optimiser([Piece("cale", 120, 40, 18, "cp", 2)], stock, RAPIDE)
@@ -361,6 +375,33 @@ class LectureSvg(unittest.TestCase):
 
 
 @unittest.skipUnless(SHAPELY, "shapely absent")
+class LectureSvgInkscape(unittest.TestCase):
+    """Un fichier réellement écrit par Inkscape (1.4, avec ses espaces de
+    noms sodipodi/inkscape, ses ``id`` automatiques, ses transformations)
+    — c'est ce qu'apportent les gens, pas un SVG écrit à la main."""
+
+    CHEMIN = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "inkscape-exemple.svg")
+
+    def test_les_cinq_formes_reviennent_en_millimetres(self):
+        formes, avertissements = contours_svg.formes_depuis_svg(self.CHEMIN)
+        self.assertEqual(avertissements, [])
+        par_nom = {f["nom"]: f for f in formes}
+        self.assertEqual(set(par_nom), {"rect1", "path1", "circle2", "path2",
+                                        "ellipse2"})
+        # viewBox 210 × 148 pour 210 × 148 mm : l'unité utilisateur EST le mm
+        self.assertAlmostEqual(par_nom["rect1"]["longueur"], 60.0, places=2)
+        self.assertAlmostEqual(par_nom["rect1"]["largeur"], 40.0, places=2)
+        # le rectangle tourné de 30° : sa boîte est 40·cos30 + 30·sin30
+        self.assertAlmostEqual(par_nom["path1"]["longueur"],
+                               40 * math.cos(math.radians(30))
+                               + 30 * math.sin(math.radians(30)), places=1)
+        self.assertAlmostEqual(par_nom["circle2"]["longueur"], 40.0, places=2)
+        self.assertGreater(len(par_nom["circle2"]["contour"]), 24)
+        self.assertEqual(len(par_nom["path2"]["trous"]), 1)     # le cadre
+        self.assertAlmostEqual(par_nom["ellipse2"]["largeur"], 16.0, places=1)
+
+
 class EcritureSvg(unittest.TestCase):
 
     def test_aller_retour(self):

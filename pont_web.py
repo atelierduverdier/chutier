@@ -111,6 +111,7 @@ def _debit(d: opt.Debit) -> dict:
         "chutes": [dataclasses.asdict(c) for c in d.chutes],
         "coupes": [dataclasses.asdict(c) for c in d.coupes],
         "imbriquee": d.imbriquee,
+        "longueur_fraisage": d.longueur_fraisage,
         "rendement": d.rendement,
         "perte": d.perte,
         "defauts_texte": saisie.texte_defauts(pl),

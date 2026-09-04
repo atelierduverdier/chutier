@@ -43,6 +43,7 @@ const DEFAUTS_LIGNE = {
 const REGLAGES = [
   ["La scie", [
     ["trait_de_scie", "Trait de scie (mm)", "nombre", "3 à 4 mm pour une lame de circulaire."],
+    ["coupe_en_bandes", "Coupe en bandes", "bool", "Scie à panneaux ou à format : déligner d'abord en bandes pleine longueur, puis tronçonner chaque bande."],
     ["surcote_longueur", "Surcote de longueur (mm)", "nombre", "Marge de recoupe ajoutée à chaque pièce au débit."],
     ["surcote_largeur", "Surcote de largeur (mm)", "nombre", "Idem en travers — de quoi dresser les rives."]]],
   ["Ce qui mérite d'être gardé", [
@@ -54,6 +55,7 @@ const REGLAGES = [
   ["La CNC (contours imbriqués)", [
     ["ecart_contours", "Écart entre contours (mm)", "nombre", "Diamètre de fraise plus un jeu."],
     ["marge_bord", "Marge au bord (mm)", "nombre", "Distance entre un contour et le bord de la planche."],
+    ["vitesse_fraisage", "Vitesse de fraisage (mm/min)", "nombre", "Pour estimer le temps de découpe d'une planche imbriquée."],
     ["pas_rotation", "Orientations", "choix", "Les angles essayés pour une pièce à fil indifférent.",
       [[90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
   ["Le calcul", [
@@ -301,6 +303,9 @@ function rendreReglages() {
         champ = el("select", { onchange: (e) => { etat.parametres[cle] = isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value); changerReglage(); } });
         for (const [v, t] of choix) champ.append(el("option", { value: v, text: t }));
         champ.value = String(etat.parametres[cle]);
+      } else if (genre === "bool") {
+        champ = el("input", { type: "checkbox", onchange: (e) => { etat.parametres[cle] = e.target.checked; changerReglage(); } });
+        champ.checked = Boolean(etat.parametres[cle]);
       } else {
         champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: etat.parametres[cle], oninput: (e) => { etat.parametres[cle] = Number(e.target.value); changerReglage(); } });
       }
@@ -346,7 +351,7 @@ function afficherResultat() {
     ["Pièces posées", `${b.nb_posees} / ${b.nb_demandees}`, b.nb_non_placees ? `${b.nb_non_placees} non placée(s)` : "", b.nb_non_placees ? "alerte" : ""],
     ["Rendement", pct(b.rendement) + " %", m2(b.surface_pieces) + " m² de pièces", ""],
     ["Planches entamées", String(b.nb_planches_entamees), b.nb_chutes_consommees ? `dont ${b.nb_chutes_consommees} chute(s)` : "aucune chute écoulée", ""],
-    ["Pertes", m2(b.surface_perdue) + " m²", `sciure et rebuts · ${b.nb_coupes} coupe(s)`, ""],
+    ["Pertes", m2(b.surface_perdue) + " m²", b.longueur_fraisage > 0 ? `${(b.longueur_fraisage / 1000).toFixed(1).replace(".", ",")} m de fraisage ≈ ${Math.round(b.longueur_fraisage / Math.max(etat.parametres.vitesse_fraisage || 1500, 1))} min` : `sciure et rebuts · ${b.nb_coupes} coupe(s)`, ""],
     ["Chutes créées", String(r.chutes_groupees.reduce((n, c) => n + c.nombre, 0)), b.surface_chutes_creees ? m2(b.surface_chutes_creees) + " m² à ranger" : "rien à garder", b.surface_chutes_creees ? "accent" : ""],
     ["À acheter", String(r.achats.reduce((n, a) => n + a.nombre, 0)), r.cout ? r.cout.toFixed(2) + " €" : "prix non renseignés", ""],
   ];
@@ -387,7 +392,7 @@ function dessinerPlan() {
     const pl = d.planche;
     const epinglee = numero <= etat.epingles.length;
     const groupe = svgEl("g", { "data-planche": numero, class: "planche" });
-    groupe.append(svgEl("text", { x: 0, y: y + cartouche, "font-size": cartouche, "font-weight": "bold", class: "cartouche" }, `${numero}.  ${pl.reference}${d.plusieurs ? ` (ex. ${d.exemplaire})` : ""}   —   ${mm(pl.longueur)} × ${mm(pl.largeur)} × ${mm(pl.epaisseur)} mm, ${pl.matiere}${pl.chute ? " [chute]" : pl.illimite ? " [catalogue]" : ""}   —   ${d.poses.length} pièce(s), rendement ${pct(d.rendement)} %${epinglee ? "   —   ÉPINGLÉE" : ""}`));
+    groupe.append(svgEl("text", { x: 0, y: y + cartouche, "font-size": cartouche, "font-weight": "bold", class: "cartouche" }, `${numero}.  ${pl.reference}${d.plusieurs ? ` (ex. ${d.exemplaire})` : ""}   —   ${mm(pl.longueur)} × ${mm(pl.largeur)} × ${mm(pl.epaisseur)} mm, ${pl.matiere}${pl.chute ? " [chute]" : pl.illimite ? " [catalogue]" : ""}   —   ${d.poses.length} pièce(s), rendement ${pct(d.rendement)} %${d.imbriquee ? `   —   ${(d.longueur_fraisage / 1000).toFixed(1).replace(".", ",")} m de fraisage` : ""}${epinglee ? "   —   ÉPINGLÉE" : ""}`));
     y += bande;
     const yh = y;
     const Y = (v, h = 0) => yh + pl.largeur - v - h;

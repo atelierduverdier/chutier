@@ -492,6 +492,12 @@ class FenetrePrincipale(QMainWindow):
                              (15, "24 orientations (15°) — lent")):
             self.choix_rotation.addItem(libelle, pas)
         self.choix_rotation.currentIndexChanged.connect(self._saisie_changee)
+        self.case_bandes = QCheckBox("coupe en bandes (scie à panneaux)")
+        self.case_bandes.toggled.connect(self._saisie_changee)
+        self.spin_vitesse = self._spin(defauts.vitesse_fraisage, 0, 20000)
+        self.spin_vitesse.setSuffix(" mm/min")
+        self.spin_vitesse.setDecimals(0)
+        self.spin_vitesse.setSingleStep(100)
         self.spin_processus = QSpinBox()
         self.spin_processus.setRange(0, 64)
         self.spin_processus.setSpecialValueText("tous les cœurs")
@@ -520,6 +526,11 @@ class FenetrePrincipale(QMainWindow):
             ("Trait de scie (mm)", self.spin_trait,
              "Largeur de matière mangée par chaque coupe — 3 à 4 mm pour"
              " une lame de scie circulaire."),
+            ("", self.case_bandes,
+             "Une scie à panneaux ou à format déligne d'abord la planche"
+             " en bandes pleine longueur, puis tronçonne chaque bande. Le"
+             " plan n'a alors que des coupes en deux étapes — un plan"
+             " guillotine libre, elle l'exécute mal."),
             ("Surcote de longueur (mm)", self.spin_surcote_longueur,
              "Marge de recoupe ajoutée à chaque pièce au débit. La pièce"
              " garde ses cotes nominales dans la liste ; c'est le morceau"
@@ -557,6 +568,10 @@ class FenetrePrincipale(QMainWindow):
              "Les angles essayés pour une pièce à fil indifférent (ou sur"
              " un panneau sans fil). Plus d'orientations imbriquent parfois"
              " mieux, et calculent d'autant plus longtemps."),
+            ("Vitesse de fraisage", self.spin_vitesse,
+             "Pour estimer le temps de découpe d'une planche imbriquée à"
+             " partir de la longueur de ses contours — l'avance de la"
+             " fraise dans le bois, sans les déplacements à vide."),
             ("Processus", self.spin_processus,
              "Les stratégies d'imbrication se répartissent sur les cœurs"
              " de la machine. Le résultat ne dépend pas de ce nombre ;"
@@ -981,6 +996,8 @@ class FenetrePrincipale(QMainWindow):
             essais_melanges=self.spin_essais.value(),
             priorite=self.choix_priorite.currentData(),
             passes_amelioration=self.spin_passes.value(),
+            coupe_en_bandes=self.case_bandes.isChecked(),
+            vitesse_fraisage=self.spin_vitesse.value(),
             ecart_contours=self.spin_ecart.value(),
             marge_bord=self.spin_marge_bord.value(),
             pas_rotation=self.choix_rotation.currentData(),
@@ -998,8 +1015,10 @@ class FenetrePrincipale(QMainWindow):
                              (self.spin_passes, p.passes_amelioration),
                              (self.spin_ecart, p.ecart_contours),
                              (self.spin_marge_bord, p.marge_bord),
-                             (self.spin_processus, p.processus)):
+                             (self.spin_processus, p.processus),
+                             (self.spin_vitesse, p.vitesse_fraisage)):
             spin.setValue(valeur)
+        self.case_bandes.setChecked(p.coupe_en_bandes)
         self.choix_priorite.setCurrentIndex(
             max(0, self.choix_priorite.findData(p.priorite)))
         self.choix_rotation.setCurrentIndex(
@@ -1092,8 +1111,12 @@ class FenetrePrincipale(QMainWindow):
             "%d" % b.nb_planches_entamees,
             "dont %d chute(s)" % b.nb_chutes_consommees
             if b.nb_chutes_consommees else "aucune chute écoulée")
-        self.bilan.pertes.poser("%s m²" % opt._m2(b.surface_perdue),
-                                "sciure et rebuts · %d coupe(s)" % b.nb_coupes)
+        detail = "sciure et rebuts · %d coupe(s)" % b.nb_coupes
+        if b.longueur_fraisage > 0:
+            minutes = b.longueur_fraisage / max(self.spin_vitesse.value(), 1)
+            detail = "sciure et rebuts · %s de fraisage ≈ %d min" % (
+                opt._m(b.longueur_fraisage), round(minutes))
+        self.bilan.pertes.poser("%s m²" % opt._m2(b.surface_perdue), detail)
         self.bilan.chutes.poser(
             "%d" % len(r.chutes_creees),
             "%s m² à ranger" % opt._m2(b.surface_chutes_creees)

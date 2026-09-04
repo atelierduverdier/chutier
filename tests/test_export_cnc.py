@@ -40,6 +40,28 @@ def _paires_dxf(texte):
 
 class Dxf(unittest.TestCase):
 
+    def test_relu_par_ezdxf(self):
+        """Quand ezdxf est là (pip install ezdxf), le fichier doit se relire
+        sans la moindre correction de son audit — vérifié avec ezdxf 1.4.4
+        le 4 septembre 2026 ; sinon on saute."""
+        try:
+            import ezdxf
+            from ezdxf import recover
+        except ImportError:
+            self.skipTest("ezdxf absent")
+        import tempfile
+        chemin = os.path.join(tempfile.mkdtemp(), "planche.dxf")
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write(export_cnc.dxf_planche(_debit(), 1, "essai"))
+        doc, audit = recover.readfile(chemin)
+        self.assertEqual((len(audit.errors), len(audit.fixes)), (0, 0))
+        self.assertEqual(doc.dxfversion, "AC1009")
+        polys = [e for e in doc.modelspace() if e.dxftype() == "POLYLINE"]
+        self.assertEqual(len(polys), 5)
+        self.assertTrue(all(p.is_closed for p in polys))
+        self.assertEqual({l.dxf.name for l in doc.layers}
+                         >= {"PLANCHE", "PIECES", "NOMS"}, True)
+
     def test_une_polyline_fermee_par_contour(self):
         d = _debit()
         texte = export_cnc.dxf_planche(d, 1, "essai")

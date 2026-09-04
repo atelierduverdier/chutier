@@ -181,7 +181,9 @@ class VuePlan(QGraphicsView):
                       opt._mm(pl.largeur), opt._mm(pl.epaisseur), pl.matiere,
                       " [%s]" % marque if marque else "",
                       len(debit.poses), opt._pct(debit.rendement),
-                      "   —   ÉPINGLÉE" if numero in self.epinglees else ""))
+                      ("   —   %s de fraisage" % opt._m(debit.longueur_fraisage)
+                       if debit.imbriquee else "")
+                      + ("   —   ÉPINGLÉE" if numero in self.epinglees else "")))
         texte = QGraphicsSimpleTextItem(libelle)
         police = QFont()
         police.setPointSize(10)

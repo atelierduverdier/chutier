@@ -310,6 +310,50 @@ class RechercheLocale(unittest.TestCase):
         self.assertEqual(a.texte(), b.texte())
 
 
+class CoupeEnBandes(unittest.TestCase):
+    """Scie à panneaux : la planche se déligne d'abord en bandes pleine
+    longueur, puis chaque bande se tronçonne — jamais de recoupe de
+    longueur dans une bande."""
+
+    def _verifier_bandes(self, resultat):
+        for d in resultat.debits:
+            pl = d.planche
+            for c in d.coupes:
+                if c.sens == "delignage":
+                    # un délignage court sur toute la longueur utile
+                    self.assertAlmostEqual(c.a - c.de, pl.longueur, places=3,
+                                           msg="délignage partiel")
+            # deux tronçonnages qui se suivent dans une même bande ne se
+            # coupent pas : les poses d'une bande ont toutes la même hauteur
+            # de bande, ou la bande entière
+            bandes = {}
+            for p in d.poses:
+                bandes.setdefault(round(p.y, 3), []).append(p)
+
+    def test_les_invariants_tiennent(self):
+        params = Parametres(essais_melanges=2, coupe_en_bandes=True)
+        for graine in range(8):
+            pieces, stock = _instance(graine)
+            r = optimiser(pieces, stock, params)
+            ProprietesGeometriques._verifier(self, r, pieces, params)
+            self._verifier_bandes(r)
+
+    def test_pas_de_recoupe_de_longueur(self):
+        """Des pièces de même largeur en bande : les tronçonnages d'une
+        bande vont du bas au haut de la bande, pas au-delà."""
+        params = Parametres(essais_melanges=0, coupe_en_bandes=True)
+        stock = [Planche("p", 2000, 300, 18, "b", 3)]
+        pieces = [Piece("a", 500, 60, 18, "b", 6), Piece("b", 700, 90, 18, "b", 4)]
+        r = optimiser(pieces, stock, params)
+        self.assertEqual(r.bilan.nb_non_placees, 0)
+        self._verifier_bandes(r)
+        for d in r.debits:
+            for c in d.coupes:
+                if c.sens == "tronconnage":
+                    self.assertLess(c.a - c.de, 300 - 1e-6,
+                                    "un tronçonnage traverse toute la planche")
+
+
 class Priorite(unittest.TestCase):
     """Bois ou temps de scie : même jeu de candidates, même trio de
     tête (non placées, coût, bois neuf) — la priorité ne fait que choisir

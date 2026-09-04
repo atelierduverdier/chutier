@@ -1068,7 +1068,8 @@ class Fenetre(unittest.TestCase):
                            surcote_largeur=2.0, tolerance_epaisseur=5.0,
                            chute_mini_longueur=300.0, chute_mini_largeur=50.0,
                            surcote_joint=4.0, essais_melanges=3,
-                           priorite=opt.PRIORITE_SCIE, passes_amelioration=5)
+                           priorite=opt.PRIORITE_SCIE, passes_amelioration=5,
+                           coupe_en_bandes=True, vitesse_fraisage=900.0)
         self.f._appliquer_parametres(p)
         self.assertEqual(self.f._parametres_actuels(), p)
         self.f._appliquer_parametres(opt.Parametres())
