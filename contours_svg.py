@@ -937,9 +937,9 @@ def _dedans(point, polygone):
     return dedans
 
 
-def _normaliser(points, tol=1e-6):
-    """Ferme, ôte les doublons consécutifs, oriente dans le sens direct
-    et ramène le coin bas-gauche de la boîte en (0, 0)."""
+def _nettoyer(points, tol=1e-6):
+    """Ôte les doublons consécutifs et le point de fermeture, oriente
+    dans le sens direct. Vide si moins de trois points restent."""
     pts = []
     for p in points:
         if not pts or abs(p[0] - pts[-1][0]) > tol or abs(p[1] - pts[-1][1]) > tol:
@@ -948,42 +948,66 @@ def _normaliser(points, tol=1e-6):
             and abs(pts[0][1] - pts[-1][1]) <= tol:
         pts.pop()
     if len(pts) < 3:
-        return ()
+        return []
     if _aire_signee(pts) < 0:
         pts.reverse()
+    return pts
+
+
+def _normaliser(points, trous=()):
+    """Le contour nettoyé, ramené au coin bas-gauche de sa boîte en
+    (0, 0), et ses trous déplacés d'autant : (contour, trous)."""
+    pts = _nettoyer(points)
+    if not pts:
+        return (), ()
     x0 = min(p[0] for p in pts)
     y0 = min(p[1] for p in pts)
-    return tuple((round(x - x0, 4), round(y - y0, 4)) for x, y in pts)
+
+    def deplacer(anneau):
+        return tuple((round(x - x0, 4), round(y - y0, 4)) for x, y in anneau)
+    propres = [_nettoyer(t) for t in trous]
+    return deplacer(pts), tuple(deplacer(t) for t in propres if t)
 
 
 def formes_depuis_svg(chemin):
     """(formes, avertissements). Une forme : ``{"nom", "contour",
-    "longueur", "largeur", "groupe"}``, le contour en mm, sens direct,
-    coin bas-gauche en (0, 0)."""
+    "trous", "longueur", "largeur", "groupe"}``, le contour en mm, sens
+    direct, coin bas-gauche en (0, 0), les trous déplacés d'autant."""
     records, avertissements = parse_svg_file(chemin)
     formes = []
     ouverts = 0
     for index, record in enumerate(records, 1):
-        fermes = [sp["points"] for sp in record["subpaths"] if sp["closed"]]
+        fermes = [sp["points"] for sp in record["subpaths"]
+                  if sp["closed"] and len(sp["points"]) >= 3]
         ouverts += sum(1 for sp in record["subpaths"] if not sp["closed"])
-        # Un sous-tracé contenu dans un autre du même élément est un trou.
-        exterieurs = []
+        # Un sous-tracé contenu dans un autre du même élément est un TROU
+        # de celui-ci : on peut y imbriquer une pièce plus petite. (Un
+        # trou dans un trou, l'îlot, redevient une forme à part — rare,
+        # et c'est ce que le pair-impair du SVG en fait aussi.)
+        parents = []
         for i, pts in enumerate(fermes):
-            if len(pts) < 3:
-                continue
-            if any(j != i and len(autre) >= 3 and _dedans(pts[0], autre)
-                   for j, autre in enumerate(fermes)):
-                continue
-            exterieurs.append(pts)
+            contenants = [j for j, autre in enumerate(fermes)
+                          if j != i and _dedans(pts[0], autre)]
+            parents.append(contenants)
+        exterieurs = [i for i, c in enumerate(parents) if len(c) % 2 == 0]
+        trous_de = {i: [] for i in exterieurs}
+        for i, contenants in enumerate(parents):
+            if len(contenants) % 2 == 1:
+                # son parent direct : le contenant le plus petit
+                parent = min(contenants,
+                             key=lambda j: abs(_aire_signee(fermes[j])))
+                if parent in trous_de:
+                    trous_de[parent].append(fermes[i])
         base = record.get("svg_id") or "forme %d" % index
-        for k, pts in enumerate(exterieurs, 1):
-            contour = _normaliser(pts)
+        for k, i in enumerate(exterieurs, 1):
+            contour, trous = _normaliser(fermes[i], trous_de[i])
             if not contour:
                 continue
             nom = base if len(exterieurs) == 1 else "%s (%d)" % (base, k)
             formes.append({
                 "nom": nom,
                 "contour": contour,
+                "trous": trous,
                 "longueur": round(max(p[0] for p in contour), 2),
                 "largeur": round(max(p[1] for p in contour), 2),
                 "groupe": record.get("groupe"),
@@ -999,10 +1023,14 @@ def _nombre(v):
     return ("%.3f" % v).rstrip("0").rstrip(".")
 
 
-def _chemin_d(points, hauteur):
-    # Y retourné : le SVG compte vers le bas.
-    return ("M" + " L".join("%s %s" % (_nombre(x), _nombre(hauteur - y))
-                            for x, y in points) + " Z")
+def _chemin_d(points, hauteur, trous=()):
+    # Y retourné : le SVG compte vers le bas. Les trous suivent en
+    # sous-tracés du même chemin : à la CNC ils se fraisent d'abord.
+    anneaux = [points] + list(trous)
+    return " ".join(
+        "M" + " L".join("%s %s" % (_nombre(x), _nombre(hauteur - y))
+                        for x, y in anneau) + " Z"
+        for anneau in anneaux)
 
 
 def ecrire_svg(chemin, debit, numero=1, titre=""):
@@ -1026,14 +1054,15 @@ def ecrire_svg(chemin, debit, numero=1, titre=""):
     ]
     for pose in debit.poses:
         if pose.contour:
-            points = pose.contour
+            points, trous = pose.contour, pose.trous
         else:
             points = ((pose.x, pose.y), (pose.x + pose.dim_x, pose.y),
                       (pose.x + pose.dim_x, pose.y + pose.dim_y),
                       (pose.x, pose.y + pose.dim_y))
-        lignes.append('    <path id="%s-%d" d="%s"/>'
+            trous = ()
+        lignes.append('    <path id="%s-%d" fill-rule="evenodd" d="%s"/>'
                       % (pose.piece.reference.replace('"', "'"),
-                         pose.exemplaire, _chemin_d(points, H)))
+                         pose.exemplaire, _chemin_d(points, H, trous)))
     lignes.append('  </g>')
     lignes.append('  <g id="noms" font-family="sans-serif" font-size="6"'
                   ' fill="#555555">')

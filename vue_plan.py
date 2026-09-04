@@ -16,10 +16,12 @@ feuille qu'on imprime et qu'on emporte à l'établi.
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QFont, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtGui import (
+    QBrush, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF,
+)
 from PySide6.QtWidgets import (
-    QGraphicsItem, QGraphicsPolygonItem, QGraphicsRectItem, QGraphicsScene,
-    QGraphicsSimpleTextItem, QGraphicsView,
+    QGraphicsItem, QGraphicsPathItem, QGraphicsPolygonItem, QGraphicsRectItem,
+    QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView,
 )
 
 import apparence
@@ -218,7 +220,7 @@ class VuePlan(QGraphicsView):
                 pl.largeur, y_haut, self.couleur(pose.piece.reference),
                 "%s\n%s × %s" % (pose.piece.reference, opt._mm(pose.dim_x),
                                  opt._mm(pose.dim_y)),
-                pose.piece.reference, contour=pose.contour)
+                pose.piece.reference, contour=pose.contour, trous=pose.trous)
             self._poses[rect] = (numero, pose)
 
         for chute in debit.chutes:
@@ -338,19 +340,29 @@ class VuePlan(QGraphicsView):
 
     def _rectangle(self, scene, numero, x, y, dx, dy, largeur_planche,
                    y_haut, couleur, etiquette, etiquette_courte,
-                   hachure=False, trait=None, info=None, contour=()):
+                   hachure=False, trait=None, info=None, contour=(),
+                   trous=()):
         """``etiquette`` à ``None`` : un rectangle muet (défaut, recoupe),
         qui ne porte que son info-bulle ``info``. ``contour`` : une pose
-        imbriquée se dessine par son polygone, l'étiquette se règle sur
-        sa boîte."""
+        imbriquée se dessine par son polygone (ses ``trous`` évidés),
+        l'étiquette se règle sur sa boîte."""
         # Les données ont leur origine en bas-gauche ; QGraphicsRectItem
         # place la sienne en haut-gauche — on retourne y ici, une fois,
         # plutôt que de retourner toute la vue (le texte resterait lisible).
         y_qt = y_haut + largeur_planche - y - dy
-        if contour:
-            rect = QGraphicsPolygonItem(QPolygonF(
-                [QPointF(px, y_haut + largeur_planche - py)
-                 for px, py in contour]))
+
+        def polygone(anneau):
+            return QPolygonF([QPointF(px, y_haut + largeur_planche - py)
+                              for px, py in anneau])
+        if contour and trous:
+            chemin = QPainterPath()
+            chemin.setFillRule(Qt.FillRule.OddEvenFill)
+            for anneau in (contour,) + tuple(trous):
+                chemin.addPolygon(polygone(anneau))
+                chemin.closeSubpath()
+            rect = QGraphicsPathItem(chemin)
+        elif contour:
+            rect = QGraphicsPolygonItem(polygone(contour))
         else:
             rect = QGraphicsRectItem(x, y_qt, dx, dy)
         if hachure:
@@ -382,12 +394,22 @@ class VuePlan(QGraphicsView):
             # polygone (le centre de la boîte tombe dans l'échancrure d'une
             # équerre, et deux équerres emboîtées y écrivaient l'une sur
             # l'autre). Le budget de place est réduit : la boîte est plus
-            # large que la forme.
-            cx, cy = _centre_de_gravite(contour)
-            dedans = [self._texte_centre(scene, etiquette_courte, cx - dx * 0.3,
-                                         y_haut + largeur_planche - cy - dy * 0.3,
-                                         dx * 0.6, dy * 0.6)]
-            dx, dy = dx * 0.6, dy * 0.6
+            # large que la forme. Une forme à trou a son centre de gravité
+            # DANS le trou, sur ce qu'on y a imbriqué : le nom va dans la
+            # barre du bas, entre le bord et le trou le plus bas.
+            if trous:
+                bas_trou = min(py for t in trous for _, py in t)
+                cx = x + dx / 2
+                cy = (y + bas_trou) / 2
+                budget_x, budget_y = dx * 0.6, max(bas_trou - y, 1e-3)
+            else:
+                cx, cy = _centre_de_gravite(contour)
+                budget_x, budget_y = dx * 0.6, dy * 0.6
+            dedans = [self._texte_centre(scene, etiquette_courte,
+                                         cx - budget_x / 2,
+                                         y_haut + largeur_planche - cy
+                                         - budget_y / 2, budget_x, budget_y)]
+            dx, dy = budget_x, budget_y
         else:
             dedans = [self._texte_centre(scene, chaine, x, y_qt, dx, dy)
                       for chaine in (etiquette,

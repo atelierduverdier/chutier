@@ -26,7 +26,9 @@ spreadsheet (the CSV is the exchange contract in the meantime).
 
 File → **Import contours (SVG)** adds to the parts every closed path of
 the file (Inkscape, FreeCAD…; a path contained in another one of the
-same element is a hole, ignored). A part with a contour keeps its
+same element is a **hole** of it, and a smaller part can nest inside —
+the NFP of a polygon with holes leaves the hole's interior free by
+itself). A part with a contour keeps its
 bounding-box dimensions in the table, and the Contour column says
 "◇ 24 pts". As soon as a material has **one** contour, that whole lot is
 **nested** for the router instead of being sawn: rectangles take part as

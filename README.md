@@ -27,7 +27,9 @@ attendant).
 
 Fichier → **Importer des contours (SVG)** ajoute aux pièces chaque
 tracé fermé du fichier (Inkscape, FreeCAD… ; un tracé contenu dans un
-autre du même élément est un trou, ignoré). Une pièce à contour garde
+autre du même élément est un **trou** de celui-ci, et une pièce plus
+petite peut s'y imbriquer — le NFP d'un polygone à trous laisse libre
+l'intérieur du trou de lui-même). Une pièce à contour garde
 ses cotes de boîte englobante dans la table, et la colonne Contour dit
 « ◇ 24 pts ». Dès qu'une matière compte **un** contour, tout ce lot est
 **imbriqué** à la fraise au lieu d'être scié : les rectangles y

@@ -152,6 +152,47 @@ class Invariants(unittest.TestCase):
                          [p.contour for p in premier.debits[0].poses])
         self.assertEqual(second.bilan.nb_posees, premier.bilan.nb_posees)
 
+    def test_une_piece_s_imbrique_dans_le_trou_d_une_autre(self):
+        """Un cadre de 200 × 200 évidé à 140 × 140 : avec 8 d'écart, deux
+        carrés de 50 (50 + 8 + 50 = 108 ≤ 124) tiennent dans son trou —
+        et c'est là que le NFP les met, la boîte posée n'y grandit pas."""
+        cadre = ((0, 0), (200, 0), (200, 200), (0, 200))
+        trou = ((30, 30), (170, 30), (170, 170), (30, 170))
+        pieces = [Piece("cadre", 200, 200, 15, "cp", 1, FIL_INDIFFERENT,
+                        contour=cadre, trous=(trou,)),
+                  Piece("carre", 50, 50, 15, "cp", 4)]
+        stock = [Planche("cp", 400, 300, 15, "cp", 1, fil=False)]
+        params = Parametres(essais_melanges=0, processus=1)
+        r = optimiser(pieces, stock, params)
+        self.assertEqual(r.bilan.nb_non_placees, 0)
+        d = r.debits[0]
+        cadre_pose = [p for p in d.poses if p.piece.reference == "cadre"][0]
+        self.assertEqual(len(cadre_pose.trous), 1)
+        materiau = Polygon(cadre_pose.contour, [cadre_pose.trous[0]])
+        trou_pose = Polygon(cadre_pose.trous[0])
+        dedans = [p for p in d.poses if p.piece.reference == "carre"
+                  and trou_pose.contains(Polygon(p.contour))]
+        self.assertGreaterEqual(len(dedans), 2, "aucun carré dans le trou")
+        for p in dedans:
+            self.assertGreaterEqual(materiau.distance(Polygon(p.contour)),
+                                    params.ecart_contours - 0.5)
+        self.assertAlmostEqual(cadre_pose.aire, 200 * 200 - 140 * 140, places=3)
+
+    def test_export_svg_garde_les_trous(self):
+        cadre = ((0, 0), (100, 0), (100, 100), (0, 100))
+        trou = ((20, 20), (80, 20), (80, 80), (20, 80))
+        pieces = [Piece("cadre", 100, 100, 15, "cp", 1, FIL_INDIFFERENT,
+                        contour=cadre, trous=(trou,))]
+        stock = [Planche("cp", 200, 200, 15, "cp", 1, fil=False)]
+        r = optimiser(pieces, stock, RAPIDE)
+        chemin = os.path.join(tempfile.mkdtemp(), "cadre.svg")
+        contours_svg.ecrire_svg(chemin, r.debits[0], 1)
+        formes, _ = contours_svg.formes_depuis_svg(chemin)
+        relu = [f for f in formes if f["nom"].startswith("cadre")][0]
+        self.assertEqual(len(relu["trous"]), 1)
+        self.assertAlmostEqual(abs(contours_svg._aire_signee(relu["trous"][0])),
+                               60 * 60, places=2)
+
     def test_contour_trop_court(self):
         with self.assertRaises(ValueError):
             optimiser([Piece("x", 10, 10, 18, "cp", contour=((0, 0), (1, 1)))],
@@ -268,11 +309,18 @@ class LectureSvg(unittest.TestCase):
         rond = formes[2]
         self.assertAlmostEqual(rond["longueur"], 60, places=1)
 
-    def test_le_trou_ne_devient_pas_une_forme(self):
+    def test_le_trou_devient_un_trou_de_la_forme(self):
         formes, _ = contours_svg.formes_depuis_svg(self.chemin)
         anneau = formes[3]
         self.assertEqual(len(anneau["contour"]), 4)
         self.assertAlmostEqual(anneau["longueur"], 60, places=3)
+        self.assertEqual(len(anneau["trous"]), 1)
+        trou = anneau["trous"][0]
+        # déplacé comme son contour : le trou de 40 × 40 est à 10 du bord
+        self.assertAlmostEqual(min(p[0] for p in trou), 10, places=3)
+        self.assertAlmostEqual(max(p[0] for p in trou), 50, places=3)
+        for forme in formes[:3]:
+            self.assertEqual(forme["trous"], ())
 
     def test_sens_direct(self):
         formes, _ = contours_svg.formes_depuis_svg(self.chemin)

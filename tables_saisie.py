@@ -32,6 +32,7 @@ TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS, PLANCHE, CONTOUR = (
     "planche", "contour")
 
 ROLE_VALEUR = Qt.ItemDataRole.UserRole + 1
+ROLE_TROUS = Qt.ItemDataRole.UserRole + 2      # les trous d'un contour
 
 FILS_PIECE = (
     (opt.FIL_LONGUEUR, "Longueur"),
@@ -140,10 +141,15 @@ def lire_defauts(texte: str, ou: str, largeur: float) -> dict:
             "defauts": tuple(zones)}
 
 
-def texte_contour(contour) -> str:
-    """« ◇ 24 pts » : la cellule dit qu'il y a une forme, pas laquelle —
-    c'est le plan qui la montre."""
-    return "◇ %d pts" % len(contour) if contour else ""
+def texte_contour(contour, trous=()) -> str:
+    """« ◇ 24 pts · 1 trou » : la cellule dit qu'il y a une forme, pas
+    laquelle — c'est le plan qui la montre."""
+    if not contour:
+        return ""
+    texte = "◇ %d pts" % len(contour)
+    if trous:
+        texte += " · %d trou%s" % (len(trous), "s" if len(trous) > 1 else "")
+    return texte
 
 
 def texte_defauts(planche) -> str:
@@ -402,6 +408,8 @@ class TableEditable(QTableWidget):
             elif colonne.genre == CONTOUR:
                 valeurs[colonne.cle] = tuple(item.data(ROLE_VALEUR) or ()) \
                     if item else ()
+                valeurs["trous"] = tuple(item.data(ROLE_TROUS) or ()) \
+                    if item else ()
             else:
                 valeurs[colonne.cle] = self.texte(ligne, i)
         return valeurs
@@ -437,10 +445,14 @@ class TableEditable(QTableWidget):
                 item.setText(libelles.get(cle, ""))
             elif colonne.genre == CONTOUR:
                 # Le contour vit dans la donnée de la cellule, pas dans son
-                # texte : il ne se tape pas, il s'importe d'un SVG.
+                # texte : il ne se tape pas, il s'importe d'un SVG. Les
+                # trous l'accompagnent, dans un second rôle.
                 contour = tuple(tuple(p) for p in (valeur or ()))
+                trous = tuple(tuple(tuple(p) for p in t)
+                              for t in (valeurs.get("trous") or ()))
                 item.setData(ROLE_VALEUR, contour)
-                item.setText(texte_contour(contour))
+                item.setData(ROLE_TROUS, trous)
+                item.setText(texte_contour(contour, trous))
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled
                               | Qt.ItemFlag.ItemIsSelectable)
             elif colonne.genre in (NOMBRE, ENTIER):
@@ -458,10 +470,12 @@ class TableEditable(QTableWidget):
         self.setRowCount(0)
         self.blockSignals(precedent)
         for objet in objets:
-            self.ajouter_ligne(**{c.cle: (texte_defauts(objet)
-                                          if c.genre == DEFAUTS
-                                          else getattr(objet, c.cle))
-                                  for c in self.COLONNES})
+            valeurs = {c.cle: (texte_defauts(objet) if c.genre == DEFAUTS
+                               else getattr(objet, c.cle))
+                       for c in self.COLONNES}
+            if any(c.genre == CONTOUR for c in self.COLONNES):
+                valeurs["trous"] = getattr(objet, "trous", ())
+            self.ajouter_ligne(**valeurs)
 
     # -- actions de ligne ------------------------------------------------
 
@@ -482,6 +496,8 @@ class TableEditable(QTableWidget):
                                       if colonne.genre in (BOOLEEN, CHOIX,
                                                            CONTOUR)
                                       else item.text())
+                if colonne.genre == CONTOUR:
+                    copie["trous"] = item.data(ROLE_TROUS)
             self.poser_ligne(cible, copie)
         self.selectRow(lignes[-1] + 1)
 

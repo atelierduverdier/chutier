@@ -1469,7 +1469,7 @@ class FenetrePrincipale(QMainWindow):
                 reference=forme["nom"], longueur=forme["longueur"],
                 largeur=forme["largeur"], epaisseur=epaisseur,
                 matiere=matiere, quantite=1, fil=opt.FIL_INDIFFERENT,
-                contour=forme["contour"])
+                contour=forme["contour"], trous=forme.get("trous", ()))
         self._chargement = False
 
     def _exporter_svg(self):

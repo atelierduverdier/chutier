@@ -457,6 +457,19 @@ class EpinglesEtPlancheImposee(unittest.TestCase):
         f._imposer_planche("tablette", "")
         self.assertEqual(f._resultat.bilan.nb_non_placees, 0)
 
+    def test_les_trous_font_l_aller_retour_dans_la_table(self):
+        stock = tsa.TableStock()
+        pieces = tsa.TablePieces(stock.matieres, stock.references)
+        cadre = opt.Piece("cadre", 100, 100, 15, "cp", 1, opt.FIL_INDIFFERENT,
+                          contour=((0, 0), (100, 0), (100, 100), (0, 100)),
+                          trous=(((20, 20), (80, 20), (80, 80), (20, 80)),))
+        pieces.remplir([cadre])
+        self.assertEqual(pieces.pieces(), [cadre])
+        self.assertEqual(pieces.texte(0, 9), "◇ 4 pts · 1 trou")
+        pieces.selectRow(0)
+        pieces.dupliquer_selection()
+        self.assertEqual(pieces.pieces()[1].trous, cadre.trous)
+
     def test_la_colonne_planche_fait_l_aller_retour(self):
         stock = tsa.TableStock()
         stock.remplir(STOCK)

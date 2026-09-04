@@ -78,14 +78,17 @@ _OBJECTIFS = (OBJECTIF_GRAVITE, OBJECTIF_BOITE)
 
 def _cle_forme(piece: opt.Piece):
     if piece.contour:
-        return ("c", piece.contour)
+        return ("c", piece.contour, piece.trous)
     return ("r", float(piece.longueur), float(piece.largeur))
 
 
 def _polygone(piece: opt.Piece) -> Polygon:
-    """La pièce comme polygone exact, coin bas-gauche en (0, 0)."""
+    """La pièce comme polygone exact, trous compris, coin bas-gauche en
+    (0, 0). Le NFP d'un polygone à trous laisse libre, de lui-même,
+    l'intérieur d'un trou où une autre pièce tient : la triangulation
+    ne couvre que la matière."""
     if piece.contour:
-        p = Polygon(piece.contour)
+        p = Polygon(piece.contour, [list(t) for t in piece.trous])
         if not p.is_valid:
             p = p.buffer(0)
             if p.geom_type != "Polygon":
@@ -335,7 +338,10 @@ class _Plateau:
             angle % 180 == 90,
             contour=tuple((round(x, 4), round(y, 4))
                           for x, y in p.exterior.coords[:-1]),
-            angle=float(angle)))
+            angle=float(angle),
+            trous=tuple(tuple((round(x, 4), round(y, 4))
+                              for x, y in anneau.coords[:-1])
+                        for anneau in p.interiors)))
 
 
 def _sommets(region):

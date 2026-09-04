@@ -98,6 +98,10 @@ class Piece:
     compte une seule pièce à contour est IMBRIQUÉ (module
     ``imbrication``, sur shapely) au lieu d'être débité en guillotine :
     les rectangles du lot y participent comme des polygones.
+
+    ``trous`` : les évidements du contour, ``(((x, y), …), …)``, dans
+    les mêmes coordonnées. Une pièce plus petite peut s'imbriquer
+    DEDANS ; l'aire de la pièce en est déduite.
     """
 
     reference: str
@@ -110,16 +114,27 @@ class Piece:
     composable: bool = False
     planche: str = ""
     contour: tuple = ()
+    trous: tuple = ()
 
     def __post_init__(self):
-        object.__setattr__(self, "contour",
-                           tuple((float(x), float(y)) for x, y in self.contour))
+        object.__setattr__(self, "contour", _points(self.contour))
+        object.__setattr__(self, "trous",
+                           tuple(_points(t) for t in self.trous))
 
     @property
     def aire(self) -> float:
         if self.contour:
-            return abs(_aire_polygone(self.contour))
+            return _aire_avec_trous(self.contour, self.trous)
         return self.longueur * self.largeur
+
+
+def _points(anneau) -> tuple:
+    return tuple((float(x), float(y)) for x, y in anneau)
+
+
+def _aire_avec_trous(contour, trous) -> float:
+    return (abs(_aire_polygone(contour))
+            - sum(abs(_aire_polygone(t)) for t in trous))
 
 
 def _aire_polygone(points) -> float:
@@ -279,10 +294,11 @@ class Pose:
     (surcote comprise) ; ``pivotee`` vaut True si la longueur de la
     pièce est posée sur y.
 
-    Une pose imbriquée porte en plus son ``contour`` en coordonnées de
-    la planche (déjà tourné de ``angle`` degrés et déplacé) ; ``x``,
-    ``y``, ``dim_x``, ``dim_y`` sont alors sa boîte englobante, et
-    ``aire`` celle du polygone, pas de la boîte.
+    Une pose imbriquée porte en plus son ``contour`` et ses ``trous`` en
+    coordonnées de la planche (déjà tournés de ``angle`` degrés et
+    déplacés) ; ``x``, ``y``, ``dim_x``, ``dim_y`` sont alors sa boîte
+    englobante, et ``aire`` celle du polygone trous déduits, pas de la
+    boîte.
     """
 
     piece: Piece
@@ -294,15 +310,17 @@ class Pose:
     pivotee: bool
     contour: tuple = ()
     angle: float = 0.0
+    trous: tuple = ()
 
     def __post_init__(self):
-        object.__setattr__(self, "contour",
-                           tuple((float(x), float(y)) for x, y in self.contour))
+        object.__setattr__(self, "contour", _points(self.contour))
+        object.__setattr__(self, "trous",
+                           tuple(_points(t) for t in self.trous))
 
     @property
     def aire(self) -> float:
         if self.contour:
-            return abs(_aire_polygone(self.contour))
+            return _aire_avec_trous(self.contour, self.trous)
         return self.dim_x * self.dim_y
 
 
@@ -1302,6 +1320,12 @@ def _valider(pieces: list, stock: list, params: Parametres):
                              % p.reference)
         if p.contour and len(p.contour) < 3:
             raise ValueError("pièce « %s » : un contour demande au moins"
+                             " trois points" % p.reference)
+        if p.trous and not p.contour:
+            raise ValueError("pièce « %s » : des trous sans contour"
+                             % p.reference)
+        if any(len(t) < 3 for t in p.trous):
+            raise ValueError("pièce « %s » : un trou demande au moins"
                              " trois points" % p.reference)
         if p.quantite < 1:
             raise ValueError("pièce « %s » : quantité invalide (%r)"
