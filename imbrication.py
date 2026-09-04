@@ -68,6 +68,16 @@ EPS = 1e-6
 _SIMPLIFICATION = 0.2
 # Segments par quart de cercle quand un NFP s'élargit de l'écart.
 _QUARTS = 4
+# Toutes les géométries qui entrent dans une union ou une différence sont
+# arrondies sur cette grille (mm) : GEOS bascule alors sur son noyau
+# robuste. Sans ça, l'union de centaines d'enveloppes aux arêtes
+# colinéaires lève une TopologyException — rattrapée sur le bureau, mais
+# fatale en WebAssembly, où elle emportait Python et figeait la page.
+_PRECISION = 1e-3
+
+
+def _robuste(g):
+    return shapely.set_precision(g, _PRECISION)
 
 OBJECTIF_GRAVITE = "gravite"     # 2 × largeur + hauteur de la boîte posée
 OBJECTIF_BOITE = "boite"         # aire de la boîte posée
@@ -130,8 +140,8 @@ def _minkowski(a, b_retournee):
     for pa in ta:
         for pb in tb:
             sommes = (pa[:, None, :] + pb[None, :, :]).reshape(-1, 2)
-            enveloppes.append(MultiPoint(sommes).convex_hull)
-    return unary_union(enveloppes)
+            enveloppes.append(_robuste(MultiPoint(sommes).convex_hull))
+    return _robuste(unary_union(enveloppes))
 
 
 # Les caches vivent au niveau du module, pas de la stratégie : un NFP
@@ -157,6 +167,9 @@ def _variante(piece: opt.Piece, angle: float):
                            mitre_limit=2.0)
         if simp.geom_type != "Polygon" or simp.is_empty:
             simp = exact.buffer(_SIMPLIFICATION, join_style="mitre")
+        simp = _robuste(simp)
+        if simp.geom_type != "Polygon":
+            simp = max(simp.geoms, key=lambda g: g.area)
         _, _, w, h = exact.bounds
         _VARIANTES[cle] = (exact, simp, w, h)
     exact, simp, w, h = _VARIANTES[cle]
@@ -171,7 +184,7 @@ def _calculer_nfp(forme_a, forme_b, ecart):
     retournee = affinity.scale(forme_b, -1, -1, origin=(0, 0))
     nfp = _minkowski(forme_a, retournee)
     if ecart > EPS:
-        nfp = nfp.buffer(ecart, quad_segs=_QUARTS)
+        nfp = _robuste(nfp.buffer(ecart, quad_segs=_QUARTS))
     return nfp
 
 
@@ -219,12 +232,12 @@ def _calculer_cadre(utile, forme_b):
     _, _, w, h = forme_b.bounds
     minx, miny, maxx, maxy = utile.bounds
     enveloppe = box(minx - w - 2, miny - h - 2, maxx + w + 2, maxy + h + 2)
-    cadre = enveloppe.difference(utile)
+    cadre = _robuste(enveloppe).difference(_robuste(utile))
     retournee = affinity.scale(forme_b, -1, -1, origin=(0, 0))
     morceaux = [_minkowski(g, retournee) for g in
                 (cadre.geoms if hasattr(cadre, "geoms") else [cadre])
-                if not g.is_empty]
-    return unary_union(morceaux)
+                if not g.is_empty and g.geom_type == "Polygon"]
+    return _robuste(unary_union(morceaux))
 
 
 def _orientations(piece: opt.Piece, planche: opt.Planche,
@@ -280,7 +293,7 @@ class _Plateau:
         self.poses = []
         self.polygones = []               # exacts, posés
         self.posees = []                  # (cle variante, tx, ty)
-        self.utile = _bord_utile(planche, params)
+        self.utile = _robuste(_bord_utile(planche, params))
         self._utile_prep = prep(self.utile)
         self.ecart = params.ecart_contours
         self.occupe = None                # union des exacts élargis
@@ -304,7 +317,7 @@ class _Plateau:
         forme_b = self.formes.simplifiee(cle_b)
         _, _, w, h = forme_b.bounds
         minx, miny, maxx, maxy = self.utile.bounds
-        region = box(minx - 1, miny - 1, maxx - w + 1, maxy - h + 1)
+        region = _robuste(box(minx - 1, miny - 1, maxx - w + 1, maxy - h + 1))
         region = region.difference(self._cadre(cle_b))
         bloque = self._bloque(cle_b)
         if bloque is not None:
@@ -329,7 +342,7 @@ class _Plateau:
         # L'occupé sert au garde-fou : les exacts élargis d'un peu moins
         # que l'écart (le simplifié en a déjà pris deux dixièmes).
         marge = max(0.0, self.ecart - 2 * _SIMPLIFICATION)
-        elargi = p.buffer(marge, join_style="mitre", mitre_limit=2.0)
+        elargi = _robuste(p.buffer(marge, join_style="mitre", mitre_limit=2.0))
         self.occupe = (elargi if self.occupe is None
                        else unary_union([self.occupe, elargi]))
         shapely.prepare(self.occupe)
