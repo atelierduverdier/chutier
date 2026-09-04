@@ -32,12 +32,13 @@ const COLONNES = {
     { cle: "illimite", titre: "Catalogue", genre: "bool", avancee: true, info: "Une section qu'on peut ACHETER : la quantité ne borne plus rien." },
     { cle: "prix", titre: "Prix", genre: "nombre", avancee: true, info: "Coût d'UNE planche, pas au mètre. 0 pour ne pas en tenir compte." },
     { cle: "defauts_texte", titre: "Défauts", genre: "texte", info: "bouts 30 ; rives 8 ; 1200-1280 ; 600,140,60,40 — recoupes de bout et de rive, nœud traversant, zone x,y,longueur,largeur." },
+    { cle: "contour", titre: "Contour", genre: "contour", avancee: true, info: "Une chute BISCORNUE, reste d'une planche imbriquée rangé au stock avec sa forme. Ne sert qu'à l'imbrication de contours." },
   ],
 };
 
 const DEFAUTS_LIGNE = {
   pieces: { reference: "", longueur: "", largeur: "", epaisseur: 18, matiere: "", quantite: 1, fil: "longueur", composable: false, planche: "", contour: [], trous: [] },
-  stock: { reference: "", longueur: "", largeur: "", epaisseur: 18, matiere: "", quantite: 1, chute: false, atelier: false, fil: true, illimite: false, prix: 0, defauts_texte: "" },
+  stock: { reference: "", longueur: "", largeur: "", epaisseur: 18, matiere: "", quantite: 1, chute: false, atelier: false, fil: true, illimite: false, prix: 0, defauts_texte: "", contour: [], trous: [] },
 };
 
 const REGLAGES = [
@@ -399,7 +400,7 @@ function afficherResultat() {
   $("#tuiles").replaceChildren(...tuiles.map(([l, v, d, ton]) => el("div", { class: "tuile " + ton }, el("div", { class: "libelle", text: l }), el("div", { class: "valeur", text: v }), el("div", { class: "detail", text: d }))));
   $("#l-achats").replaceChildren(...r.achats.map(a => el("li", { text: `${a.nombre} × « ${a.reference} » — ${mm(a.longueur)} × ${mm(a.largeur)} × ${mm(a.epaisseur)} mm, ${a.matiere}` + (a.prix ? ` — ${(a.nombre * a.prix).toFixed(2)} €` : "") })));
   $("#n-achats").textContent = "· " + r.achats.reduce((n, a) => n + a.nombre, 0);
-  $("#l-chutes").replaceChildren(...r.chutes_groupees.map(c => el("li", { text: `${c.nombre} ×  ${mm(c.dim_x)} × ${mm(c.dim_y)} × ${mm(c.epaisseur)} mm — ${c.matiere}` })));
+  $("#l-chutes").replaceChildren(...r.chutes_groupees.map(c => el("li", { text: `${c.nombre} ×  ${mm(c.dim_x)} × ${mm(c.dim_y)} × ${mm(c.epaisseur)} mm — ${c.matiere}${c.biscornue ? ` (biscornue, ${c.sommets} sommets)` : ""}` })));
   $("#n-chutes").textContent = "· " + r.chutes_groupees.reduce((n, c) => n + c.nombre, 0);
   $("#b-ranger").disabled = !r.chutes_groupees.length;
   $("#l-non").replaceChildren(...r.non_placees.map(n => el("li", { class: "rouge", text: `« ${n.reference} » ×${n.exemplaires} — ${n.raison}` })));
@@ -414,6 +415,9 @@ function afficherResultat() {
 
 const NS = "http://www.w3.org/2000/svg";
 const svgEl = (tag, attrs = {}, ...enfants) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); for (const c of enfants) e.append(c); return e; };
+
+// Le tracé SVG d'anneaux (extérieur puis trous), y retourné par Y.
+const chemin = (anneaux, Y) => anneaux.map(anneau => "M" + anneau.map(([px, py]) => `${px} ${Y(py)}`).join(" L") + " Z").join(" ");
 
 function dessinerPlan() {
   const zone = $("#plan");
@@ -437,19 +441,30 @@ function dessinerPlan() {
     y += bande;
     const yh = y;
     const Y = (v, h = 0) => yh + pl.largeur - v - h;
-    groupe.append(svgEl("rect", { x: 0, y: yh, width: pl.longueur, height: pl.largeur, fill: "#faf8f4", stroke: "#2f3540", "stroke-width": L / 500 }));
+    if ((pl.contour || []).length) {
+      // Une chute biscornue : sa forme en papier, sa boîte en pointillé.
+      groupe.append(svgEl("rect", { x: 0, y: yh, width: pl.longueur, height: pl.largeur, fill: "none", stroke: "#767c85", "stroke-width": L / 800, "stroke-dasharray": `${L / 200} ${L / 200}` }));
+      groupe.append(svgEl("path", { d: chemin([pl.contour, ...(pl.trous || [])], Y), "fill-rule": "evenodd", fill: "#faf8f4", stroke: "#2f3540", "stroke-width": L / 500 }));
+    } else {
+      groupe.append(svgEl("rect", { x: 0, y: yh, width: pl.longueur, height: pl.largeur, fill: "#faf8f4", stroke: "#2f3540", "stroke-width": L / 500 }));
+    }
     // recoupes et défauts
     for (const [x, yy, dx, dy] of zonesEcartees(pl)) groupe.append(svgEl("rect", { x, y: Y(yy, dy), width: dx, height: dy, fill: "url(#hachure-defaut)", stroke: "#a85a52", "stroke-width": L / 1200 }));
     for (const c of d.chutes) {
-      groupe.append(svgEl("rect", { x: c.x, y: Y(c.y, c.dim_y), width: c.dim_x, height: c.dim_y, fill: "url(#hachure-chute)", stroke: "#767c85", "stroke-width": L / 1200 }));
-      groupe.append(...etiquette(`chute`, `${mm(c.dim_x)} × ${mm(c.dim_y)}`, c.x, Y(c.y, c.dim_y), c.dim_x, c.dim_y, police, "#2f3540"));
+      if ((c.contour || []).length) {
+        groupe.append(svgEl("path", { d: chemin([c.contour, ...(c.trous || [])], Y), "fill-rule": "evenodd", fill: "url(#hachure-chute)", stroke: "#767c85", "stroke-width": L / 1200 }));
+        const [cx, cy] = centreDeGravite(c.contour);
+        groupe.append(...etiquette("chute biscornue", `${mm(c.dim_x)} × ${mm(c.dim_y)}`, cx - c.dim_x * 0.3, Y(cy) - c.dim_y * 0.3, c.dim_x * 0.6, c.dim_y * 0.6, police, "#2f3540"));
+      } else {
+        groupe.append(svgEl("rect", { x: c.x, y: Y(c.y, c.dim_y), width: c.dim_x, height: c.dim_y, fill: "url(#hachure-chute)", stroke: "#767c85", "stroke-width": L / 1200 }));
+        groupe.append(...etiquette(`chute`, `${mm(c.dim_x)} × ${mm(c.dim_y)}`, c.x, Y(c.y, c.dim_y), c.dim_x, c.dim_y, police, "#2f3540"));
+      }
     }
     d.poses.forEach((p, ip) => {
       const couleur = r.couleurs[p.reference] || "#ddd";
       let forme;
       if (p.contour.length) {
-        const chemin = [p.contour, ...p.trous].map(anneau => "M" + anneau.map(([px, py]) => `${px} ${Y(py)}`).join(" L") + " Z").join(" ");
-        forme = svgEl("path", { d: chemin, "fill-rule": "evenodd", fill: couleur, stroke: "#2f3540", "stroke-width": L / 1500 });
+        forme = svgEl("path", { d: chemin([p.contour, ...p.trous], Y), "fill-rule": "evenodd", fill: couleur, stroke: "#2f3540", "stroke-width": L / 1500 });
       } else {
         forme = svgEl("rect", { x: p.x, y: Y(p.y, p.dim_y), width: p.dim_x, height: p.dim_y, fill: couleur, stroke: "#2f3540", "stroke-width": L / 1500 });
       }

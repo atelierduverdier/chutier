@@ -273,9 +273,15 @@ def _orientations(piece: opt.Piece, planche: opt.Planche,
 # Une planche ouverte
 # ---------------------------------------------------------------------------
 
-def _bord_utile(pl: opt.Planche, params: opt.Parametres):
-    """Le rectangle de la planche moins recoupes, défauts et marge."""
-    utile = box(0, 0, pl.longueur, pl.largeur)
+def _bord_brut(pl: opt.Planche):
+    """La matière de la planche : son rectangle — ou son polygone, pour
+    une chute biscornue — moins recoupes et défauts."""
+    if pl.contour:
+        utile = _robuste(Polygon(pl.contour, holes=pl.trous or None))
+        if not utile.is_valid:
+            utile = _robuste(utile.buffer(0))
+    else:
+        utile = box(0, 0, pl.longueur, pl.largeur)
     if pl.recoupe_bouts > EPS:
         utile = utile.intersection(box(pl.recoupe_bouts, -1,
                                        pl.longueur - pl.recoupe_bouts,
@@ -286,7 +292,12 @@ def _bord_utile(pl: opt.Planche, params: opt.Parametres):
                                        pl.largeur - pl.recoupe_rives))
     for x, y, dx, dy in pl.defauts:
         utile = utile.difference(box(x, y, x + dx, y + dy))
-    return utile.buffer(-params.marge_bord, join_style="mitre")
+    return utile
+
+
+def _bord_utile(pl: opt.Planche, params: opt.Parametres):
+    """Le bord brut en retrait de la marge : là où un contour peut aller."""
+    return _bord_brut(pl).buffer(-params.marge_bord, join_style="mitre")
 
 
 class _Plateau:
@@ -506,27 +517,43 @@ def _resoudre(ordre, stock_unites, params, objectif) -> "opt._Solution":
 
 
 def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
-    """Les bandes rectangulaires qui restent : à droite du dernier
-    contour, et au-dessus (sur la largeur restante), si elles passent
-    les minis de chute."""
+    """Ce qui reste de matière une fois les contours fraisés : la
+    planche moins les pièces élargies d'un demi-écart (le passage de la
+    fraise), morceau par morceau. Un morceau qui passe les minis de chute
+    est une chute ; rectangulaire à un demi pour cent près, c'est un
+    rectangle qu'une scie saura reprendre ; sinon une chute biscornue,
+    gardée telle quelle pour une prochaine imbrication."""
     pl = plateau.planche
     if not plateau.polygones:
         return []
-    ecart = params.ecart_contours
-    uminx, uminy, umaxx, umaxy = plateau.utile.bounds
-    _, _, maxx, maxy = plateau.boite
+    demi = params.ecart_contours / 2.0
+    fraisees = [p.buffer(demi, join_style="mitre", mitre_limit=2.0)
+                for p in plateau.polygones]
+    reste = _bord_brut(pl).difference(
+        shapely.union_all(fraisees, grid_size=_PRECISION))
+    reste = reste.simplify(0.2, preserve_topology=True)
+    morceaux = reste.geoms if hasattr(reste, "geoms") else [reste]
     chutes = []
-    x0 = maxx + ecart
-    if umaxx - x0 > EPS:
-        chutes.append(opt.ChuteCreee(umaxx - x0, umaxy - uminy, x0, uminy,
-                                     pl.epaisseur, pl.matiere, pl.fil))
-    y0 = maxy + ecart
-    if umaxy - y0 > EPS and maxx - uminx > EPS:
-        chutes.append(opt.ChuteCreee(maxx - uminx, umaxy - y0, uminx, y0,
-                                     pl.epaisseur, pl.matiere, pl.fil))
-    return [c for c in chutes
-            if max(c.dim_x, c.dim_y) >= params.chute_mini_longueur - EPS
-            and min(c.dim_x, c.dim_y) >= params.chute_mini_largeur - EPS]
+    for g in morceaux:
+        if g.is_empty or g.geom_type != "Polygon":
+            continue
+        minx, miny, maxx, maxy = g.bounds
+        dx, dy = maxx - minx, maxy - miny
+        if (max(dx, dy) < params.chute_mini_longueur - EPS
+                or min(dx, dy) < params.chute_mini_largeur - EPS):
+            continue
+        if g.area >= 0.995 * dx * dy:
+            chutes.append(opt.ChuteCreee(dx, dy, minx, miny, pl.epaisseur,
+                                         pl.matiere, pl.fil))
+            continue
+        contour = tuple((round(x, 3), round(y, 3))
+                        for x, y in g.exterior.coords[:-1])
+        trous = tuple(tuple((round(x, 3), round(y, 3))
+                            for x, y in a.coords[:-1]) for a in g.interiors)
+        chutes.append(opt.ChuteCreee(dx, dy, minx, miny, pl.epaisseur,
+                                     pl.matiere, pl.fil, contour, trous))
+    chutes.sort(key=lambda c: -c.aire)
+    return chutes
 
 
 def _finaliser(plateaux, dispo, non, params) -> "opt._Solution":

@@ -182,5 +182,24 @@ class EcritureAtomique(unittest.TestCase):
         self.assertEqual(restes, set())
 
 
+
+class PlancheBiscornue(unittest.TestCase):
+
+    def test_aller_retour_avec_contour(self):
+        """Une chute biscornue au stock revient du JSON identique, contour
+        et trous compris (et hachable, pour compter les exemplaires)."""
+        import json
+        pl = Planche("biscornue", 0, 0, 18, "cp", 1, chute=True,
+                         contour=((10, 10), (110, 10), (110, 60), (10, 60)),
+                         trous=(((30, 20), (50, 20), (50, 40), (30, 40)),))
+        self.assertEqual((pl.longueur, pl.largeur), (100.0, 50.0))
+        self.assertEqual(pl.contour[0], (0.0, 0.0))
+        self.assertEqual(pl.trous[0][0], (20.0, 10.0))
+        self.assertAlmostEqual(pl.aire, 5000 - 400)
+        d = projet_io.donnees_projet([], [pl], Parametres())
+        stock = projet_io.depuis_donnees(json.loads(json.dumps(d)))[1]
+        self.assertEqual(stock, [pl])
+        self.assertEqual(hash(stock[0]), hash(pl))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

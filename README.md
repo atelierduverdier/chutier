@@ -68,6 +68,17 @@ est compté chute
 pour les deux bandes rectangulaires (à droite, au-dessus) qui passent
 les minis, perte pour le reste — le chutier range des rectangles.
 
+**Les chutes biscornues.** Ce qui reste d'une planche imbriquée garde
+sa forme : la planche moins les pièces élargies du passage de la fraise,
+morceau par morceau. Un morceau rectangulaire à un demi pour cent près
+redevient un rectangle qu'une scie saura reprendre ; les autres sont des
+**chutes biscornues**, polygone et trous compris, hachurées sur le plan et
+rangées au stock telles quelles par « Ranger les chutes au stock »
+(colonne avancée Contour du stock, ramenées à l'origine, leurs cotes
+étant leur boîte). On y imbrique à nouveau au débit suivant — dans le
+bois, pas dans sa boîte. Un lot de rectangles à scier les ignore, et le
+dit si le stock n'a plus qu'elles.
+
 **Le temps de fraisage.** Une planche imbriquée n'a pas de coupes à
 compter mais des contours à suivre : la tuile Pertes, le cartouche de
 chaque planche et la fiche d'atelier donnent la **longueur de fraisage**

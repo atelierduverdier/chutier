@@ -18,7 +18,7 @@ def chutes_groupees(resultat) -> dict:
     groupes = {}
     for c in resultat.chutes_creees:
         cle = (round(c.dim_x, 1), round(c.dim_y, 1), round(c.epaisseur, 1),
-               c.matiere, c.fil)
+               c.matiere, c.fil, c.contour_origine(), c.trous_origine())
         groupes[cle] = groupes.get(cle, 0) + 1
     return dict(sorted(groupes.items(), key=lambda kv: -kv[0][0] * kv[0][1]))
 
@@ -57,10 +57,12 @@ def stock_apres_debit(stock: list, resultat) -> list:
             planche = dataclasses.replace(planche, quantite=reste)
         nouveau.append(planche)
 
-    for (dim_x, dim_y, epaisseur, matiere, fil), nombre in \
+    for (dim_x, dim_y, epaisseur, matiere, fil, contour, trous), nombre in \
             chutes_groupees(resultat).items():
-        modele = opt.ChuteCreee(dim_x, dim_y, 0, 0, epaisseur, matiere, fil)
-        reference = "Chute %s %s×%s" % (matiere, opt._mm(dim_x), opt._mm(dim_y))
+        modele = opt.ChuteCreee(dim_x, dim_y, 0, 0, epaisseur, matiere, fil,
+                                contour, trous)
+        reference = "Chute %s%s %s×%s" % ("biscornue " if contour else "",
+                                          matiere, opt._mm(dim_x), opt._mm(dim_y))
         nouveau.append(dataclasses.replace(modele.en_planche(reference),
                                            quantite=nombre, atelier=True))
     return nouveau

@@ -703,9 +703,15 @@ class TableStock(TableEditable):
                 " Une ligne à plusieurs exemplaires les décrit tous"
                 " pareils : une planche singulière prend sa propre ligne.",
                 ""),
+        Colonne("Contour", "contour", CONTOUR,
+                "Une chute BISCORNUE : le reste d'une planche imbriquée à"
+                " la CNC, rangé au stock avec sa forme. Ne sert qu'à"
+                " l'imbrication de contours — un lot de rectangles à scier"
+                " l'ignore. Se remplit par « Ranger les chutes au stock »,"
+                " pas à la main.", ()),
     )
 
-    AVANCEES = (8, 9, 10)            # Fil, Catalogue, Prix
+    AVANCEES = (8, 9, 10, 12)        # Fil, Catalogue, Prix, Contour
 
     def __init__(self):
         super().__init__()

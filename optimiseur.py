@@ -75,6 +75,8 @@ RAISON_PLUS_DE_PLACE = "plus de place dans le stock fourni"
 RAISON_PLANCHE_INCONNUE = "sa planche imposée n'est pas dans le stock"
 RAISON_PLANCHE_IMPOSEE = "sa planche imposée ne peut pas la recevoir"
 RAISON_PLANCHE_PLEINE = "plus de place sur sa planche imposée"
+RAISON_BISCORNUE = ("seules des chutes biscornues de cette matière en stock :"
+                    " elles ne servent qu'à l'imbrication de contours")
 
 PRIORITE_BOIS = "bois"   # moins de pertes d'abord, puis moins de coupes
 PRIORITE_SCIE = "scie"   # moins de coupes d'abord, puis moins de pertes
@@ -204,6 +206,13 @@ class Planche:
       la moindre pièce (deux traits en travers, puis deux le long dans la
       bande, ou l'inverse selon la stratégie) ; ce qui l'entoure reste
       disponible, la zone part aux pertes.
+
+    ``contour`` : une chute BISCORNUE — ce qui reste d'une planche
+    imbriquée à la CNC, rangée au stock telle quelle, polygone et non
+    rectangle (``trous`` : ses évidements). Ramené à l'origine : sa boîte
+    fait ``longueur`` × ``largeur``, recalculées d'après lui. Une telle
+    planche ne sert qu'à l'imbrication de contours ; un lot de rectangles
+    à scier l'ignore, une scie ne sait rien en faire.
     """
 
     reference: str
@@ -220,6 +229,8 @@ class Planche:
     recoupe_bouts: float = 0.0
     recoupe_rives: float = 0.0
     defauts: tuple = ()
+    contour: tuple = ()
+    trous: tuple = ()
 
     def __post_init__(self):
         # Relu d'un JSON, ``defauts`` arrive en listes : on le remet en
@@ -228,9 +239,27 @@ class Planche:
         object.__setattr__(self, "defauts",
                            tuple(tuple(float(v) for v in zone)
                                  for zone in self.defauts))
+        contour = _points(self.contour)
+        trous = tuple(_points(t) for t in self.trous)
+        if contour:
+            # Le polygone est ramené à l'origine et fait les cotes : une
+            # chute biscornue se décrit par sa forme, pas par deux nombres.
+            xs = [x for x, _ in contour]
+            ys = [y for _, y in contour]
+            x0, y0 = min(xs), min(ys)
+            contour = tuple((round(x - x0, 4), round(y - y0, 4))
+                            for x, y in contour)
+            trous = tuple(tuple((round(x - x0, 4), round(y - y0, 4))
+                                for x, y in t) for t in trous)
+            object.__setattr__(self, "longueur", round(max(xs) - x0, 4))
+            object.__setattr__(self, "largeur", round(max(ys) - y0, 4))
+        object.__setattr__(self, "contour", contour)
+        object.__setattr__(self, "trous", trous)
 
     @property
     def aire(self) -> float:
+        if self.contour:
+            return _aire_avec_trous(self.contour, self.trous)
         return self.longueur * self.largeur
 
     @property
@@ -370,10 +399,15 @@ class Coupe:
 
 @dataclass(frozen=True)
 class ChuteCreee:
-    """Un rectangle restant réutilisable, en coordonnées de sa planche.
+    """Un reste réutilisable, en coordonnées de sa planche.
 
     ``dim_x`` court le long du fil de la planche d'origine — une chute
     peut donc avoir dim_x < dim_y, c'est physique, pas une erreur.
+
+    Un rectangle, sauf ``contour`` : le reste d'une planche imbriquée à
+    la CNC, biscornu, dont (``x``, ``y``, ``dim_x``, ``dim_y``) est la
+    boîte ; ``trous`` ses évidements. Il retourne au stock tel quel, pour
+    la seule imbrication.
     """
 
     dim_x: float
@@ -383,15 +417,39 @@ class ChuteCreee:
     epaisseur: float
     matiere: str
     fil: bool
+    contour: tuple = ()
+    trous: tuple = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "contour", _points(self.contour))
+        object.__setattr__(self, "trous",
+                           tuple(_points(t) for t in self.trous))
+
+    @property
+    def biscornue(self) -> bool:
+        return bool(self.contour)
 
     @property
     def aire(self) -> float:
+        if self.contour:
+            return _aire_avec_trous(self.contour, self.trous)
         return self.dim_x * self.dim_y
+
+    def contour_origine(self) -> tuple:
+        """Le contour ramené en (0, 0), pour comparer deux chutes de
+        planches différentes."""
+        return tuple((round(px - self.x, 1), round(py - self.y, 1))
+                     for px, py in self.contour)
+
+    def trous_origine(self) -> tuple:
+        return tuple(tuple((round(px - self.x, 1), round(py - self.y, 1))
+                           for px, py in t) for t in self.trous)
 
     def en_planche(self, reference: str) -> Planche:
         """La chute prête à retourner au stock."""
         return Planche(reference, self.dim_x, self.dim_y, self.epaisseur,
-                       self.matiere, quantite=1, chute=True, fil=self.fil)
+                       self.matiere, quantite=1, chute=True, fil=self.fil,
+                       contour=self.contour, trous=self.trous)
 
 
 @dataclass
@@ -567,8 +625,9 @@ class Resultat:
                     % (p.piece.reference, p.exemplaire, p.piece.quantite,
                        _mm(p.dim_x), _mm(p.dim_y), _mm(p.x), _mm(p.y), pivot))
             for c in d.chutes:
-                lignes.append("  chute : %s × %s en (%s, %s)"
-                              % (_mm(c.dim_x), _mm(c.dim_y), _mm(c.x), _mm(c.y)))
+                lignes.append("  chute%s : %s × %s en (%s, %s)"
+                              % (" biscornue" if c.biscornue else "",
+                                 _mm(c.dim_x), _mm(c.dim_y), _mm(c.x), _mm(c.y)))
             # Les coupes dans l'ordre : c'est la liste qu'on coche à la
             # scie, elle manquait à la fiche qui n'énumérait que les poses.
             for c in d.coupes:
@@ -1515,6 +1574,16 @@ def optimiser(pieces: list, stock: list,
             non_placees.extend(NonPlacee(p, p.quantite, raison)
                                for p in pieces_g)
             continue
+        imbrique = any(p.contour for p in pieces_g)
+        if not imbrique:
+            # Une chute biscornue n'a pas de sens sous la scie : un lot de
+            # rectangles ne la voit pas. S'il n'y a qu'elles, on le dit.
+            biscornues = [pl for pl in stock_g if pl.contour]
+            stock_g = [pl for pl in stock_g if not pl.contour]
+            if not stock_g and biscornues:
+                non_placees.extend(NonPlacee(p, p.quantite, RAISON_BISCORNUE)
+                                   for p in pieces_g)
+                continue
         unites = [(p, ex) for p in pieces_g
                   for ex in range(1, p.quantite + 1)]
         # Un profil de catalogue (illimite) n'a pas de nombre d'exemplaires
@@ -1526,7 +1595,7 @@ def optimiser(pieces: list, stock: list,
                         for ex in range(1, (len(unites)
                                             if pl.illimite and not pl.chute
                                             else pl.quantite) + 1)]
-        if any(p.contour for p in pieces_g):
+        if imbrique:
             # Un seul contour dans le lot, et tout le lot s'imbrique : les
             # rectangles y participent comme des polygones. Import
             # paresseux — le cœur reste sans dépendance tant qu'aucune

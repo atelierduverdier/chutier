@@ -1198,11 +1198,12 @@ class FenetrePrincipale(QMainWindow):
 
         self.liste_chutes.clear()
         for cle, nombre in chutes_groupees(r).items():
-            dim_x, dim_y, epaisseur, matiere, _fil = cle
+            dim_x, dim_y, epaisseur, matiere, _fil, contour, _trous = cle
             self.liste_chutes.addItem(
-                "%d ×  %s × %s × %s mm — %s"
+                "%d ×  %s × %s × %s mm — %s%s"
                 % (nombre, opt._mm(dim_x), opt._mm(dim_y), opt._mm(epaisseur),
-                   matiere))
+                   matiere, " (biscornue, %d sommets)" % len(contour)
+                   if contour else ""))
         self.bouton_ranger.setEnabled(bool(r.chutes_creees))
         self.onglets_resultats.setTabText(
             CHUTES, "Chutes créées  ·  %d" % len(r.chutes_creees))

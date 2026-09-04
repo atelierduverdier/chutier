@@ -122,7 +122,8 @@ def _debit(d: opt.Debit) -> dict:
 def _resultat(r: opt.Resultat, stock: list) -> dict:
     references = {p.piece.reference for d in r.debits for p in d.poses}
     chutes = [{"dim_x": k[0], "dim_y": k[1], "epaisseur": k[2],
-               "matiere": k[3], "fil": k[4], "nombre": n}
+               "matiere": k[3], "fil": k[4], "biscornue": bool(k[5]),
+               "sommets": len(k[5]), "nombre": n}
               for k, n in stock_atelier.chutes_groupees(r).items()]
     return {
         "bilan": dataclasses.asdict(r.bilan),

@@ -74,10 +74,13 @@ class Invariants(unittest.TestCase):
                         params.ecart_contours - 0.25,     # simplification
                         "deux pièces trop proches")
             for c in d.chutes:
-                chute = box(c.x, c.y, c.x + c.dim_x, c.y + c.dim_y)
+                chute = (Polygon(c.contour, holes=c.trous or None) if c.biscornue
+                         else box(c.x, c.y, c.x + c.dim_x, c.y + c.dim_y))
+                self.assertTrue(chute.is_valid)
+                self.assertAlmostEqual(c.aire, chute.area, places=2)
                 for poly in polys:
-                    self.assertFalse(chute.intersects(poly.buffer(-1e-3)),
-                                     "une chute recouvre une pièce")
+                    self.assertLessEqual(chute.intersection(poly).area, 1e-3,
+                                         "une chute recouvre une pièce")
             self.assertAlmostEqual(
                 d.surface, d.surface_poses + d.surface_chutes + d.perte,
                 places=3)
@@ -150,6 +153,50 @@ class Invariants(unittest.TestCase):
         self.assertAlmostEqual(r.bilan.longueur_fraisage, d.longueur_fraisage)
         scie = optimiser([Piece("cale", 60, 30, 15, "cp", 1)], stock, RAPIDE)
         self.assertEqual(scie.debits[0].longueur_fraisage, 0.0)
+
+    def test_le_reste_est_une_chute_biscornue_qui_resert(self):
+        """Ce qui reste d'une planche imbriquée garde sa forme : une
+        chute biscornue, rangée au stock telle quelle, sur laquelle on
+        imbrique à nouveau — et qu'un lot de rectangles à scier ignore."""
+        import stock_atelier
+        from shapely.geometry import Polygon
+        L = ((0, 0), (150, 0), (150, 40), (40, 40), (40, 150), (0, 150))
+        pieces = [Piece("L", 150, 150, 15, "cp", 3, FIL_INDIFFERENT, contour=L)]
+        stock = [Planche("cp", 500, 300, 15, "cp", 1, fil=False)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(r.bilan.nb_non_placees, 0)
+        chutes = r.debits[0].chutes
+        self.assertTrue(any(c.biscornue for c in chutes))
+        # par conservation : planche = pièces + chutes + fraisage
+        d = r.debits[0]
+        self.assertLess(d.perte, d.surface * 0.05)
+        self.assertGreater(d.surface_chutes, d.surface * 0.5)
+        # au stock, ramenée à l'origine, ses cotes sont sa boîte
+        apres = stock_atelier.stock_apres_debit(stock, r)
+        biscornues = [p for p in apres if p.contour]
+        self.assertEqual(len(biscornues), 1)
+        pl = biscornues[0]
+        self.assertTrue(pl.chute and pl.atelier)
+        self.assertIn("biscornue", pl.reference)
+        xs = [x for x, _ in pl.contour]
+        ys = [y for _, y in pl.contour]
+        self.assertEqual((min(xs), min(ys)), (0.0, 0.0))
+        self.assertAlmostEqual(pl.longueur, max(xs), places=3)
+        self.assertAlmostEqual(pl.largeur, max(ys), places=3)
+        # on y imbrique : chaque pose est DANS le bois de la chute
+        rond = tuple((30 + 30 * math.cos(t * math.pi / 8),
+                      30 + 30 * math.sin(t * math.pi / 8)) for t in range(16))
+        r2 = optimiser([Piece("rond", 60, 60, 15, "cp", 3, FIL_INDIFFERENT,
+                              contour=rond)], biscornues, RAPIDE)
+        self.assertEqual(r2.bilan.nb_non_placees, 0)
+        bois = Polygon(pl.contour, holes=pl.trous or None)
+        for p in r2.debits[0].poses:
+            self.assertTrue(bois.contains(Polygon(p.contour).buffer(-0.01)))
+        # un lot de rectangles ne la voit pas, et le dit
+        r3 = optimiser([Piece("cale", 50, 30, 15, "cp", 2)], biscornues,
+                       Parametres(essais_melanges=0))
+        self.assertEqual(r3.bilan.nb_posees, 0)
+        self.assertIn("biscornue", r3.non_placees[0].raison)
 
     def test_lot_rectangles_seuls_reste_guillotine(self):
         stock = [Planche("cp", 600, 400, 18, "cp", 1, fil=False)]

@@ -272,6 +272,17 @@ nothing. The desktop application carries the same badge in its status
 bar and asks the same address at startup (`CHUTIER_SANS_RESEAU=1`
 disables it); a git clone updates with `git pull`.
 
+**Odd-shaped offcuts.** What remains of a nested board keeps its shape:
+the board minus the parts widened by the cutter's pass, piece by piece.
+A part that is rectangular to within half a percent becomes a rectangle
+again, which a saw can reuse; the others are **odd-shaped offcuts**,
+polygon and holes included, hatched on the plan and put back into stock
+as they are by "Put offcuts in stock" (advanced Contour column of the
+stock, moved to the origin, their dimensions being their bounding box).
+The next cut nests into them again — into the wood, not the box. A lot
+of rectangles to saw ignores them, and says so when the stock has
+nothing else left.
+
 **Milling time.** A nested board has no cuts to count but contours to
 follow: the Losses tile, each board's title and the workshop sheet give
 the **milling length** (contours and holes) and the time it takes at

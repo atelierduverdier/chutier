@@ -201,12 +201,28 @@ class VuePlan(QGraphicsView):
         zone = QRectF(0, y_haut, pl.longueur, pl.largeur)
         self._zones[numero] = zone
 
-        fond = QGraphicsRectItem(zone)
-        fond.setBrush(QBrush(apparence.PLAN_PAPIER))
-        fond.setPen(QPen(apparence.PLAN_BORD, max(pl.longueur, 1) / 500))
-        fond.setToolTip("Ce que ni pièce ni chute ne couvre est la perte :"
-                        " sciure et rebuts sous les minis de chute.")
-        scene.addItem(fond)
+        if pl.contour:
+            # Une chute biscornue : sa forme en papier, sa boîte en
+            # pointillé — ce qui est hors de la forme n'est pas du bois.
+            boite = QGraphicsRectItem(zone)
+            stylo = QPen(apparence.PLAN_CHUTE_TRAIT, max(pl.longueur, 1) / 800)
+            stylo.setStyle(Qt.PenStyle.DotLine)
+            boite.setPen(stylo)
+            scene.addItem(boite)
+            fond = self._rectangle(scene, numero, 0, 0, pl.longueur,
+                                   pl.largeur, pl.largeur, y_haut,
+                                   apparence.PLAN_PAPIER, None,
+                                   None, info="Chute biscornue : le bois est"
+                                   " la forme, pas sa boîte.",
+                                   contour=pl.contour, trous=pl.trous)
+            fond.setPen(QPen(apparence.PLAN_BORD, max(pl.longueur, 1) / 500))
+        else:
+            fond = QGraphicsRectItem(zone)
+            fond.setBrush(QBrush(apparence.PLAN_PAPIER))
+            fond.setPen(QPen(apparence.PLAN_BORD, max(pl.longueur, 1) / 500))
+            fond.setToolTip("Ce que ni pièce ni chute ne couvre est la perte :"
+                            " sciure et rebuts sous les minis de chute.")
+            scene.addItem(fond)
 
         # Les défauts déclarés — recoupes de bouts et de rives, zones
         # écartées — se voient AVANT les pièces : un trou dans le plan
@@ -229,8 +245,9 @@ class VuePlan(QGraphicsView):
             self._rectangle(
                 scene, numero, chute.x, chute.y, chute.dim_x, chute.dim_y,
                 pl.largeur, y_haut, apparence.PLAN_CHUTE,
-                "chute\n%s × %s" % (opt._mm(chute.dim_x), opt._mm(chute.dim_y)),
-                "chute", hachure=True)
+                "chute%s\n%s × %s" % (" biscornue" if chute.biscornue else "",
+                                      opt._mm(chute.dim_x), opt._mm(chute.dim_y)),
+                "chute", hachure=True, contour=chute.contour, trous=chute.trous)
 
         if self._traits_visibles:
             self._traits_de_scie(scene, debit, y_haut)
