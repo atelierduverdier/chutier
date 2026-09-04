@@ -19,6 +19,7 @@ import json
 import contours_svg
 import couleurs
 import csv_io
+import exemples
 import optimiseur as opt
 import projet_io
 import saisie
@@ -238,6 +239,15 @@ def exemple() -> str:
              opt.Planche("chute courte", 400, 120, 18, "sapin", chute=True,
                          recoupe_bouts=15)]
     donnees = projet_io.donnees_projet(pieces, stock, opt.Parametres())
+    for s in donnees["stock"]:
+        s["defauts_texte"] = saisie.texte_defauts(opt.Planche(**s))
+    return json.dumps(donnees, ensure_ascii=False)
+
+
+def exemple_formes() -> str:
+    """L'exemple des formes biscornues, à imbriquer."""
+    pieces, stock, parametres = exemples.formes_biscornues()
+    donnees = projet_io.donnees_projet(pieces, stock, parametres)
     for s in donnees["stock"]:
         s["defauts_texte"] = saisie.texte_defauts(opt.Planche(**s))
     return json.dumps(donnees, ensure_ascii=False)

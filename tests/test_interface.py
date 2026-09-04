@@ -552,6 +552,19 @@ class Contours(unittest.TestCase):
         self.assertEqual(len(fichiers), len(f.vue.debits_affiches()))
 
 
+class ExempleFormes(unittest.TestCase):
+
+    def test_l_exemple_des_formes_s_imbrique_entier(self):
+        f = _fenetre()
+        f._charger_exemple_formes()
+        r = f._resultat
+        self.assertEqual(r.bilan.nb_non_placees, 0)
+        self.assertTrue(all(d.imbriquee for d in r.debits))
+        self.assertTrue(any(p.trous for d in r.debits for p in d.poses))
+        self.assertGreaterEqual(len([it for it in f.vue.scene().items()
+                                     if isinstance(it, interface.vue_plan.QGraphicsPathItem)]), 3)
+
+
 class Fenetre(unittest.TestCase):
 
     @classmethod

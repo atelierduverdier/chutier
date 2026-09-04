@@ -574,10 +574,11 @@ function nouveau() {
   rendreTout(); dessinerPlan(); $("#tuiles").replaceChildren(); rendreImpression();
 }
 
-async function chargerExemple() {
-  const d = JSON.parse(await appeler("exemple"));
+async function chargerExemple(fn = "exemple") {
+  const d = JSON.parse(await appeler(fn));
   etat.pieces = d.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
   etat.stock = [...d.stock.map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
+  etat.parametres = { ...etat.parametres, ...d.parametres };
   etat.epingles = []; etat.nomProjet = "";
   rendreTout(); calculer();
 }
@@ -616,7 +617,8 @@ function brancher() {
   $("#b-importer-svg").onclick = importerSvg;
   $("#b-exporter-svg").onclick = exporterSvg;
   $("#b-fiche").onclick = exporterFiche;
-  $("#b-exemple").onclick = chargerExemple;
+  $("#b-exemple").onclick = () => chargerExemple("exemple");
+  $("#b-exemple-formes").onclick = () => chargerExemple("exemple_formes");
   $("#b-desepingler").onclick = () => { etat.epingles = []; calculer(); };
   $("#b-aide").onclick = aide;
   $("#b-ranger").onclick = rangerChutes;

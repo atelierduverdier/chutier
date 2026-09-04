@@ -69,7 +69,12 @@ New / Open, which then re-read the file. A stocked workshop opens the
 application on itself, with a blank parts sheet; the example only
 serves discovery.
 
-## L'interface
+## The interface
+
+The Examples menu offers three: panels (guillotine), shutters (a real
+cut) and **odd shapes** — a hollow frame, hearts, stars, crescents,
+rings… nested for the router on plywood. The web page has them too, under
+"Plus…".
 
 On the left, in the order of the work and one below the other: **Parts**
 (what has to be cut), **Stock** (what you have), and **Settings** (how

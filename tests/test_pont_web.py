@@ -36,6 +36,15 @@ class Calcul(unittest.TestCase):
         self.assertIn("epingle", premiere)
         self.assertEqual(len(premiere["poses"]), len(premiere["epingle"]["poses"]))
 
+    def test_l_exemple_des_formes_se_calcule(self):
+        entree = json.loads(pont_web.exemple_formes())
+        self.assertEqual(entree["parametres"]["pas_rotation"], 180)
+        entree["parametres"]["processus"] = 0
+        sortie = json.loads(pont_web.calculer(json.dumps(entree)))
+        self.assertTrue(sortie["ok"], sortie)
+        self.assertEqual(sortie["resultat"]["bilan"]["nb_non_placees"], 0)
+        self.assertTrue(sortie["resultat"]["debits"][0]["imbriquee"])
+
     def test_les_couleurs_sont_celles_du_bureau(self):
         try:
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

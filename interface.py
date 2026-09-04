@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 import apparence
 import contours_svg
 import csv_io
+import exemples
 import optimiseur as opt
 import projet_io
 import tables_saisie as tsa
@@ -217,6 +218,11 @@ class FenetrePrincipale(QMainWindow):
                                     self._charger_exemple)
         self.a_volets = self._acte("Exemple : &volets battants (150×30)",
                                    self._charger_exemple_volets)
+        self.a_formes = self._acte("Exemple : &formes biscornues (CNC)",
+                                   self._charger_exemple_formes, None, None,
+                                   "Un cadre évidé, des cœurs, des étoiles,"
+                                   " des anneaux… imbriqués à la fraise sur"
+                                   " un panneau de contreplaqué")
         self.a_aide = self._acte("&Raccourcis et conventions", self._aide,
                                  "F1", ("help-contents",))
 
@@ -255,9 +261,11 @@ class FenetrePrincipale(QMainWindow):
         debit.addSeparator()
         debit.addAction(self.a_saisie)
 
-        exemples = menu.addMenu("E&xemples")
+        menu_exemples = menu.addMenu("E&xemples")
+        exemples = menu_exemples
         exemples.addAction(self.a_exemple)
         exemples.addAction(self.a_volets)
+        exemples.addAction(self.a_formes)
 
         menu.addMenu("&Aide").addAction(self.a_aide)
 
@@ -1919,6 +1927,16 @@ class FenetrePrincipale(QMainWindow):
                          quantite=2)]
             + self._atelier_frais(),
             opt.Parametres(trait_de_scie=4.0, tolerance_epaisseur=5.0))
+        self._calculer()
+
+    def _charger_exemple_formes(self):
+        """L'imbrication CNC en un clic : huit formes concaves ou évidées
+        (exemples.formes_biscornues) sur du contreplaqué sans fil."""
+        if not self._confirmer_abandon(
+                "L'exemple va remplacer les pièces et le stock."):
+            return
+        pieces, stock, parametres = exemples.formes_biscornues()
+        self._remplir(pieces, stock + self._atelier_frais(), parametres)
         self._calculer()
 
     def _aide(self):

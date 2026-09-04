@@ -74,6 +74,11 @@ blanche ; l'exemple ne sert qu'à la découverte.
 
 ## L'interface
 
+Le menu Exemples en propose trois : les panneaux (guillotine), les
+volets battants (un débit réel) et les **formes biscornues** — cadre
+évidé, cœurs, étoiles, croissants, anneaux… imbriqués à la fraise sur du
+contreplaqué. La page web les a aussi, dans « Plus… ».
+
 À gauche, dans l'ordre du geste et l'un sous l'autre : **Pièces** (ce
 qu'il faut débiter), **Stock** (ce qu'on a), et **Réglages** (comment on
 scie) repliés sous les deux. Les boutons de ligne agissent sur la table
