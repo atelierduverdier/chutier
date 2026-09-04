@@ -266,6 +266,26 @@ class TableEditable(QTableWidget):
     # Largeur en dessous de laquelle la référence ne se lit plus.
     REFERENCE_MINI = 100
 
+    #: Pixels ajoutés à ce que Qt calcule, pour les colonnes de texte.
+    #: « ResizeToContents » dimensionne au plus juste — et selon le thème,
+    #: le cadre de la cellule mange les derniers pixels : « Douglas »
+    #: s'affichait « Doug… » dans une colonne pourtant taillée sur lui
+    #: (Breeze sombre, 4 septembre 2026). Les colonnes de nombres et de
+    #: cases n'en ont pas besoin, et treize colonnes élargies pour rien
+    #: feraient défiler la table en travers.
+    AIR_TEXTE = 12
+
+    #: Les genres dont le contenu est du texte à lire en entier.
+    _GENRES_TEXTE = (TEXTE, MATIERE, CHOIX, PLANCHE, DEFAUTS, CONTOUR)
+
+    def sizeHintForColumn(self, colonne: int) -> int:
+        largeur = super().sizeHintForColumn(colonne)
+        if largeur <= 0 or not 0 <= colonne < len(self.COLONNES):
+            return largeur
+        if self.COLONNES[colonne].genre in self._GENRES_TEXTE:
+            return largeur + self.AIR_TEXTE
+        return largeur
+
     def resizeEvent(self, evenement):
         """Onze colonnes dans un panneau de 560 px : étirée, la référence
         — la seule qu'on lise pour se repérer — tombait à « sap… » pendant

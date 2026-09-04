@@ -409,6 +409,45 @@ class Atelier(unittest.TestCase):
                          ["rayon"])
 
 
+class LargeurDesColonnes(unittest.TestCase):
+    """« ResizeToContents » taille au plus juste : selon le thème, le
+    cadre de la cellule mange les derniers pixels et « Douglas »
+    s'affichait « Doug… » dans une colonne pourtant dimensionnée sur lui
+    (Breeze sombre, 4 septembre 2026)."""
+
+    def test_le_nom_de_la_matiere_tient_en_entier(self):
+        from PySide6.QtGui import QFontMetrics
+        f = _fenetre()
+        for mot in ("Douglas", "contreplaqué", "chêne massif"):
+            f.table_pieces.ajouter_ligne(reference="essai", longueur=100,
+                                         largeur=50, epaisseur=18,
+                                         matiere=mot, quantite=1)
+            APP.processEvents()
+            ligne = f.table_pieces.rowCount() - 1
+            largeur_texte = QFontMetrics(f.table_pieces.font()).horizontalAdvance(mot)
+            self.assertGreaterEqual(
+                f.table_pieces.columnWidth(4), largeur_texte + 8,
+                "« %s » ne tient pas dans sa colonne" % mot)
+            self.assertEqual(f.table_pieces.item(ligne, 4).text(), mot)
+        f._modifie = False
+        f.close()
+
+    def test_l_air_ne_va_qu_aux_colonnes_de_texte(self):
+        """Treize colonnes élargies pour rien feraient défiler la table en
+        travers : les nombres et les cases n'en ont pas besoin."""
+        from PySide6.QtWidgets import QTableWidget
+        f = _fenetre()
+        table = f.table_stock
+        for i, colonne in enumerate(table.COLONNES):
+            nu = QTableWidget.sizeHintForColumn(table, i)
+            avec = table.sizeHintForColumn(i)
+            attendu = nu + (table.AIR_TEXTE
+                            if colonne.genre in table._GENRES_TEXTE else 0)
+            self.assertEqual(avec, attendu, colonne.titre)
+        f._modifie = False
+        f.close()
+
+
 class MatieresDesDeuxCotes(unittest.TestCase):
     """La colonne Matière n'a de sens que si les deux tables emploient le
     même mot. Chacune ne proposait que sa propre liste : après un import

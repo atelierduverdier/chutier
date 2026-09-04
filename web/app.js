@@ -132,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.2.4";
+export const VERSION = "1.2.5";
 
 function controlerVersion() {
   const b = $("#b-version");
