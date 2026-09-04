@@ -357,8 +357,15 @@ function dessinerPlan() {
       forme.append(svgEl("title", {}, `${p.reference} ${p.exemplaire}/${p.quantite} — ${mm(p.dim_x)} × ${mm(p.dim_y)} en (${mm(p.x)}, ${mm(p.y)})${p.angle ? `, tournée de ${mm(p.angle)}°` : p.pivotee ? ", pivotée" : ""}`));
       groupe.append(forme);
       if (p.contour.length) {
-        const [cx, cy] = p.trous.length ? [p.x + p.dim_x / 2, (p.y + Math.min(...p.trous.flat().map(q => q[1]))) / 2] : centreDeGravite(p.contour);
-        groupe.append(...etiquette(p.reference, "", cx - p.dim_x * 0.3, Y(cy) - p.dim_y * 0.3, p.dim_x * 0.6, p.trous.length ? (Math.min(...p.trous.flat().map(q => q[1])) - p.y) : p.dim_y * 0.6, police, "#2f3540"));
+        // Le nom seul, au centre de gravité — ou, pour une forme à trou
+        // (dont le centre de gravité est DANS le trou), dans la barre du
+        // bas, entre le bord et le trou le plus bas.
+        let cx, cy, bx = p.dim_x * 0.6, by = p.dim_y * 0.6;
+        if (p.trous.length) {
+          const basTrou = Math.min(...p.trous.flat().map(q => q[1]));
+          cx = p.x + p.dim_x / 2; cy = (p.y + basTrou) / 2; by = Math.max(basTrou - p.y, 1);
+        } else [cx, cy] = centreDeGravite(p.contour);
+        groupe.append(...etiquette(p.reference, "", cx - bx / 2, Y(cy) - by / 2, bx, by, police, "#2f3540"));
       } else {
         groupe.append(...etiquette(p.reference, `${mm(p.dim_x)} × ${mm(p.dim_y)}`, p.x, Y(p.y, p.dim_y), p.dim_x, p.dim_y, police, "#2f3540"));
       }

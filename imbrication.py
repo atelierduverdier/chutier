@@ -68,11 +68,14 @@ EPS = 1e-6
 _SIMPLIFICATION = 0.2
 # Segments par quart de cercle quand un NFP s'élargit de l'écart.
 _QUARTS = 4
-# Toutes les géométries qui entrent dans une union ou une différence sont
-# arrondies sur cette grille (mm) : GEOS bascule alors sur son noyau
-# robuste. Sans ça, l'union de centaines d'enveloppes aux arêtes
+# Les géométries PRÉCALCULÉES (enveloppes de Minkowski, NFP, cadres du
+# bord) sont arrondies sur cette grille (mm) : GEOS bascule alors sur son
+# noyau robuste. Sans ça, l'union de centaines d'enveloppes aux arêtes
 # colinéaires lève une TopologyException — rattrapée sur le bureau, mais
 # fatale en WebAssembly, où elle emportait Python et figeait la page.
+# Pas dans les stratégies elles-mêmes : le noyau robuste y coûtait vingt
+# fois plus dès que vingt-quatre processus le sollicitaient ensemble
+# (4 s par tâche au lieu de 0,15), mesuré.
 _PRECISION = 1e-3
 
 
@@ -140,8 +143,15 @@ def _minkowski(a, b_retournee):
     for pa in ta:
         for pb in tb:
             sommes = (pa[:, None, :] + pb[None, :, :]).reshape(-1, 2)
-            enveloppes.append(_robuste(MultiPoint(sommes).convex_hull))
-    return _robuste(unary_union(enveloppes))
+            # Sommets arrondis sur la grille ; l'union se fait avec
+            # grid_size, c'est-à-dire par le noyau robuste de GEOS, sans
+            # avoir à poser un modèle de précision sur chaque enveloppe
+            # (14 000 appels, qui se ralentissaient dix fois entre
+            # processus). L'union flottante, elle, lève une
+            # TopologyException en WebAssembly — essayé, deux fois.
+            sommes = np.round(sommes / _PRECISION) * _PRECISION
+            enveloppes.append(MultiPoint(sommes).convex_hull)
+    return _robuste(shapely.union_all(enveloppes, grid_size=_PRECISION))
 
 
 # Les caches vivent au niveau du module, pas de la stratégie : un NFP
@@ -232,12 +242,12 @@ def _calculer_cadre(utile, forme_b):
     _, _, w, h = forme_b.bounds
     minx, miny, maxx, maxy = utile.bounds
     enveloppe = box(minx - w - 2, miny - h - 2, maxx + w + 2, maxy + h + 2)
-    cadre = _robuste(enveloppe).difference(_robuste(utile))
+    cadre = enveloppe.difference(utile, grid_size=_PRECISION)
     retournee = affinity.scale(forme_b, -1, -1, origin=(0, 0))
     morceaux = [_minkowski(g, retournee) for g in
                 (cadre.geoms if hasattr(cadre, "geoms") else [cadre])
                 if not g.is_empty and g.geom_type == "Polygon"]
-    return _robuste(unary_union(morceaux))
+    return _robuste(shapely.union_all(morceaux, grid_size=_PRECISION))
 
 
 def _orientations(piece: opt.Piece, planche: opt.Planche,
@@ -293,7 +303,7 @@ class _Plateau:
         self.poses = []
         self.polygones = []               # exacts, posés
         self.posees = []                  # (cle variante, tx, ty)
-        self.utile = _robuste(_bord_utile(planche, params))
+        self.utile = _bord_utile(planche, params)
         self._utile_prep = prep(self.utile)
         self.ecart = params.ecart_contours
         self.occupe = None                # union des exacts élargis
@@ -317,7 +327,7 @@ class _Plateau:
         forme_b = self.formes.simplifiee(cle_b)
         _, _, w, h = forme_b.bounds
         minx, miny, maxx, maxy = self.utile.bounds
-        region = _robuste(box(minx - 1, miny - 1, maxx - w + 1, maxy - h + 1))
+        region = box(minx - 1, miny - 1, maxx - w + 1, maxy - h + 1)
         region = region.difference(self._cadre(cle_b))
         bloque = self._bloque(cle_b)
         if bloque is not None:
@@ -342,7 +352,7 @@ class _Plateau:
         # L'occupé sert au garde-fou : les exacts élargis d'un peu moins
         # que l'écart (le simplifié en a déjà pris deux dixièmes).
         marge = max(0.0, self.ecart - 2 * _SIMPLIFICATION)
-        elargi = _robuste(p.buffer(marge, join_style="mitre", mitre_limit=2.0))
+        elargi = p.buffer(marge, join_style="mitre", mitre_limit=2.0)
         self.occupe = (elargi if self.occupe is None
                        else unary_union([self.occupe, elargi]))
         shapely.prepare(self.occupe)
