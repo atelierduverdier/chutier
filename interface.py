@@ -35,6 +35,7 @@ import apparence
 import contours_svg
 import csv_io
 import exemples
+import export_cnc
 import optimiseur as opt
 import projet_io
 import tables_saisie as tsa
@@ -144,10 +145,20 @@ class FenetrePrincipale(QMainWindow):
             "Ajouter des formes quelconques à découper à la CNC : chaque"
             " tracé fermé du SVG devient une pièce à imbriquer")
         self.a_exporter_svg = self._acte(
-            "Exporter la découpe (S&VG)…", self._exporter_svg, None,
-            ("document-export",),
-            "Une planche imbriquée en SVG à l'échelle 1, contours des pièces"
+            "Exporter la découpe (S&VG)…", lambda: self._exporter_decoupe("svg"),
+            None, ("document-export",),
+            "Une planche par fichier SVG à l'échelle 1, contours des pièces"
             " et de la planche — ce qu'on passe à la chaîne CNC")
+        self.a_exporter_dxf = self._acte(
+            "Exporter la découpe (D&XF)…", lambda: self._exporter_decoupe("dxf"),
+            None, ("document-export",),
+            "Une planche par fichier DXF (R12), calques PIECES, PLANCHE et"
+            " NOMS — pour la fraiseuse")
+        self.a_exporter_lbrn = self._acte(
+            "Exporter la découpe (&LightBurn)…",
+            lambda: self._exporter_decoupe("lbrn"), None, ("document-export",),
+            "Une planche par projet LightBurn (.lbrn), calque 0 les pièces,"
+            " calque 1 le tour de planche — pour le laser")
         self.a_exporter = self._acte(
             "E&xporter le plan (image)…", self._exporter_image, "Ctrl+E",
             ("document-export", "image-x-generic"),
@@ -237,6 +248,8 @@ class FenetrePrincipale(QMainWindow):
         fichier.addSeparator()
         fichier.addAction(self.a_contours)
         fichier.addAction(self.a_exporter_svg)
+        fichier.addAction(self.a_exporter_dxf)
+        fichier.addAction(self.a_exporter_lbrn)
         fichier.addSeparator()
         fichier.addAction(self.a_atelier)
         fichier.addSeparator()
@@ -1424,35 +1437,40 @@ class FenetrePrincipale(QMainWindow):
         self._chargement = False
 
     def _exporter_svg(self):
+        self._exporter_decoupe("svg")
+
+    def _exporter_decoupe(self, format_):
         """Une planche par fichier, à l'échelle 1 : c'est ce que la CNC
-        attend, pas un plan d'ensemble."""
+        attend, pas un plan d'ensemble. SVG, DXF ou LightBurn."""
         if self._resultat is None or not self._resultat.debits:
             QMessageBox.information(self, "Rien à exporter",
                                     "Calculez d'abord le débit (F5).")
             return
         planches = self.vue.debits_affiches()
+        filtre, extension = export_cnc.FORMATS[format_]
         chemin, _ = QFileDialog.getSaveFileName(
             self, "Exporter la découpe (une planche par fichier)",
-            self._dossier(), "SVG (*.svg)")
+            self._dossier(), filtre)
         if not chemin:
             return
-        if chemin.lower().endswith(".svg"):
-            chemin = chemin[:-4]
+        if chemin.lower().endswith(extension):
+            chemin = chemin[:-len(extension)]
         titre = os.path.splitext(os.path.basename(self._chemin))[0] \
             if self._chemin else "Feuille de débit"
         ecrits = []
         try:
             for numero, debit in planches:
-                nom = ("%s.svg" % chemin if len(planches) == 1
-                       else "%s-planche-%d.svg" % (chemin, numero))
-                contours_svg.ecrire_svg(nom, debit, numero, titre)
+                nom = ("%s%s" % (chemin, extension) if len(planches) == 1
+                       else "%s-planche-%d%s" % (chemin, numero, extension))
+                with open(nom, "w", encoding="utf-8") as f:
+                    f.write(export_cnc.decoupe(format_, debit, numero, titre))
                 ecrits.append(nom)
         except OSError as erreur:
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
         self._retenir_dossier(ecrits[0])
         self.statusBar().showMessage(
-            "%d fichier(s) SVG écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)
+            "%d fichier(s) écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)
 
     def _exporter_image(self):
         if self._resultat is None or not self._resultat.debits:
@@ -1970,8 +1988,8 @@ Fichier → <i>importer des contours</i> ajoute aux pièces chaque tracé
 fermé d'un SVG (Inkscape, FreeCAD…). Dès qu'une matière compte un
 contour, tout ce lot est <i>imbriqué</i> à la fraise au lieu d'être
 scié : écart entre contours et marge au bord dans les réglages.
-Fichier → <i>exporter la découpe</i> sort chaque planche imbriquée en
-SVG à l'échelle 1, pour la chaîne CNC.</p>
+Fichier → <i>exporter la découpe</i> sort chaque planche en SVG, en DXF
+ou en projet LightBurn, à l'échelle 1, pour la chaîne CNC.</p>
 
 <p><b>Sortir le débit</b><br>
 Fichier → <i>fiche d'atelier</i> écrit en texte la liste des poses et des

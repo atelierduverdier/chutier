@@ -20,6 +20,7 @@ import contours_svg
 import couleurs
 import csv_io
 import exemples
+import export_cnc
 import optimiseur as opt
 import projet_io
 import saisie
@@ -181,8 +182,14 @@ def depuis_svg(texte: str) -> str:
 
 def svg_planche(debit_json: str, numero: int = 1, titre: str = "") -> str:
     """Le SVG de découpe d'une planche (son dictionnaire ``epingle``)."""
+    return decoupe("svg", debit_json, numero, titre)
+
+
+def decoupe(format_: str, debit_json: str, numero: int = 1,
+            titre: str = "") -> str:
+    """La découpe d'une planche en svg, dxf ou lbrn."""
     debit = projet_io._debit(json.loads(debit_json))
-    return contours_svg.svg_planche(debit, numero, titre)
+    return export_cnc.decoupe(format_, debit, numero, titre)
 
 
 def depuis_csv(texte: str) -> str:

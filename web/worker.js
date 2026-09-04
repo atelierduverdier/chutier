@@ -6,7 +6,7 @@ const VERSION_PYODIDE = "0.28.0";
 const CDN = `https://cdn.jsdelivr.net/pyodide/v${VERSION_PYODIDE}/full/`;
 const MODULES = ["optimiseur.py", "imbrication.py", "triangulation.py",
   "contours_svg.py", "projet_io.py", "csv_io.py", "couleurs.py",
-  "saisie.py", "stock_atelier.py", "exemples.py", "pont_web.py"];
+  "saisie.py", "stock_atelier.py", "exemples.py", "export_cnc.py", "pont_web.py"];
 
 importScripts(CDN + "pyodide.js");
 
