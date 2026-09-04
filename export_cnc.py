@@ -10,6 +10,10 @@ comme sur la machine, sans rien d'autre que la bibliothèque standard :
   contour, calque ``PIECES`` pour les pièces (leurs trous compris),
   ``PLANCHE`` pour le tour de la planche, ``NOMS`` pour un TEXT au centre
   de chaque pièce — à éteindre avant de générer le parcours.
+- **G-code** (.ngc) : le parcours lui-même, décalé du rayon de la fraise,
+  en passes, avec attaches et rampes — voir ``gcode.py``. Les trois
+  autres formats décrivent des contours ; celui-ci décrit ce que la
+  machine fait.
 - **LightBurn** (.lbrn) : un ``<Shape Type="Path">`` par contour, sommets
   ``V`` et segments ``L`` comme LaserAtelier les relit, deux calques de
   coupe (0 les pièces, 1 le tour de planche, à désactiver dans
@@ -154,11 +158,19 @@ FORMATS = {
     "svg": ("SVG (*.svg)", ".svg"),
     "dxf": ("DXF (*.dxf)", ".dxf"),
     "lbrn": ("LightBurn (*.lbrn)", ".lbrn"),
+    "gcode": ("G-code (*.ngc)", ".ngc"),
 }
 
 
-def decoupe(format_: str, debit, numero: int = 1, titre: str = "") -> str:
-    """Le texte de la découpe dans le format demandé (svg, dxf, lbrn)."""
+def decoupe(format_: str, debit, numero: int = 1, titre: str = "",
+            reglages=None) -> str:
+    """Le texte de la découpe dans le format demandé.
+
+    ``svg``, ``dxf`` et ``lbrn`` décrivent des contours : il faut encore
+    une chaîne CAM pour en tirer un parcours. ``gcode`` va droit à la
+    machine — ``reglages`` est alors un :class:`gcode.Reglages` (fraise,
+    passes, attaches, dialecte) ; ses avertissements sont recopiés en
+    commentaires dans le fichier."""
     if format_ == "svg":
         import contours_svg
         return contours_svg.svg_planche(debit, numero, titre)
@@ -166,4 +178,9 @@ def decoupe(format_: str, debit, numero: int = 1, titre: str = "") -> str:
         return dxf_planche(debit, numero, titre)
     if format_ == "lbrn":
         return lightburn_planche(debit, numero, titre)
+    if format_ == "gcode":
+        import gcode
+        texte, _avertissements = gcode.programme(debit, reglages, numero,
+                                                 titre)
+        return texte
     raise ValueError("format de découpe inconnu : %s" % format_)

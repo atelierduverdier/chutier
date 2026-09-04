@@ -38,6 +38,15 @@ deux références du même vert, une étiquette « chute » écrite par-dessus
 le titre d'une planche, et des cartouches tombés à huit pixels sur un
 brin de 4 m. Le dessin est le produit — il se regarde.
 
+**Le G-code se REJOUE, il ne se relit pas.** `tests/test_gcode.py` porte
+un simulateur qui tient l'état modal (G0/G1, position, avance) et rend la
+liste des déplacements ; les assertions portent sur ce que la fraise
+fait — décalage du rayon, sens de rotation, ordre trous puis tour,
+profondeurs, attaches, aucun rapide dans la matière. Un parcours se
+regarde aussi : le tracer en SVG (dernière passe en orange, attaches en
+vert, rapides en pointillé) a montré du premier coup que le décalage en
+onglet dessinait des pointes qu'une fraise ronde ne peut pas atteindre.
+
 **Les exports CNC se jugent dans les vrais logiciels**, pas sur le
 texte produit. Le DXF passe l'audit d'`ezdxf` (`pip install ezdxf` dans
 un venv jetable ; `tests/test_export_cnc.py` saute le test s'il manque).

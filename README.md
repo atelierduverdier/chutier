@@ -46,7 +46,29 @@ pièce à fil indifférent. Fichier → **Exporter la découpe** sort chaque
 planche à l'échelle 1 (mm), contour de la planche et contours fermés des
 pièces, en **SVG**, en **DXF** (R12, calques PIECES, PLANCHE, NOMS) ou en
 projet **LightBurn** (.lbrn, calque 0 les pièces, calque 1 le tour de
-planche), pour la chaîne CNC ou le laser. Le DXF est relu sans une
+planche), pour la chaîne CNC ou le laser.
+
+**Le G-code, sans chaîne CAM.** Ces trois formats décrivent des contours ;
+Fichier → **Exporter le G-code** écrit le parcours lui-même (`gcode.py`,
+un `.ngc` par planche) : décalé du **rayon de la fraise** — vers
+l'extérieur pour le tour d'une pièce, vers l'intérieur pour ses trous, la
+correction qu'on confie d'ordinaire à un G41/G42 fragile —, en **passes**
+jusqu'à mordre le martyr, avec des **attaches** pour que la pièce ne se
+libère pas sous la fraise, des **rampes** au lieu de plongées droites, et
+les trous percés **avant** le tour. Deux dialectes : LinuxCNC (RS274) et
+GRBL. Réglages : diamètre, sens (avalant ou opposition), profondeur de
+passe, dépassement, avances XY et Z, broche, outil, attaches, rampe,
+aspiration M7/M8. Le programme dit en tête, en commentaires, si la fraise
+mord dans une pièce voisine ou sort de la planche.
+
+`tests/test_gcode.py` ne juge pas le texte : il **rejoue** le programme
+dans un simulateur qui tient l'état modal, et vérifie ce que la fraise
+fait — décalage, sens de rotation, ordre des contours, profondeurs,
+attaches, aucun rapide dans la matière.
+
+Pas de laser ici : sur la machine de l'atelier il demande la broche `$1`,
+l'armement, l'échelle de puissance et l'air ; c'est LaserAtelier qui s'en
+charge. Le DXF est relu sans une
 correction par l'audit d'`ezdxf`, et le .lbrn a été ouvert dans un vrai
 **LightBurn, en 1.3.01 et en 1.7** : aucun avertissement au chargement,
 géométrie à l'échelle 1 en millimètres, trous compris, origine en bas à

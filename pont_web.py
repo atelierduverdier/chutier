@@ -344,14 +344,28 @@ def svg_planche(debit_json: str, numero: int = 1, titre: str = "") -> str:
     return decoupe("svg", debit_json, numero, titre)
 
 
+def gcode_defaut() -> str:
+    """Les réglages de fraise par défaut, pour garnir le panneau."""
+    import gcode
+    return json.dumps(dataclasses.asdict(gcode.Reglages()),
+                      ensure_ascii=False)
+
+
 def decoupe(format_: str, debit_json: str, numero: int = 1,
-            titre: str = "") -> str:
+            titre: str = "", reglages_json: str = "") -> str:
     """La découpe d'une planche en svg, dxf ou lbrn — ou, si le débit
     reçu est mal formé, ``{"erreur": …}`` (un JSON commençant par « { » :
     la page le reconnaît à cela, un SVG commence par « <?xml »)."""
     try:
         debit = projet_io._debit(json.loads(debit_json))
-        return export_cnc.decoupe(format_, debit, numero, titre)
+        reglages = None
+        if format_ == "gcode":
+            import gcode
+            champs = {f.name for f in dataclasses.fields(gcode.Reglages)}
+            brut = json.loads(reglages_json) if reglages_json else {}
+            reglages = gcode.Reglages(**{c: v for c, v in brut.items()
+                                         if c in champs})
+        return export_cnc.decoupe(format_, debit, numero, titre, reglages)
     except Exception as erreur:              # noqa: BLE001
         return json.dumps({"erreur": str(erreur)}, ensure_ascii=False)
 

@@ -9,13 +9,14 @@
 //
 // La VERSION ci-dessous suit celle d'optimiseur.py (tests/test_version.py
 // y veille) : un cache par version, les autres s'effacent à l'activation.
-const VERSION = "1.1.2";
+const VERSION = "1.2.0";
 const CACHE = "chutier-v" + VERSION;
 const PORTEE = new URL("./", self.location).pathname;
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/";
 const MODULES = ["optimiseur.py", "imbrication.py", "triangulation.py",
   "contours_svg.py", "projet_io.py", "csv_io.py", "couleurs.py",
-  "saisie.py", "stock_atelier.py", "exemples.py", "export_cnc.py", "fcstd_io.py", "pont_web.py"];
+  "saisie.py", "stock_atelier.py", "exemples.py", "export_cnc.py", "gcode.py",
+  "fcstd_io.py", "pont_web.py"];
 const FICHIERS = ["./", "./index.html", "./manifest.webmanifest", "./resources/icone.svg",
   "./web/app.js", "./web/langue.js", "./web/style.css", "./web/worker.js",
   ...MODULES.map(m => "./" + m)];

@@ -169,6 +169,47 @@ class Fichiers(unittest.TestCase):
                 self.assertNotIn(interdit, source, module)
 
 
+class Gcode(unittest.TestCase):
+    """Le G-code passe par le pont avec ses réglages : sans eux, la page
+    exporterait le programme d'une fraise qui n'est pas celle de
+    l'atelier."""
+
+    def _debit(self):
+        sortie = json.loads(pont_web.calculer(pont_web.exemple_formes()
+                                              .replace('"processus": 0',
+                                                       '"processus": 1')))
+        return sortie["resultat"]["debits"][0]["epingle"]
+
+    def test_les_reglages_de_la_page_arrivent_au_programme(self):
+        debit = json.dumps(self._debit())
+        reglages = json.loads(pont_web.gcode_defaut())
+        self.assertIn("diametre_fraise", reglages)
+        reglages.update(diametre_fraise=3, attaches=2, vitesse_broche=12000,
+                        dialecte="grbl")
+        texte = pont_web.decoupe("gcode", debit, 1, "essai",
+                                 json.dumps(reglages))
+        self.assertIn("fraise D3 mm", texte)
+        self.assertIn("M3 S12000", texte)
+        self.assertIn("2 attache[s]", texte)
+        self.assertNotIn("G64", texte)          # GRBL refuse le mot
+        self.assertTrue(texte.rstrip().endswith("M30"))
+
+    def test_sans_reglages_on_prend_les_defauts(self):
+        texte = pont_web.decoupe("gcode", json.dumps(self._debit()), 1, "e")
+        self.assertIn("G21 G90 G94", texte)
+        self.assertIn("M2", texte)
+
+    def test_un_reglage_impossible_ne_leve_pas(self):
+        debit = json.dumps(self._debit())
+        sortie = pont_web.decoupe("gcode", debit, 1, "e",
+                                  json.dumps({"diametre_fraise": 0}))
+        self.assertIn("erreur", json.loads(sortie))
+        # une clé inconnue est ignorée, pas fatale
+        texte = pont_web.decoupe("gcode", debit, 1, "e",
+                                 json.dumps({"inconnu": 3}))
+        self.assertIn("G21", texte)
+
+
 class NfpEnParallele(unittest.TestCase):
     """Le navigateur n'a pas de processus : il répartit les no-fit
     polygons entre plusieurs Web Workers. Chaque worker doit voir la MÊME

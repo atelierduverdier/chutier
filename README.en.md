@@ -44,7 +44,16 @@ margin to the edge, number of orientations tried for a part with free
 grain. File → **Export the cut** writes every board at scale 1 (mm),
 board outline and closed contours of the parts, as **SVG**, **DXF**
 (R12, layers PIECES, PLANCHE, NOMS; read back by `ezdxf`'s audit
-without a single fix) or a **LightBurn** project (.lbrn, opened in a real
+without a single fix) or, with File → **Export the G-code**, the toolpath itself
+(`gcode.py`, one `.ngc` per board): offset by the **cutter radius** —
+outwards around a part, inwards in its holes, the compensation usually
+left to a brittle G41/G42 —, in **passes** down into the spoilboard, with
+**tabs** so the part does not come free under the cutter, **ramps**
+instead of straight plunges, and holes cut **before** the outline. Two
+dialects, LinuxCNC (RS274) and GRBL. `tests/test_gcode.py` does not judge
+the text: it **replays** the program in a simulator and checks what the
+cutter does. No laser here — on the workshop's machine that needs
+LaserAtelier. Or a **LightBurn** project (.lbrn, opened in a real
 LightBurn, both 1.3.01 and 1.7: no warning on load, geometry at scale 1
 in millimetres, holes included, origin bottom left, both layers named — but no part names, for those use
 the SVG or the DXF's NOMS layer;

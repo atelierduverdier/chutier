@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
-    QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QDialogButtonBox, QSplitter, QTabWidget, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 import apparence
@@ -39,6 +40,7 @@ import contours_svg
 import csv_io
 import exemples
 import export_cnc
+import gcode as gcode_mod
 import fcstd_io
 import optimiseur as opt
 import projet_io
@@ -60,6 +62,174 @@ ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
 PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
+
+
+class DialogueGcode(QDialog):
+    """Les réglages de la fraise et de la machine, avant d'écrire le
+    G-code. Ils sont retenus d'une séance à l'autre : on ne change pas de
+    fraise entre deux planches, mais on change de bois."""
+
+    def __init__(self, parent, reglages: "gcode_mod.Reglages"):
+        super().__init__(parent)
+        self.setWindowTitle("Exporter le G-code — la fraise et la machine")
+        # Une zone défilante : quinze réglages et leurs explications ne
+        # tiennent pas en hauteur sur un écran de portable.
+        exterieur = QVBoxLayout(self)
+        defilante = QScrollArea()
+        defilante.setWidgetResizable(True)
+        defilante.setFrameShape(QScrollArea.Shape.NoFrame)
+        dedans = QWidget()
+        colonne = QVBoxLayout(dedans)
+        defilante.setWidget(dedans)
+        exterieur.addWidget(defilante, 1)
+        colonne.addWidget(apparence.discret(
+            "Le parcours est décalé du RAYON de la fraise : vers l'extérieur"
+            " pour le tour d'une pièce, vers l'intérieur pour ses trous.\n"
+            "Origine en bas à gauche de la planche, Z0 sur le dessus."))
+
+        self.choix_dialecte = QComboBox()
+        for cle, libelle in (("linuxcnc", "LinuxCNC (RS274)"),
+                             ("grbl", "GRBL / grblHAL")):
+            self.choix_dialecte.addItem(libelle, cle)
+        self.choix_dialecte.setCurrentIndex(
+            max(0, self.choix_dialecte.findData(reglages.dialecte)))
+        self.spin_outil = QSpinBox()
+        self.spin_outil.setRange(0, 999)
+        self.spin_outil.setValue(reglages.outil)
+        self.choix_aspiration = QComboBox()
+        for cle, libelle in (("", "aucune"), ("M7", "M7 (brouillard)"),
+                             ("M8", "M8 (arrosage)")):
+            self.choix_aspiration.addItem(libelle, cle)
+        self.choix_aspiration.setCurrentIndex(
+            max(0, self.choix_aspiration.findData(reglages.aspiration)))
+        colonne.addWidget(self._groupe("La machine", [
+            ("Dialecte", self.choix_dialecte,
+             "LinuxCNC accepte G64, le changement d'outil T/M6 et la"
+             " correction G43 ; GRBL les refuse et mélange nativement."),
+            ("Numéro d'outil", self.spin_outil,
+             "Le T<n> M6 du début. Zéro le saute. Sans effet en GRBL."),
+            ("Aspiration / air", self.choix_aspiration,
+             "C'est le CÂBLAGE qui décide, pas le goût : la sortie qui"
+             " n'est pas branchée ne fait rien, et le fichier tourne sans"
+             " air sans que rien ne le dise."),
+        ]))
+
+        self.spin_diametre = self._mm(reglages.diametre_fraise, 0.1, 60)
+        self.choix_sens = QComboBox()
+        for cle, libelle in (("avalant", "en avalant"),
+                             ("opposition", "en opposition")):
+            self.choix_sens.addItem(libelle, cle)
+        self.choix_sens.setCurrentIndex(
+            max(0, self.choix_sens.findData(reglages.sens)))
+        self.spin_passe = self._mm(reglages.profondeur_passe, 0.1, 50)
+        self.spin_depassement = self._mm(reglages.depassement, 0, 10)
+        colonne.addWidget(self._groupe("La fraise", [
+            ("Diamètre", self.spin_diametre,
+             "Le diamètre RÉEL, mesuré. Il doit tenir dans l'écart entre"
+             " contours du plan, sinon deux parcours voisins se"
+             " recouvrent — le programme le dit en tête."),
+            ("Sens", self.choix_sens,
+             "En avalant, le tour se parcourt en horaire et les trous en"
+             " anti-horaire : meilleur état de chant sur du panneau."),
+            ("Profondeur de passe", self.spin_passe,
+             "Ce qu'on descend par tour. La moitié du diamètre en"
+             " panneau, le diamètre en tendre."),
+            ("Dépassement sous la planche", self.spin_depassement,
+             "Ce qu'on mord dans le martyr, pour traverser vraiment."),
+        ]))
+
+        self.spin_avance = self._mm(reglages.vitesse_avance, 1, 20000)
+        self.spin_avance.setSuffix(" mm/min")
+        self.spin_avance.setDecimals(0)
+        self.spin_plongee = self._mm(reglages.vitesse_plongee, 1, 20000)
+        self.spin_plongee.setSuffix(" mm/min")
+        self.spin_plongee.setDecimals(0)
+        self.spin_broche = QSpinBox()
+        self.spin_broche.setRange(0, 60000)
+        self.spin_broche.setSingleStep(500)
+        self.spin_broche.setSuffix(" tr/min")
+        self.spin_broche.setValue(reglages.vitesse_broche)
+        self.spin_securite = self._mm(reglages.hauteur_securite, 0.5, 100)
+        colonne.addWidget(self._groupe("Les vitesses", [
+            ("Avance en XY", self.spin_avance,
+             "C'est elle qui donne le temps annoncé au bilan."),
+            ("Plongée en Z", self.spin_plongee,
+             "Bien plus lente que l'avance : la fraise coupe mal par le"
+             " bout."),
+            ("Broche", self.spin_broche,
+             "Zéro n'écrit ni M3 ni M5 — pour une broche lancée à la main."),
+            ("Hauteur de sécurité", self.spin_securite,
+             "La hauteur des déplacements rapides au-dessus de la planche."),
+        ]))
+
+        self.spin_attaches = QSpinBox()
+        self.spin_attaches.setRange(0, 20)
+        self.spin_attaches.setValue(reglages.attaches)
+        self.spin_long_attache = self._mm(reglages.longueur_attache, 0, 100)
+        self.spin_haut_attache = self._mm(reglages.hauteur_attache, 0, 50)
+        self.spin_rampe = self._mm(reglages.longueur_rampe, 0, 500)
+        colonne.addWidget(self._groupe("Tenir la pièce", [
+            ("Attaches par contour", self.spin_attaches,
+             "Sans elles, la pièce se libère au dernier tour, la fraise la"
+             " prend et l'envoie. Zéro pour une pièce maintenue autrement."),
+            ("Longueur d'une attache", self.spin_long_attache,
+             "Le long du contour."),
+            ("Bois laissé sous l'attache", self.spin_haut_attache,
+             "Ce qu'il restera à couper au ciseau."),
+            ("Longueur de rampe", self.spin_rampe,
+             "La descente se fait en biais sur cette longueur. Zéro plonge"
+             " droit — et casse la fraise."),
+        ]))
+
+        boutons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel, self)
+        boutons.accepted.connect(self.accept)
+        boutons.rejected.connect(self.reject)
+        colonne.addStretch(1)
+        exterieur.addWidget(boutons)
+        self.resize(720, 760)
+
+    def _mm(self, valeur, mini, maxi) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(mini, maxi)
+        spin.setDecimals(1)
+        spin.setSingleStep(0.5)
+        spin.setSuffix(" mm")
+        spin.setValue(valeur)
+        return spin
+
+    @staticmethod
+    def _groupe(titre, champs) -> QGroupBox:
+        groupe = QGroupBox(titre)
+        formulaire = QFormLayout(groupe)
+        for libelle, widget, info in champs:
+            formulaire.addRow(libelle, widget)
+            # Une ligne ENTIÈRE pour l'explication : dans la colonne des
+            # champs, QFormLayout ne lui donne qu'une hauteur d'une ligne
+            # et la coupe au milieu d'un mot.
+            formulaire.addRow(apparence.discret(info))
+            widget.setToolTip(info)
+        return groupe
+
+    def reglages(self) -> "gcode_mod.Reglages":
+        return gcode_mod.Reglages(
+            dialecte=self.choix_dialecte.currentData(),
+            diametre_fraise=self.spin_diametre.value(),
+            sens=self.choix_sens.currentData(),
+            profondeur_passe=self.spin_passe.value(),
+            depassement=self.spin_depassement.value(),
+            hauteur_securite=self.spin_securite.value(),
+            vitesse_avance=self.spin_avance.value(),
+            vitesse_plongee=self.spin_plongee.value(),
+            vitesse_broche=self.spin_broche.value(),
+            outil=self.spin_outil.value(),
+            attaches=self.spin_attaches.value(),
+            longueur_attache=self.spin_long_attache.value(),
+            hauteur_attache=self.spin_haut_attache.value(),
+            longueur_rampe=self.spin_rampe.value(),
+            aspiration=self.choix_aspiration.currentData(),
+        )
 
 
 class _Messager(QObject):
@@ -273,6 +443,13 @@ class FenetrePrincipale(QMainWindow):
             lambda: self._exporter_decoupe("lbrn"), None, ("document-export",),
             "Une planche par projet LightBurn (.lbrn), calque 0 les pièces,"
             " calque 1 le tour de planche — pour le laser")
+        self.a_exporter_gcode = self._acte(
+            "Exporter le &G-code (fraiseuse)…",
+            lambda: self._exporter_decoupe("gcode"), None,
+            ("document-export",),
+            "Une planche par programme .ngc : le parcours décalé du rayon"
+            " de la fraise, en passes, avec attaches et rampes — droit à"
+            " la machine, sans chaîne CAM")
         self.a_exporter = self._acte(
             "E&xporter le plan (image)…", self._exporter_image, "Ctrl+E",
             ("document-export", "image-x-generic"),
@@ -374,6 +551,7 @@ class FenetrePrincipale(QMainWindow):
         fichier.addAction(self.a_exporter_svg)
         fichier.addAction(self.a_exporter_dxf)
         fichier.addAction(self.a_exporter_lbrn)
+        fichier.addAction(self.a_exporter_gcode)
         fichier.addSeparator()
         fichier.addAction(self.a_atelier)
         fichier.addSeparator()
@@ -1039,6 +1217,21 @@ class FenetrePrincipale(QMainWindow):
             # Un réglage retiré du cœur depuis la dernière séance ne doit
             # pas empêcher l'appli de s'ouvrir.
             return opt.Parametres()
+
+    def _reglages_gcode(self) -> "gcode_mod.Reglages":
+        """Les réglages de fraise de la dernière fois — on ne change pas
+        de fraise entre deux planches."""
+        brut = self._reglages.value("gcode")
+        if not brut:
+            return gcode_mod.Reglages()
+        try:
+            return gcode_mod.Reglages(**json.loads(brut))
+        except (ValueError, TypeError):
+            return gcode_mod.Reglages()
+
+    def _memoriser_gcode(self, reglages):
+        self._reglages.setValue("gcode",
+                                json.dumps(dataclasses.asdict(reglages)))
 
     def _memoriser_reglages(self):
         try:
@@ -1727,6 +1920,18 @@ class FenetrePrincipale(QMainWindow):
                                     "Calculez d'abord le débit (F5).")
             return
         planches = self.vue.debits_affiches()
+        reglages = None
+        if format_ == "gcode":
+            dialogue = DialogueGcode(self, self._reglages_gcode())
+            if dialogue.exec() != QDialog.DialogCode.Accepted:
+                return
+            reglages = dialogue.reglages()
+            try:
+                reglages.valider()
+            except ValueError as erreur:
+                QMessageBox.warning(self, "Réglages impossibles", str(erreur))
+                return
+            self._memoriser_gcode(reglages)
         filtre, extension = export_cnc.FORMATS[format_]
         chemin, _ = QFileDialog.getSaveFileName(
             self, "Exporter la découpe (une planche par fichier)",
@@ -1738,16 +1943,31 @@ class FenetrePrincipale(QMainWindow):
         titre = os.path.splitext(os.path.basename(self._chemin))[0] \
             if self._chemin else "Feuille de débit"
         ecrits = []
+        avertissements = []
         try:
             for numero, debit in planches:
                 nom = ("%s%s" % (chemin, extension) if len(planches) == 1
                        else "%s-planche-%d%s" % (chemin, numero, extension))
+                if format_ == "gcode":
+                    texte, dits = gcode_mod.programme(debit, reglages, numero,
+                                                      titre)
+                    avertissements += ["planche %d : %s" % (numero, d)
+                                       for d in dits]
+                else:
+                    texte = export_cnc.decoupe(format_, debit, numero, titre)
                 with open(nom, "w", encoding="utf-8") as f:
-                    f.write(export_cnc.decoupe(format_, debit, numero, titre))
+                    f.write(texte)
                 ecrits.append(nom)
-        except OSError as erreur:
+        except (OSError, ValueError) as erreur:
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
+        if avertissements:
+            # Ils sont déjà en tête des fichiers ; encore faut-il les voir
+            # avant de lancer la machine.
+            QMessageBox.warning(
+                self, "G-code écrit, avec des réserves",
+                "Le programme est écrit, mais :\n\n• %s"
+                % "\n• ".join(avertissements[:12]))
         self._retenir_dossier(ecrits[0])
         self.statusBar().showMessage(
             "%d fichier(s) écrit(s) : %s" % (len(ecrits), ecrits[0]), 8000)

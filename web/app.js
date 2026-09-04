@@ -68,13 +68,38 @@ const REGLAGES = [
     ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."]]],
 ];
 
+// Les réglages du G-code ne touchent pas au plan : les changer ne périme
+// pas le calcul, ils ne servent qu'à l'écriture du programme. D'où un
+// bloc d'état à part, et « gcode » comme cible dans REGLAGES.
+const REGLAGES_GCODE = [
+  ["La CNC (G-code)", [
+    ["dialecte", "Dialecte", "choix", "LinuxCNC accepte G64, le changement d'outil T/M6 et la correction G43 ; GRBL les refuse et mélange nativement.",
+      [["linuxcnc", "LinuxCNC (RS274)"], ["grbl", "GRBL / grblHAL"]]],
+    ["diametre_fraise", "Diamètre de fraise (mm)", "nombre", "Le diamètre RÉEL, mesuré. Il doit tenir dans l'écart entre contours du plan, sinon deux parcours voisins se recouvrent."],
+    ["sens", "Sens de coupe", "choix", "En avalant, le tour se parcourt en horaire et les trous en anti-horaire : meilleur état de chant sur du panneau.",
+      [["avalant", "en avalant"], ["opposition", "en opposition"]]],
+    ["profondeur_passe", "Profondeur de passe (mm)", "nombre", "Ce qu'on descend par tour. La moitié du diamètre en panneau, le diamètre en tendre."],
+    ["depassement", "Dépassement sous la planche (mm)", "nombre", "Ce qu'on mord dans le martyr, pour traverser vraiment."],
+    ["vitesse_plongee", "Plongée en Z (mm/min)", "nombre", "Bien plus lente que l'avance : la fraise coupe mal par le bout."],
+    ["vitesse_broche", "Broche (tr/min)", "entier", "Zéro n'écrit ni M3 ni M5 — pour une broche lancée à la main."],
+    ["hauteur_securite", "Hauteur de sécurité (mm)", "nombre", "La hauteur des déplacements rapides au-dessus de la planche."],
+    ["outil", "Numéro d'outil", "entier", "Le T<n> M6 du début. Zéro le saute. Sans effet en GRBL."],
+    ["attaches", "Attaches par contour", "entier", "Sans elles, la pièce se libère au dernier tour, la fraise la prend et l'envoie."],
+    ["longueur_attache", "Longueur d'une attache (mm)", "nombre", "Le long du contour."],
+    ["hauteur_attache", "Bois laissé sous l'attache (mm)", "nombre", "Ce qu'il restera à couper au ciseau."],
+    ["longueur_rampe", "Longueur de rampe (mm)", "nombre", "La descente se fait en biais sur cette longueur. Zéro plonge droit — et casse la fraise."],
+    ["aspiration", "Aspiration / air", "choix", "C'est le CÂBLAGE qui décide, pas le goût : la sortie qui n'est pas branchée ne fait rien, et le fichier tourne sans air sans que rien ne le dise.",
+      [["", "aucune"], ["M7", "M7 (brouillard)"], ["M8", "M8 (arrosage)"]]],
+  ], "gcode"],
+];
+
 // Traduit à l'affichage, pas ici : une constante figerait la langue du chargement.
 const RAISONS_VIDE = "Saisissez les pièces à débiter, vérifiez le stock, puis Calculer le débit (F5).";
 
 // -- état ---------------------------------------------------------------------
 
 const etat = {
-  pieces: [], stock: [], parametres: {}, epingles: [], resultat: null,
+  pieces: [], stock: [], parametres: {}, gcode: {}, epingles: [], resultat: null,
   aJour: false, zoom: 1, avancees: false, traits: false, planche: 1, nomProjet: "",
 };
 
@@ -107,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.1.2";
+export const VERSION = "1.2.0";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -446,27 +471,34 @@ function rafraichirResumes() {
 function rendreReglages() {
   const zone = $("#reglages");
   zone.replaceChildren();
-  for (const [titre, champs] of REGLAGES) {
+  for (const [titre, champs, cible = "parametres"] of [...REGLAGES, ...REGLAGES_GCODE]) {
     zone.append(el("h3", { text: t(titre) }));
     for (const [cle, libelle, genre, info, choix] of champs) {
+      const ou = etat[cible];
       zone.append(el("label", { text: t(libelle), title: t(info) }));
       let champ;
       if (genre === "choix") {
-        champ = el("select", { onchange: (e) => { etat.parametres[cle] = isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value); changerReglage(); } });
+        champ = el("select", { onchange: (e) => { ou[cle] = isNaN(Number(e.target.value)) || e.target.value === "" ? e.target.value : Number(e.target.value); changerReglage(cible); } });
         for (const [v, libelle] of choix) champ.append(el("option", { value: v, text: t(libelle) }));
-        champ.value = String(etat.parametres[cle]);
+        champ.value = String(ou[cle]);
       } else if (genre === "bool") {
-        champ = el("input", { type: "checkbox", onchange: (e) => { etat.parametres[cle] = e.target.checked; changerReglage(); } });
-        champ.checked = Boolean(etat.parametres[cle]);
+        champ = el("input", { type: "checkbox", onchange: (e) => { ou[cle] = e.target.checked; changerReglage(cible); } });
+        champ.checked = Boolean(ou[cle]);
       } else {
-        champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: etat.parametres[cle], oninput: (e) => { etat.parametres[cle] = Number(e.target.value); changerReglage(); } });
+        champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: ou[cle], oninput: (e) => { ou[cle] = Number(e.target.value); changerReglage(cible); } });
       }
       zone.append(champ);
-      zone.append(el("p", { class: "discret", text: info }));
+      zone.append(el("p", { class: "discret", text: t(info) }));
     }
   }
 }
-function changerReglage() { etat.aJour = false; stockage.ecrire("parametres", etat.parametres); rafraichirEtat(); brouillonPlusTard(); }
+function changerReglage(cible = "parametres") {
+  // Les réglages du G-code ne changent pas le plan : le périmer ferait
+  // recalculer une heure de fraisage pour un diamètre de fraise.
+  if (cible === "parametres") { etat.aJour = false; rafraichirEtat(); }
+  stockage.ecrire(cible, etat[cible]);
+  brouillonPlusTard();
+}
 
 // -- calcul ---------------------------------------------------------------------------
 
@@ -748,13 +780,13 @@ async function importerSvg() {
   if (d.avertissements.length) alerter(t`${d.formes.length} contour(s) importé(s)\n\n` + d.avertissements.join("\n"));
   else $("#etat").textContent = t`${d.formes.length} contour(s) importé(s)`;
 }
-const FORMATS_DECOUPE = { svg: ["svg", "image/svg+xml"], dxf: ["dxf", "application/dxf"], lbrn: ["lbrn", "application/xml"] };
+const FORMATS_DECOUPE = { svg: ["svg", "image/svg+xml"], dxf: ["dxf", "application/dxf"], lbrn: ["lbrn", "application/xml"], gcode: ["ngc", "text/plain"] };
 async function exporterDecoupe(format) {
   if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; }
   const titre = etat.nomProjet || t("Feuille de débit");
   const [extension, type] = FORMATS_DECOUPE[format];
   for (const [i, d] of etat.resultat.debits.entries()) {
-    const texte = await tenter("decoupe", format, JSON.stringify(d.epingle), i + 1, titre);
+    const texte = await tenter("decoupe", format, JSON.stringify(d.epingle), i + 1, titre, format === "gcode" ? JSON.stringify(etat.gcode) : "");
     if (texte === null) return;
     // Un débit mal formé revient en JSON d'erreur, pas en dessin : un SVG
     // commence par « <?xml », un DXF par « 999 », jamais par « { ».
@@ -931,6 +963,8 @@ async function chargerExemple(fn = "exemple") {
 async function demarrer() {
   const defauts = JSON.parse(await appeler("parametres_defaut"));
   etat.parametres = { ...defauts, ...stockage.lire("parametres", {}) };
+  const gcodeDefaut = JSON.parse(await appeler("gcode_defaut"));
+  etat.gcode = { ...gcodeDefaut, ...stockage.lire("gcode", {}) };
   etat.avancees = stockage.lire("avancees", false);
   etat.traits = stockage.lire("traits", false);
   $("#c-avancees").checked = etat.avancees; $("#c-traits").checked = etat.traits;
@@ -977,6 +1011,7 @@ function brancher() {
   $("#b-exporter-svg").onclick = () => exporterDecoupe("svg");
   $("#b-exporter-dxf").onclick = () => exporterDecoupe("dxf");
   $("#b-exporter-lbrn").onclick = () => exporterDecoupe("lbrn");
+  $("#b-exporter-gcode").onclick = () => exporterDecoupe("gcode");
   $("#b-fiche").onclick = exporterFiche;
   $("#b-exemple").onclick = () => chargerExemple("exemple");
   $("#b-exemple-formes").onclick = () => chargerExemple("exemple_formes");
