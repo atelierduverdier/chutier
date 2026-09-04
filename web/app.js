@@ -132,7 +132,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.2.5";
+export const VERSION = "1.2.6";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -365,6 +365,42 @@ function atelier() { return stockage.lire("atelier", []).map(s => ({ ...DEFAUTS_
 function matieres() { return [...new Set([...etat.stock, ...etat.pieces].map(s => (s.matiere || "").trim()).filter(Boolean))].sort(); }
 function references() { return [...new Set(etat.stock.map(s => (s.reference || "").trim()).filter(Boolean))]; }
 
+// -- la largeur des colonnes de texte -------------------------------------------------
+//
+// Le contenu d'une cellule est un <input>, et la longueur de ce qu'il
+// porte n'entre pas dans le calcul de la colonne : le navigateur taille
+// sur l'en-tête, et « Douglas » s'affichait « Doug… » dans une colonne de
+// 59 px là où il en faut 66. L'attribut « size » n'y peut rien, la
+// largeur à 100 % l'emporte. On mesure donc le texte nous-mêmes et on
+// pose une largeur minimale sur l'en-tête, que la colonne suit.
+
+const GENRES_A_MESURER = new Set(["texte", "matiere", "planche"]);
+//: Bordures du champ et marges de la cellule, en pixels.
+const AIR_CELLULE = 6;
+//: Au-delà, une référence à rallonge mangerait toute la table.
+const LARGEUR_MAXI = 220;
+
+/**
+ * La largeur qu'il faut à chaque colonne de texte, mesurée par le
+ * NAVIGATEUR : `scrollWidth` d'un champ est la largeur de son contenu,
+ * quelle que soit celle du champ. Mesurer la chaîne à part, au canvas,
+ * donnait 50 px là où le champ en demandait 76 — une police résolue
+ * autrement, et « Douglas » restait coupé après correction.
+ */
+function ajusterColonnes(table, colonnes) {
+  const entetes = [...table.querySelectorAll("th")];
+  colonnes.forEach((c, i) => {
+    if (!GENRES_A_MESURER.has(c.genre) || !entetes[i]) return;
+    let besoin = 0;
+    for (const champ of table.querySelectorAll(
+        "tbody td:nth-child(" + (i + 1) + ") input")) {
+      besoin = Math.max(besoin, champ.scrollWidth);
+    }
+    entetes[i].style.minWidth = besoin
+      ? Math.min(besoin + AIR_CELLULE, LARGEUR_MAXI) + "px" : "";
+  });
+}
+
 function rendreTable(nom) {
   const table = $("#t-" + nom);
   const lignes = etat[nom];
@@ -380,6 +416,7 @@ function rendreTable(nom) {
     corps.append(tr);
   });
   table.append(corps);
+  ajusterColonnes(table, colonnes);
   $("#n-" + nom).textContent = "· " + lignes.filter(l => (l.reference || "").trim()).length;
   rafraichirResumes();
 }

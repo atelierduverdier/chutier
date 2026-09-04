@@ -40,6 +40,14 @@ n'existe pas au stock le dit **tout de suite**, avec les deux mots en
 présence — la faute est presque toujours une majuscule ou une espace.
 Bureau et navigateur disent la même chose, au même moment.
 
+Les colonnes de texte s'élargissent à leur contenu **des deux côtés** :
+sur le web, le texte vit dans un `<input>` dont la longueur n'entre pas
+dans le calcul de la colonne — le navigateur taille sur l'en-tête, et
+« Douglas » s'affichait « Doug… ». La largeur nécessaire se mesure par le
+`scrollWidth` des champs, c'est-à-dire par la mise en page du navigateur
+lui-même : mesurer la chaîne à part, au canvas, donnait cinquante pixels
+là où le champ en demandait soixante-seize.
+
 ## La CNC : des formes quelconques, imbriquées
 
 Fichier → **Importer des contours (SVG)** ajoute aux pièces chaque
