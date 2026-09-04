@@ -169,6 +169,103 @@ class Fichiers(unittest.TestCase):
                 self.assertNotIn(interdit, source, module)
 
 
+class NfpEnParallele(unittest.TestCase):
+    """Le navigateur n'a pas de processus : il répartit les no-fit
+    polygons entre plusieurs Web Workers. Chaque worker doit voir la MÊME
+    liste de tâches, cache ou non, sinon les tranches ne se correspondent
+    plus et le plan est faux."""
+
+    def _entree(self):
+        import exemples
+        pieces, stock, params = exemples.formes_biscornues()
+        return json.dumps({
+            "pieces": [{"reference": p.reference, "longueur": p.longueur,
+                        "largeur": p.largeur, "epaisseur": p.epaisseur,
+                        "matiere": p.matiere, "quantite": p.quantite,
+                        "fil": "indifferent",
+                        "contour": [list(c) for c in p.contour],
+                        "trous": [[list(x) for x in t] for t in p.trous]}
+                       for p in pieces],
+            "stock": [{"reference": s.reference, "longueur": s.longueur,
+                       "largeur": s.largeur, "epaisseur": s.epaisseur,
+                       "matiere": s.matiere, "quantite": s.quantite,
+                       "chute": s.chute, "fil": s.fil} for s in stock],
+            "parametres": {"pas_rotation": params.pas_rotation,
+                           "ecart_contours": params.ecart_contours,
+                           "essais_melanges": 0, "processus": 1}})
+
+    def _vider_caches(self):
+        import imbrication
+        for cache in (imbrication._VARIANTES, imbrication._NFPS,
+                      imbrication._CADRES):
+            cache.clear()
+
+    def test_les_tranches_se_recollent_et_donnent_le_meme_plan(self):
+        entree = self._entree()
+        self._vider_caches()
+        seul = json.loads(pont_web.calculer(entree))
+        self.assertTrue(seul["ok"], seul)
+
+        self._vider_caches()
+        combien = json.loads(pont_web.taches_nfp(entree))
+        self.assertTrue(combien["ok"])
+        self.assertGreater(combien["nombre"], 40)
+
+        self.assertEqual(combien["manquants"], list(range(combien["nombre"])))
+
+        # trois « workers » : chacun part d'un cache vide, comme dans la page
+        manquants = combien["manquants"]
+        faits = []
+        for part in range(3):
+            self._vider_caches()
+            rangs = [r for k, r in enumerate(manquants) if k % 3 == part]
+            tranche = json.loads(pont_web.calculer_nfp(entree,
+                                                       json.dumps(rangs)))
+            self.assertTrue(tranche["ok"], tranche)
+            faits.extend(tranche["faits"])
+        self.assertEqual(len(faits), combien["nombre"])
+        self.assertEqual(sorted(r for r, _ in faits),
+                         list(range(combien["nombre"])))
+
+        self._vider_caches()
+        range_ = json.loads(pont_web.recevoir_nfp(entree, json.dumps(faits)))
+        self.assertTrue(range_["ok"], range_)
+        import imbrication
+        self.assertTrue(imbrication._NFPS and imbrication._CADRES)
+        a_plusieurs = json.loads(pont_web.calculer(entree))
+        self.assertTrue(a_plusieurs["ok"])
+        # le plan doit être le MÊME : le parallélisme ne change pas le résultat
+        self.assertEqual(a_plusieurs["resultat"]["bilan"],
+                         seul["resultat"]["bilan"])
+        self.assertEqual(a_plusieurs["resultat"]["fiche"],
+                         seul["resultat"]["fiche"])
+
+    def test_ce_qui_est_deja_en_cache_ne_se_recalcule_pas(self):
+        """Au deuxième calcul, tout est en cache : plus rien à répartir,
+        et la page se passe des workers auxiliaires."""
+        entree = self._entree()
+        self._vider_caches()
+        self.assertTrue(json.loads(pont_web.calculer(entree))["ok"])
+        combien = json.loads(pont_web.taches_nfp(entree))
+        self.assertGreater(combien["nombre"], 40)
+        self.assertEqual(combien["manquants"], [])
+
+    def test_sans_contour_il_n_y_a_rien_a_repartir(self):
+        entree = json.dumps({
+            "pieces": [{"reference": "cale", "longueur": 100, "largeur": 50,
+                        "epaisseur": 15, "matiere": "cp", "quantite": 2}],
+            "stock": [{"reference": "cp", "longueur": 400, "largeur": 200,
+                       "epaisseur": 15, "matiere": "cp", "quantite": 1}]})
+        self.assertEqual(json.loads(pont_web.taches_nfp(entree))["nombre"], 0)
+
+    def test_une_saisie_invalide_ne_leve_pas(self):
+        for mauvaise in ("", "{", '{"pieces": 3}'):
+            for sortie in (pont_web.taches_nfp(mauvaise),
+                           pont_web.calculer_nfp(mauvaise, "[]"),
+                           pont_web.recevoir_nfp(mauvaise, "[]")):
+                self.assertIn("ok", json.loads(sortie))
+
+
 class Deplacement(unittest.TestCase):
 
     def test_deplacer_renvoie_le_debit_ou_un_refus(self):

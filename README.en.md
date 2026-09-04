@@ -257,9 +257,16 @@ is sent anywhere: the computation runs in a Web Worker of the page, the
 workshop stock lives in the browser's local storage, and the files
 (project .json, parts .csv, contours and cut .svg) are the same as the
 desktop application's, both ways. The first load downloads about
-fifteen MB (cached afterwards). No multicore and no label printing: for
-those two, the desktop. To try it locally: `python3 -m http.server` at
-the root, then <http://localhost:8000/>. The interface is in French.
+fifteen MB (cached afterwards). No label printing: for that one, the
+desktop. To try it locally: `python3 -m http.server` at the root, then
+<http://localhost:8000/>.
+
+The computation is **spread over several Web Workers**: 86 % of a nesting
+run goes into the no-fit polygons, independent of one another, and the
+page hands a slice to each of three extra workers. On the odd-shapes
+example a first run goes from 7 to 4 seconds; whatever a previous run
+already cached is never redistributed, since redoing it in parallel would
+cost more than doing nothing.
 
 The page is **bilingual**: an "EN / FR" button next to the title
 switches the whole interface, and the choice is remembered in the

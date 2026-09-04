@@ -671,10 +671,15 @@ def _tache_nfp(args):
                                        _simplifiee(cle_b)).wkb
 
 
-def _taches_nfp(unites, stock_unites, params):
+def _taches_nfp(unites, stock_unites, params, tout=False):
     """Calcule toutes les variantes (dans le processus parent, AVANT de
     forker : les fils en héritent) et rend la liste des NFP de couples
-    et de bords qui manquent au cache."""
+    et de bords qui manquent au cache.
+
+    ``tout`` : les énumérer TOUTES, cache ou non — le navigateur répartit
+    la liste entre plusieurs workers, et deux caches différents donneraient
+    deux listes différentes, donc des tranches qui ne se correspondent
+    plus."""
     pieces = list({id(p): p for p, _ in unites}.values())
     planches = list({pl: pl for pl, _ in stock_unites}.values())
     variantes = []
@@ -693,7 +698,7 @@ def _taches_nfp(unites, stock_unites, params):
         for b in variantes:
             paire = _cle_paire(a, b)
             cle = (ecart, *paire)
-            if cle in _NFPS or paire in vues:
+            if paire in vues or (cle in _NFPS and not tout):
                 continue
             vues.add(paire)
             taches.append(("nfp", paire, ecart))
@@ -703,7 +708,7 @@ def _taches_nfp(unites, stock_unites, params):
         bords[utile.wkb] = utile
     for wkb in bords:
         for b in variantes:
-            if (wkb, b) not in _CADRES:
+            if tout or (wkb, b) not in _CADRES:
                 taches.append(("cadre", (wkb, b), ecart))
     return taches
 

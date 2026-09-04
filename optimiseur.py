@@ -1520,6 +1520,36 @@ def _valider(pieces: list, stock: list, params: Parametres):
                                    ", ".join(_PRIORITES_VALIDES)))
 
 
+def lots_imbriques(pieces: list, stock: list,
+                   parametres: "Parametres | None" = None,
+                   epingles: list = ()) -> list:
+    """Les lots qui partiront à l'imbrication : ``(unites, stock_unites)``,
+    exactement ce que :func:`optimiser` passera à ``imbrication.imbriquer``.
+
+    Sert au navigateur, qui n'a pas de processus : il précalcule les
+    no-fit polygons dans plusieurs Web Workers avant de lancer le calcul,
+    et lui faut donc savoir d'avance sur quoi. ``tests/test_pont_web.py``
+    vérifie que cette liste est bien celle qu'``optimiser`` emploie —
+    sans quoi les deux se sépareraient en silence.
+    """
+    params = parametres or Parametres()
+    _valider(pieces, stock, params)
+    pieces = _decomposer_composables(pieces, stock, params)
+    pieces, stock, _debits = _appliquer_epingles(pieces, stock, list(epingles))
+    lots = []
+    for cle in sorted(_grouper(pieces, stock)):
+        pieces_g, stock_g = _grouper(pieces, stock)[cle]
+        if not pieces_g or not stock_g or not any(p.contour for p in pieces_g):
+            continue
+        unites = [(p, ex) for p in pieces_g for ex in range(1, p.quantite + 1)]
+        stock_unites = [(pl, ex) for pl in stock_g
+                        for ex in range(1, (len(unites)
+                                            if pl.illimite and not pl.chute
+                                            else pl.quantite) + 1)]
+        lots.append((unites, stock_unites))
+    return lots
+
+
 def optimiser(pieces: list, stock: list,
               parametres: "Parametres | None" = None,
               epingles: list = ()) -> Resultat:

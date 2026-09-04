@@ -187,6 +187,109 @@ def calculer(entree: str) -> str:
                           ensure_ascii=False)
 
 
+# -- l'imbrication à plusieurs workers ----------------------------------------
+#
+# Dans le navigateur il n'y a pas de processus : `multiprocessing` n'existe
+# pas sous WebAssembly, et le calcul tenait sur un seul cœur. Or 86 % du
+# temps d'une imbrication part dans les no-fit polygons (3,3 s sur 3,9 s,
+# mesuré sur l'exemple des formes biscornues), et ces NFP sont indépendants
+# les uns des autres.
+#
+# La page les répartit donc entre plusieurs Web Workers : chacun calcule sa
+# TRANCHE de la liste des tâches et rend les géométries en WKB ; le worker
+# principal les range dans son cache, puis lance le calcul, qui n'a plus
+# qu'à enchaîner les stratégies. Les tâches sont énumérées TOUTES, cache ou
+# non (`tout=True`), et repérées par leur rang : deux workers aux caches
+# différents doivent voir la même liste, sinon les tranches ne se
+# correspondent plus.
+
+
+def _lots_et_taches(entree: str):
+    """(params, [(rang global, tâche)]) pour ce calcul — la liste complète."""
+    import imbrication
+    donnees = json.loads(entree)
+    pieces = [_piece(d) for d in donnees.get("pieces", [])
+              if (d.get("reference") or "").strip()]
+    stock = [_planche(d) for d in donnees.get("stock", [])
+             if (d.get("reference") or "").strip()]
+    params = _parametres(donnees.get("parametres") or {})
+    epingles = [projet_io._debit(d) for d in donnees.get("epingles", [])]
+    try:
+        lots = opt.lots_imbriques(pieces, stock, params, epingles=epingles)
+    except ValueError:
+        lots = opt.lots_imbriques(pieces, stock, params)
+    taches = []
+    for unites, stock_unites in lots:
+        taches.extend(imbrication._taches_nfp(unites, stock_unites, params,
+                                              tout=True))
+    return params, taches
+
+
+def taches_nfp(entree: str) -> str:
+    """Ce qui reste à calculer : les RANGS, dans la liste complète, des
+    no-fit polygons que ce worker n'a pas déjà en cache.
+
+    Les rangs, et non les tâches elles-mêmes : un worker auxiliaire
+    réénumère la même liste complète (``tout=True``, donc indépendante des
+    caches) et sait ainsi de quoi on lui parle, sans qu'on ait à lui
+    envoyer des géométries. Une liste vide veut dire qu'il n'y a rien à
+    répartir — le cache d'un calcul précédent sert encore, et le refaire à
+    plusieurs serait plus lent que ne rien faire."""
+    import imbrication
+    try:
+        params, taches = _lots_et_taches(entree)
+        ecart = params.ecart_contours
+        manquants = []
+        for rang, (genre, cle, _e) in enumerate(taches):
+            connu = ((ecart, *cle) in imbrication._NFPS if genre == "nfp"
+                     else cle in imbrication._CADRES)
+            if not connu:
+                manquants.append(rang)
+        return json.dumps({"ok": True, "nombre": len(taches),
+                           "manquants": manquants})
+    except (ValueError, TypeError, KeyError, ImportError) as erreur:
+        return json.dumps({"ok": False, "erreur": str(erreur)},
+                          ensure_ascii=False)
+
+
+def calculer_nfp(entree: str, rangs: str) -> str:
+    """Les no-fit polygons de ces rangs, en WKB base64. Appelé dans un
+    worker AUXILIAIRE, qui ne sert qu'à ça."""
+    import base64
+    import imbrication
+    try:
+        params, taches = _lots_et_taches(entree)
+        faits = []
+        for rang in json.loads(rangs):
+            _genre, _cle, wkb = imbrication._tache_nfp(taches[int(rang)])
+            faits.append([int(rang), base64.b64encode(wkb).decode("ascii")])
+        return json.dumps({"ok": True, "faits": faits})
+    except (ValueError, TypeError, KeyError, IndexError,
+            ImportError) as erreur:
+        return json.dumps({"ok": False, "erreur": str(erreur)},
+                          ensure_ascii=False)
+
+
+def recevoir_nfp(entree: str, paquet: str) -> str:
+    """Range dans le cache de CE worker les no-fit polygons calculés
+    ailleurs. Le calcul qui suit n'aura plus qu'à ranger les pièces."""
+    import base64
+    import imbrication
+    try:
+        params, taches = _lots_et_taches(entree)
+        faits = json.loads(paquet)
+        resultats = []
+        for rang, wkb64 in faits:
+            genre, cle, _ecart = taches[int(rang)]
+            resultats.append((genre, cle, base64.b64decode(wkb64)))
+        imbrication._ranger_nfp(resultats, params.ecart_contours)
+        return json.dumps({"ok": True, "rangés": len(resultats)})
+    except (ValueError, TypeError, KeyError, IndexError,
+            ImportError) as erreur:
+        return json.dumps({"ok": False, "erreur": str(erreur)},
+                          ensure_ascii=False)
+
+
 def depuis_svg(texte: str) -> str:
     """Les formes d'un SVG : ``{"formes": [...], "avertissements": [...]}``
     ou ``{"erreur": …}``."""

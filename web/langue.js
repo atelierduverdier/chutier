@@ -116,6 +116,7 @@ const ANGLAIS = {
   "Brouillon repris": "Draft restored",
   "Aucune pièce à débiter.": "No parts to cut.",
   "Calcul…": "Computing…",
+  "Calcul des contours sur {} cœurs…": "Computing the outlines on {} cores…",
   "Saisie invalide : ": "Invalid input: ",
   "Saisie invalide": "Invalid input",
   "Épingles relâchées : une planche ou une pièce a changé.": "Pins released: a board or a part has changed.",

@@ -167,12 +167,90 @@ function appeler(fn, ...args) {
   });
 }
 
+// -- les workers auxiliaires ----------------------------------------------------------
+//
+// Le navigateur n'a pas de processus : Python y tourne sur un seul cœur.
+// Mais l'essentiel du temps d'une imbrication part dans les no-fit
+// polygons, indépendants les uns des autres — on en confie donc une
+// tranche à chacun de quelques Web Workers de plus, qui rendent leurs
+// géométries au principal. Ils ne naissent qu'au premier calcul qui en a
+// besoin (chacun recharge Pyodide, une quinzaine de secondes la première
+// fois — depuis le cache ensuite) et vivent jusqu'à la fin de la séance.
+
+const NB_AUXILIAIRES = Math.max(0, Math.min((navigator.hardwareConcurrency || 2) - 1, 3));
+// En dessous, la mise en route coûte plus que le calcul qu'elle abrège.
+const SEUIL_NFP = 40;
+const auxiliaires = [];
+
+function naitreAuxiliaire() {
+  const aux = { w: new Worker(new URL("./worker.js", import.meta.url)), attentes: new Map(), compteur: 0, pret: null };
+  aux.pret = new Promise((resolve, rejeter) => {
+    aux.w.onmessage = (e) => {
+      const m = e.data;
+      if (m.pret) { resolve(aux); return; }
+      if (m.echec) { rejeter(new Error(m.echec)); return; }
+      if (m.etat) return;
+      const a = aux.attentes.get(m.id);
+      if (!a) return;
+      aux.attentes.delete(m.id);
+      m.ok ? a.resolve(m.valeur) : a.reject(new Error(m.erreur));
+    };
+  });
+  return aux;
+}
+
+function appelerAux(aux, fn, ...args) {
+  return new Promise((resolve, reject) => {
+    const id = ++aux.compteur;
+    aux.attentes.set(id, { resolve, reject });
+    aux.w.postMessage({ id, fn, args });
+  });
+}
+
+/**
+ * Précalcule les no-fit polygons à plusieurs, et les range dans le worker
+ * principal. Sans effet si le calcul n'imbrique rien, s'il est trop petit
+ * pour valoir la peine, ou si le navigateur n'a qu'un cœur — et sans
+ * conséquence s'il échoue : le calcul refera le travail lui-même.
+ */
+async function precalculerNfp(entree) {
+  if (!NB_AUXILIAIRES) return;
+  try {
+    const combien = JSON.parse(await appeler("taches_nfp", entree));
+    // Ce que le worker principal a DÉJÀ en cache ne se recalcule pas : le
+    // refaire à plusieurs prenait deux fois plus de temps que de ne rien
+    // faire (mesuré le 04/09/2026 : 3,7 s contre 2,0 s au deuxième calcul).
+    if (!combien.ok || combien.manquants.length < SEUIL_NFP) return;
+    while (auxiliaires.length < NB_AUXILIAIRES) auxiliaires.push(naitreAuxiliaire());
+    const prets = await Promise.all(auxiliaires.map(a => a.pret));
+    const parts = prets.length + 1;
+    $("#etat").textContent = t`Calcul des contours sur ${parts} cœurs…`;
+    const tranche = (i) => JSON.stringify(combien.manquants.filter((_, k) => k % parts === i));
+    const tranches = await Promise.all([
+      appeler("calculer_nfp", entree, tranche(0)),
+      ...prets.map((a, i) => appelerAux(a, "calculer_nfp", entree, tranche(i + 1))),
+    ]);
+    const faits = [];
+    for (const brut of tranches) {
+      const r = JSON.parse(brut);
+      if (!r.ok) return;              // on laisse le calcul tout refaire
+      faits.push(...r.faits);
+    }
+    await appeler("recevoir_nfp", entree, JSON.stringify(faits));
+  } catch (_) {
+    // Un worker de trop qui ne démarre pas ne doit pas empêcher de
+    // calculer : le principal sait très bien faire tout le travail.
+  }
+}
+
 // Interrompre : un worker qui calcule ne s'écoute pas. On le tue et on en
 // relance un — Python se recharge depuis le cache, deux secondes — et
 // les appels en attente reçoivent leur refus.
 function interrompre() {
   if (!worker) return;
   worker.terminate();
+  for (const aux of auxiliaires) { aux.w.terminate(); for (const a of aux.attentes.values()) a.reject(new Error("interrompu")); }
+  auxiliaires.length = 0;
   for (const a of attentes.values()) a.reject(new Error("interrompu"));
   attentes.clear();
   pythonPret = false;
@@ -373,7 +451,10 @@ async function calculer() {
   $("#b-calculer").disabled = true;
   $("#b-interrompre").hidden = false;
   try {
-    const sortie = JSON.parse(await appeler("calculer", JSON.stringify({ pieces, stock: etat.stock.filter(s => (s.reference || "").trim()), parametres: { ...etat.parametres, processus: 1 }, epingles: etat.epingles })));
+    const entree = JSON.stringify({ pieces, stock: etat.stock.filter(s => (s.reference || "").trim()), parametres: { ...etat.parametres, processus: 1 }, epingles: etat.epingles });
+    await precalculerNfp(entree);
+    $("#etat").textContent = t("Calcul…");
+    const sortie = JSON.parse(await appeler("calculer", entree));
     if (!sortie.ok) { alerter(t("Saisie invalide : ") + sortie.erreur); $("#etat").textContent = t("Saisie invalide"); return; }
     if (sortie.epingles_relachees) { etat.epingles = []; $("#etat").textContent = t("Épingles relâchées : une planche ou une pièce a changé."); }
     else $("#etat").textContent = t("Plan à jour");
