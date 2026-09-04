@@ -50,6 +50,7 @@ APP = QApplication.instance() or QApplication([])
 
 import apparence  # noqa: E402
 import interface  # noqa: E402
+interface.SYNCHRONE = True      # pas de fil ni de boîte de progression ici
 import csv_io  # noqa: E402
 import optimiseur as opt  # noqa: E402
 import projet_io  # noqa: E402
@@ -83,6 +84,11 @@ def _dialogue_repond(chemin):
 
 def _fenetre():
     f = interface.FenetrePrincipale()
+    # Le calcul d'accueil est différé (QTimer.singleShot) : on le laisse
+    # tirer TOUT DE SUITE, sinon il tire au milieu d'un autre test, sur une
+    # saisie que ce test a pu rendre invalide — et ouvre une boîte modale
+    # que personne ne fermera hors écran.
+    APP.processEvents()
     f._calculer_si_pieces()     # un atelier garni ouvre sans pièces
     return f
 
@@ -550,6 +556,63 @@ class Contours(unittest.TestCase):
         fichiers = sorted(n for n in os.listdir(_JETABLE)
                           if n.startswith("decoupe"))
         self.assertEqual(len(fichiers), len(f.vue.debits_affiches()))
+
+
+class AnnulerRefaire(unittest.TestCase):
+
+    def test_annuler_rend_la_saisie_d_avant(self):
+        f = _fenetre()
+        avant = f.table_pieces.pieces()
+        f.table_pieces.item(0, 1).setText("1700")
+        f._consigner()                         # ce que la minuterie ferait
+        self.assertEqual(f.table_pieces.pieces()[0].longueur, 1700)
+        f._annuler()
+        self.assertEqual(f.table_pieces.pieces(), avant)
+        f._refaire()
+        self.assertEqual(f.table_pieces.pieces()[0].longueur, 1700)
+
+    def test_annuler_restaure_meme_un_nombre_illisible(self):
+        f = _fenetre()
+        f.table_pieces.item(0, 1).setText("douze")
+        f._consigner()
+        f.table_pieces.item(0, 1).setText("1200")
+        f._consigner()
+        f._annuler()
+        self.assertEqual(f.table_pieces.texte(0, 1), "douze")
+        f.table_pieces.item(0, 1).setText("1750")      # ne rien laisser d'invalide
+
+    def test_annuler_une_suppression_de_ligne(self):
+        f = _fenetre()
+        n = len(f.table_pieces.pieces())
+        f.table_pieces.selectRow(0)
+        f.table_pieces.supprimer_selection()
+        f._consigner()
+        self.assertEqual(len(f.table_pieces.pieces()), n - 1)
+        f._annuler()
+        self.assertEqual(len(f.table_pieces.pieces()), n)
+
+    def test_rien_a_annuler_au_depart(self):
+        f = _fenetre()
+        f._annuler()                           # ne lève pas, ne change rien
+        self.assertEqual(len(f.table_pieces.pieces()), 4)
+
+
+class Interruption(unittest.TestCase):
+
+    def test_un_calcul_interrompu_garde_le_plan_precedent(self):
+        f = _fenetre()
+        avant = f._resultat
+        opt.ANNULATION.set()
+        try:
+            resultat, plainte, _ = interface._Calcul.calculer(
+                f.table_pieces.pieces(), f.table_stock.stock(),
+                opt.Parametres(), [])
+        finally:
+            opt.ANNULATION.clear()
+        self.assertIsNone(resultat)
+        self.assertEqual(plainte, "annulé")
+        f._fin_de_calcul(resultat, plainte, None)
+        self.assertIs(f._resultat, avant)
 
 
 class ExempleFormes(unittest.TestCase):

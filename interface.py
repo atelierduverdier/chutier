@@ -18,7 +18,9 @@ import os
 import sys
 from xml.etree.ElementTree import ParseError as ET_ParseError
 
-from PySide6.QtCore import QEvent, QRectF, QSettings, Qt, QTimer
+from PySide6.QtCore import (
+    QEvent, QRectF, QSettings, Qt, QThread, QTimer, Signal,
+)
 from PySide6.QtGui import (
     QAction, QFont, QIcon, QKeySequence, QPageLayout, QPainter,
 )
@@ -27,8 +29,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
-    QToolButton, QVBoxLayout, QWidget,
+    QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
+    QSplitter, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 import apparence
@@ -45,13 +47,50 @@ from stock_atelier import (  # noqa: F401 — les tests les prennent ici
 )
 from tables_saisie import ErreurSaisie
 
-TITRE = "Chutier — feuille de débit"
+TITRE = "Chutier %s — feuille de débit" % opt.VERSION
+# Les tests calculent dans le fil principal, sans boîte de progression :
+# une fenêtre hors écran n'a personne pour cliquer « Interrompre ».
+SYNCHRONE = False
 # Chemin absolu : le lanceur .desktop fixe le dossier courant, mais rien
 # d'autre ne le garantit (double-clic depuis un autre dossier, etc.).
 ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
 PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
+
+
+class _Calcul(QThread):
+    """Le calcul dans un fil : la fenêtre reste vive, et « Interrompre »
+    a quelqu'un pour l'entendre."""
+
+    fini = Signal(object, object, object)     # (resultat, plainte, relachees)
+
+    def __init__(self, pieces, stock, parametres, epingles):
+        super().__init__()
+        self._args = (pieces, stock, parametres, list(epingles))
+
+    @staticmethod
+    def calculer(pieces, stock, parametres, epingles):
+        """(resultat, plainte, épingles relâchées) — sans Qt, pour que le
+        mode synchrone et le fil fassent exactement la même chose."""
+        relachees = None
+        try:
+            try:
+                resultat = opt.optimiser(pieces, stock, parametres,
+                                         epingles=epingles)
+            except ValueError as erreur:
+                if not epingles or not str(erreur).startswith("épingle"):
+                    raise
+                relachees = str(erreur)
+                resultat = opt.optimiser(pieces, stock, parametres)
+        except opt.Annulation:
+            return None, "annulé", relachees
+        except ValueError as erreur:
+            return None, str(erreur), relachees
+        return resultat, None, relachees
+
+    def run(self):
+        self.fini.emit(*self.calculer(*self._args))
 
 
 class FenetrePrincipale(QMainWindow):
@@ -62,6 +101,11 @@ class FenetrePrincipale(QMainWindow):
         self.resize(1500, 900)
         self._resultat = None
         self._epingles = []        # Debit repris tels quels au calcul
+        self._historique = []      # instantanés passés, pour Annuler
+        self._futur = []           # instantanés défaits, pour Refaire
+        self._instantane = None    # l'état courant, déjà pris
+        self._restauration = False
+        self._calcul = None        # le fil de calcul en cours
         self._chemin = None
         self._modifie = False
         self._a_jour = False
@@ -86,6 +130,11 @@ class FenetrePrincipale(QMainWindow):
         # réglages d'usine de l'exemple d'accueil.
         self._appliquer_parametres(self._reglages_memorises())
         self._chargement = False
+        self._instantane = self._prendre_instantane()
+        self._minuterie_historique = QTimer(self)
+        self._minuterie_historique.setSingleShot(True)
+        self._minuterie_historique.setInterval(500)
+        self._minuterie_historique.timeout.connect(self._consigner)
         self._restaurer_geometrie()
         QTimer.singleShot(0, self._calculer_si_pieces)
 
@@ -191,6 +240,15 @@ class FenetrePrincipale(QMainWindow):
         self.a_quitter = self._acte("&Quitter", self.close, "Ctrl+Q",
                                     ("application-exit",))
 
+        self.a_annuler = self._acte("&Annuler", self._annuler, "Ctrl+Z",
+                                    ("edit-undo",),
+                                    "Revenir à la saisie d'avant la dernière"
+                                    " modification")
+        self.a_refaire = self._acte("&Refaire", self._refaire, "Ctrl+Shift+Z",
+                                    ("edit-redo",))
+        self.a_interrompre = self._acte(
+            "&Interrompre le calcul", self._interrompre, "Escape", None,
+            "Arrêter le calcul en cours ; le plan précédent reste affiché")
         self.a_ligne = self._acte("Ajouter une &ligne", self._ajouter_ligne,
                                   "Ctrl+Return", ("list-add",))
         self.a_dupliquer = self._acte(
@@ -261,6 +319,9 @@ class FenetrePrincipale(QMainWindow):
         fichier.addAction(self.a_quitter)
 
         edition = menu.addMenu("&Édition")
+        edition.addAction(self.a_annuler)
+        edition.addAction(self.a_refaire)
+        edition.addSeparator()
         for action in (self.a_ligne, self.a_dupliquer, self.a_supprimer):
             edition.addAction(action)
         edition.addSeparator()
@@ -270,6 +331,7 @@ class FenetrePrincipale(QMainWindow):
 
         debit = menu.addMenu("&Débit")
         debit.addAction(self.a_calculer)
+        debit.addAction(self.a_interrompre)
         debit.addAction(self.a_desepingler)
         debit.addSeparator()
         debit.addAction(self.a_saisie)
@@ -737,6 +799,58 @@ class FenetrePrincipale(QMainWindow):
         self._modifie = True
         self._a_jour = False
         self._rafraichir_etat()
+        if not self._restauration:
+            # Une frappe = un pas d'historique, mais pas une lettre : la
+            # minuterie regroupe ce qui se tape d'une traite.
+            self._minuterie_historique.start()
+
+    # -- annuler / refaire --------------------------------------------------------
+
+    def _prendre_instantane(self):
+        return (self.table_pieces.instantane(), self.table_stock.instantane(),
+                list(self._epingles))
+
+    def _consigner(self):
+        """Range l'état d'AVANT dans l'historique, et retient le nouveau."""
+        nouveau = self._prendre_instantane()
+        if nouveau == self._instantane:
+            return
+        self._historique.append(self._instantane)
+        del self._historique[:-100]
+        self._futur.clear()
+        self._instantane = nouveau
+
+    def _rejouer(self, instantane):
+        pieces, stock, epingles = instantane
+        self._restauration = True
+        self._chargement = True
+        try:
+            self.table_pieces.restaurer(pieces)
+            self.table_stock.restaurer(stock)
+            self._epingles = list(epingles)
+        finally:
+            self._chargement = False
+            self._restauration = False
+        self._instantane = instantane
+        self._modifie = True
+        self._a_jour = False
+        self._rafraichir_etat()
+
+    def _annuler(self):
+        self._minuterie_historique.stop()
+        self._consigner()
+        if not self._historique:
+            self.statusBar().showMessage("Rien à annuler", 3000)
+            return
+        self._futur.append(self._instantane)
+        self._rejouer(self._historique.pop())
+
+    def _refaire(self):
+        if not self._futur:
+            self.statusBar().showMessage("Rien à refaire", 3000)
+            return
+        self._historique.append(self._instantane)
+        self._rejouer(self._futur.pop())
 
     def _rafraichir_etat(self):
         self.resume_pieces.setText(self.table_pieces.resume())
@@ -894,38 +1008,61 @@ class FenetrePrincipale(QMainWindow):
             self._rafraichir_etat()
 
     def _calculer(self):
-        # Un débit de 150 pièces demande un tiers de seconde, mais rien ne
-        # borne une saisie : le sablier dit au moins que la fenêtre n'est
-        # pas figée pour rien.
-        resultat, plainte = None, None
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        """Lance le calcul : dans un fil, avec une boîte « Interrompre »,
+        sauf en mode synchrone (les tests). Une imbrication à huit
+        orientations sur trente pièces peut durer une minute, et un
+        sablier sans issue n'est pas une réponse."""
+        if self._calcul is not None:
+            return                          # déjà en cours
         try:
             pieces = self.table_pieces.pieces()
             stock = self.table_stock.stock()
             if not pieces:
                 raise ErreurSaisie("aucune pièce à débiter")
             parametres = self._parametres_actuels()
-            try:
-                resultat = opt.optimiser(pieces, stock, parametres,
-                                         epingles=self._epingles)
-            except ValueError as erreur:
-                if not self._epingles or not str(erreur).startswith("épingle"):
-                    raise
-                # Une épingle qui ne colle plus (pièce ou planche changée)
-                # ne doit pas bloquer le calcul : on la relâche, on le
-                # dit, et on recalcule libre.
-                self.statusBar().showMessage(
-                    "Épingles relâchées — %s" % erreur, 10000)
-                self._epingles = []
-                resultat = opt.optimiser(pieces, stock, parametres)
         except (ErreurSaisie, ValueError) as erreur:
-            plainte = str(erreur)
-        finally:
-            # Le curseur revient AVANT la boîte de message : sinon elle
-            # s'affiche sous un sablier, à attendre un clic.
+            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            return
+        opt.ANNULATION.clear()
+        if SYNCHRONE:
+            self._fin_de_calcul(*_Calcul.calculer(pieces, stock, parametres,
+                                                  self._epingles))
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self._calcul = _Calcul(pieces, stock, parametres, self._epingles)
+        self._calcul.fini.connect(self._fin_de_calcul)
+        self._progression = QProgressDialog(
+            "Calcul du débit…", "Interrompre", 0, 0, self)
+        self._progression.setWindowTitle("Chutier")
+        self._progression.setMinimumDuration(400)
+        self._progression.canceled.connect(self._interrompre)
+        self.etat_calcul.setText("Calcul en cours… (Échap pour interrompre)")
+        self._calcul.start()
+
+    def _interrompre(self):
+        if self._calcul is not None:
+            opt.ANNULATION.set()
+
+    def _fin_de_calcul(self, resultat, plainte, relachees):
+        if self._calcul is not None:
+            self._calcul.wait()
+            self._calcul = None
+            self._progression.close()
             QApplication.restoreOverrideCursor()
+        if relachees:
+            # Une épingle qui ne colle plus (pièce ou planche changée)
+            # ne doit pas bloquer le calcul : on la relâche, on le dit.
+            self._epingles = []
+            self.statusBar().showMessage(
+                "Épingles relâchées — %s" % relachees, 10000)
+        if plainte == "annulé":
+            self.statusBar().showMessage(
+                "Calcul interrompu — le plan précédent reste affiché", 6000)
+            self._rafraichir_etat()
+            return
         if plainte is not None:
             QMessageBox.warning(self, "Saisie invalide", plainte)
+            self._rafraichir_etat()
             return
         self._resultat = resultat
         self._a_jour = True

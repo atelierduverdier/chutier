@@ -44,9 +44,19 @@ from __future__ import annotations
 
 import dataclasses
 import random
+import threading
 from dataclasses import dataclass, field
 
-VERSION = "0.1.0"
+VERSION = "1.0.0"
+
+# Interrompre un calcul : l'interface arme cet événement, les boucles de
+# stratégies le consultent entre deux essais et lèvent Annulation. Le
+# résultat précédent reste affiché, rien n'est à moitié fait.
+ANNULATION = threading.Event()
+
+
+class Annulation(Exception):
+    """Le calcul a été interrompu à la demande de l'utilisateur."""
 
 EPS = 1e-6
 
@@ -1024,6 +1034,8 @@ def _ameliorer(sol: _Solution, stock_unites: list, params: Parametres,
     par ``passes_amelioration``."""
     score = _score_solution(sol, params)
     for _ in range(params.passes_amelioration):
+        if ANNULATION.is_set():
+            raise Annulation()
         ameliore = False
         candidates = sorted(
             ((o.planche, o.exemplaire) for o in sol.ouvertes),
@@ -1457,6 +1469,8 @@ def optimiser(pieces: list, stock: list,
             continue
         meilleure = None
         for strat in _strategies(params):
+            if ANNULATION.is_set():
+                raise Annulation()
             sol = _resoudre(unites, stock_unites, params, strat)
             score = _score_solution(sol, params)
             if meilleure is None or score < meilleure[0]:

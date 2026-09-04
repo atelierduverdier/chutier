@@ -664,6 +664,17 @@ def _contexte():
     return None
 
 
+def _attendre(pool, asynchrone):
+    """Attend le résultat d'un pool en surveillant la demande
+    d'interruption : un pool.map bloquant ne la verrait qu'à la fin."""
+    while not asynchrone.ready():
+        asynchrone.wait(0.1)
+        if opt.ANNULATION.is_set():
+            pool.terminate()
+            raise opt.Annulation()
+    return asynchrone.get()
+
+
 def _nb_processus(params, nb_taches):
     voulu = params.processus if params.processus > 0 else (os.cpu_count() or 1)
     return max(1, min(voulu, nb_taches))
@@ -690,16 +701,20 @@ def imbriquer(unites: list, stock_unites: list,
             if taches_nfp:
                 with contexte.Pool(min(nb, len(taches_nfp)), _recevoir_caches,
                                    _emballer_caches()) as pool:
-                    _ranger_nfp(pool.map(_tache_nfp, taches_nfp), ecart)
+                    _ranger_nfp(_attendre(pool, pool.map_async(_tache_nfp, taches_nfp)), ecart)
                 taches_nfp = []
             with contexte.Pool(min(nb, len(taches)), _recevoir_caches,
                                _emballer_caches()) as pool:
-                resultats = pool.map(_tache, taches)
+                resultats = _attendre(pool, pool.map_async(_tache, taches))
         except (OSError, RuntimeError, ValueError, ImportError):
             resultats = None            # on repasse en séquentiel
     if resultats is None:
         if taches_nfp:
             _ranger_nfp(map(_tache_nfp, taches_nfp), ecart)
-        resultats = [_tache(t) for t in taches]
+        resultats = []
+        for t in taches:
+            if opt.ANNULATION.is_set():
+                raise opt.Annulation()
+            resultats.append(_tache(t))
     meilleure = min(range(len(resultats)), key=lambda i: (resultats[i][0], i))
     return resultats[meilleure][1]

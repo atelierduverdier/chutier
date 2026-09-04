@@ -280,6 +280,38 @@ class TableEditable(QTableWidget):
         else:
             entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
+    # -- annuler / refaire ------------------------------------------------
+
+    def instantane(self) -> list:
+        """La table telle qu'elle est, cellule par cellule, texte ou donnée
+        — y compris ce qui n'est pas (encore) un nombre valide. C'est ce
+        qu'Annuler restaure : la saisie, pas une interprétation."""
+        lignes = []
+        for l in range(self.rowCount()):
+            valeurs = {}
+            for i, colonne in enumerate(self.COLONNES):
+                item = self.item(l, i)
+                if item is None:
+                    continue
+                if colonne.genre in (BOOLEEN, CHOIX):
+                    valeurs[colonne.cle] = item.data(ROLE_VALEUR)
+                elif colonne.genre == CONTOUR:
+                    valeurs[colonne.cle] = item.data(ROLE_VALEUR)
+                    valeurs["trous"] = item.data(ROLE_TROUS)
+                else:
+                    valeurs[colonne.cle] = item.text()
+            lignes.append(valeurs)
+        return lignes
+
+    def restaurer(self, instantane: list):
+        precedent = self.blockSignals(True)
+        self.setRowCount(0)
+        for valeurs in instantane:
+            ligne = self.rowCount()
+            self.insertRow(ligne)
+            self.poser_ligne(ligne, valeurs)
+        self.blockSignals(precedent)
+
     # -- lecture ---------------------------------------------------------
 
     def lignes_selectionnees(self) -> list:

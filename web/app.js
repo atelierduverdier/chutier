@@ -90,21 +90,25 @@ const pct = (v) => (100 * v).toFixed(1).replace(".", ",");
 
 // -- le worker -----------------------------------------------------------------
 
-const worker = new Worker(new URL("./worker.js", import.meta.url));
+let worker = null;
 const attentes = new Map();
 let compteur = 0;
 let pythonPret = false;
+let demarre = false;
 
-worker.onmessage = (e) => {
-  const m = e.data;
-  if (m.etat) { $("#etat").textContent = m.etat; return; }
-  if (m.echec) { $("#etat").textContent = "Python n'a pas pu se charger : " + m.echec; $("#plan-vide").textContent = "Python n'a pas pu se charger : " + m.echec; return; }
-  if (m.pret) { pythonPret = true; $("#etat").textContent = "Prêt"; demarrer(); return; }
-  const a = attentes.get(m.id);
-  if (!a) return;
-  attentes.delete(m.id);
-  m.ok ? a.resolve(m.valeur) : a.reject(new Error(m.erreur));
-};
+function lancerWorker() {
+  worker = new Worker(new URL("./worker.js", import.meta.url));
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.etat) { $("#etat").textContent = m.etat; return; }
+    if (m.echec) { $("#etat").textContent = "Python n'a pas pu se charger : " + m.echec; const v = $("#plan-vide"); if (v) v.textContent = "Python n'a pas pu se charger : " + m.echec; return; }
+    if (m.pret) { pythonPret = true; $("#etat").textContent = "Prêt"; if (!demarre) { demarre = true; demarrer(); } return; }
+    const a = attentes.get(m.id);
+    if (!a) return;
+    attentes.delete(m.id);
+    m.ok ? a.resolve(m.valeur) : a.reject(new Error(m.erreur));
+  };
+}
 
 function appeler(fn, ...args) {
   return new Promise((resolve, reject) => {
@@ -113,6 +117,54 @@ function appeler(fn, ...args) {
     worker.postMessage({ id, fn, args });
   });
 }
+
+// Interrompre : un worker qui calcule ne s'écoute pas. On le tue et on en
+// relance un — Python se recharge depuis le cache, deux secondes — et
+// les appels en attente reçoivent leur refus.
+function interrompre() {
+  if (!worker) return;
+  worker.terminate();
+  for (const a of attentes.values()) a.reject(new Error("interrompu"));
+  attentes.clear();
+  pythonPret = false;
+  $("#etat").textContent = "Calcul interrompu — Python se recharge…";
+  lancerWorker();
+}
+lancerWorker();
+
+// -- annuler / refaire ------------------------------------------------------------
+
+const historique = { passe: [], futur: [], courant: null, minuterie: null };
+const instantane = () => JSON.stringify({ pieces: etat.pieces, stock: etat.stock, epingles: etat.epingles });
+function consigner() {
+  const nouveau = instantane();
+  if (nouveau === historique.courant) return;
+  historique.passe.push(historique.courant); historique.passe.splice(0, historique.passe.length - 100);
+  historique.futur = []; historique.courant = nouveau;
+}
+function marquerChangement() {
+  // Une frappe = un pas, mais pas une lettre : la minuterie regroupe ce qui se tape d'une traite.
+  clearTimeout(historique.minuterie);
+  historique.minuterie = setTimeout(consigner, 500);
+  brouillonPlusTard();
+}
+function rejouer(texte) {
+  const d = JSON.parse(texte);
+  etat.pieces = d.pieces; etat.stock = d.stock; etat.epingles = d.epingles;
+  historique.courant = texte; etat.aJour = false;
+  rendreTable("pieces"); rendreTable("stock"); rafraichirEtat(); enregistrerAtelier(); brouillonPlusTard();
+}
+function annuler() { clearTimeout(historique.minuterie); consigner(); if (!historique.passe.length) { $("#etat").textContent = "Rien à annuler"; return; } historique.futur.push(historique.courant); rejouer(historique.passe.pop()); }
+function refaire() { if (!historique.futur.length) { $("#etat").textContent = "Rien à refaire"; return; } historique.passe.push(historique.courant); rejouer(historique.futur.pop()); }
+
+// -- brouillon : le projet en cours survit à un rechargement ----------------------------
+
+let minuterieBrouillon = null;
+function brouillonPlusTard() { clearTimeout(minuterieBrouillon); minuterieBrouillon = setTimeout(enregistrerBrouillon, 800); }
+function enregistrerBrouillon() {
+  stockage.ecrire("brouillon", { pieces: etat.pieces, stock: etat.stock.filter(s => !s.atelier), parametres: etat.parametres, epingles: etat.epingles, nomProjet: etat.nomProjet, date: Date.now() });
+}
+function brouillon() { return stockage.lire("brouillon", null); }
 
 // -- stockage local : atelier, réglages, préférences ----------------------------
 
@@ -160,7 +212,7 @@ function utilisee(c, l) {
 
 function cellule(nom, ligne, c, i) {
   const td = el("td", { class: c.genre === "nombre" || c.genre === "entier" ? "num" : c.genre === "bool" ? "bool" : c.genre });
-  const changer = () => { etat.aJour = false; rafraichirEtat(); };
+  const changer = () => { etat.aJour = false; rafraichirEtat(); marquerChangement(); };
   if (c.genre === "bool") {
     td.append(el("input", { type: "checkbox", title: c.info, onchange: (e) => { ligne[c.cle] = e.target.checked; changer(); if (c.cle === "atelier" || nom === "stock") enregistrerAtelier(); } }));
     td.firstChild.checked = Boolean(ligne[c.cle]);
@@ -216,13 +268,13 @@ function coller(nom, i, c, e) {
     });
   });
   etat.aJour = false;
-  rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier();
+  rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement();
 }
 
 function lignesChoisies(nom) { return [...$("#t-" + nom).querySelectorAll("tr.choisie")].map(tr => Number(tr.dataset.ligne)); }
-function ajouterLigne(nom) { etat[nom].push({ ...DEFAUTS_LIGNE[nom] }); etat.aJour = false; rendreTable(nom); rafraichirEtat(); const dern = $("#t-" + nom).querySelector("tbody tr:last-child input[type=text]"); dern && dern.focus(); }
-function dupliquerLignes(nom) { const choisies = lignesChoisies(nom); if (!choisies.length) return; const copies = choisies.map(i => JSON.parse(JSON.stringify(etat[nom][i]))); etat[nom].splice(choisies[choisies.length - 1] + 1, 0, ...copies); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); }
-function supprimerLignes(nom, lignes = lignesChoisies(nom)) { for (const i of [...lignes].sort((a, b) => b - a)) etat[nom].splice(i, 1); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); }
+function ajouterLigne(nom) { etat[nom].push({ ...DEFAUTS_LIGNE[nom] }); etat.aJour = false; rendreTable(nom); rafraichirEtat(); marquerChangement(); const dern = $("#t-" + nom).querySelector("tbody tr:last-child input[type=text]"); dern && dern.focus(); }
+function dupliquerLignes(nom) { const choisies = lignesChoisies(nom); if (!choisies.length) return; const copies = choisies.map(i => JSON.parse(JSON.stringify(etat[nom][i]))); etat[nom].splice(choisies[choisies.length - 1] + 1, 0, ...copies); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement(); }
+function supprimerLignes(nom, lignes = lignesChoisies(nom)) { for (const i of [...lignes].sort((a, b) => b - a)) etat[nom].splice(i, 1); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement(); }
 
 function rafraichirResumes() {
   const pieces = etat.pieces.filter(p => (p.reference || "").trim());
@@ -257,7 +309,7 @@ function rendreReglages() {
     }
   }
 }
-function changerReglage() { etat.aJour = false; stockage.ecrire("parametres", etat.parametres); rafraichirEtat(); }
+function changerReglage() { etat.aJour = false; stockage.ecrire("parametres", etat.parametres); rafraichirEtat(); brouillonPlusTard(); }
 
 // -- calcul ---------------------------------------------------------------------------
 
@@ -267,6 +319,7 @@ async function calculer() {
   if (!pieces.length) { alerter("Aucune pièce à débiter."); return; }
   $("#etat").textContent = "Calcul…";
   $("#b-calculer").disabled = true;
+  $("#b-interrompre").hidden = false;
   try {
     const sortie = JSON.parse(await appeler("calculer", JSON.stringify({ pieces, stock: etat.stock.filter(s => (s.reference || "").trim()), parametres: { ...etat.parametres, processus: 1 }, epingles: etat.epingles })));
     if (!sortie.ok) { alerter("Saisie invalide : " + sortie.erreur); $("#etat").textContent = "Saisie invalide"; return; }
@@ -276,10 +329,11 @@ async function calculer() {
     etat.aJour = true;
     afficherResultat();
   } catch (erreur) {
-    alerter("Le calcul a échoué : " + erreur.message);
-    $("#etat").textContent = "Échec du calcul";
+    if (erreur.message === "interrompu") { $("#etat").textContent = "Calcul interrompu — le plan précédent reste affiché"; }
+    else { alerter("Le calcul a échoué : " + erreur.message); $("#etat").textContent = "Échec du calcul"; }
   } finally {
     $("#b-calculer").disabled = false;
+    $("#b-interrompre").hidden = true;
   }
 }
 
@@ -482,7 +536,7 @@ async function ouvrirProjet() {
   etat.parametres = { ...etat.parametres, ...d.parametres };
   etat.epingles = d.epingles || [];
   etat.nomProjet = f.nom.replace(/\.json$/i, "");
-  rendreTout(); calculer();
+  rendreTout(); calculer(); marquerChangement();
 }
 async function enregistrerProjet() {
   const texte = await appeler("vers_projet", JSON.stringify({ pieces: etat.pieces, stock: etat.stock.filter(s => !s.atelier), parametres: etat.parametres, epingles: etat.epingles }));
@@ -573,7 +627,7 @@ function nouveau() {
   etat.stock = atelier();
   if (!etat.stock.length) etat.stock.push({ ...DEFAUTS_LIGNE.stock });
   etat.epingles = []; etat.resultat = null; etat.aJour = false; etat.nomProjet = "";
-  rendreTout(); dessinerPlan(); $("#tuiles").replaceChildren(); rendreImpression();
+  rendreTout(); dessinerPlan(); $("#tuiles").replaceChildren(); rendreImpression(); marquerChangement();
 }
 
 async function chargerExemple(fn = "exemple") {
@@ -582,7 +636,7 @@ async function chargerExemple(fn = "exemple") {
   etat.stock = [...d.stock.map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
   etat.parametres = { ...etat.parametres, ...d.parametres };
   etat.epingles = []; etat.nomProjet = "";
-  rendreTout(); calculer();
+  rendreTout(); calculer(); marquerChangement();
 }
 
 async function demarrer() {
@@ -591,7 +645,17 @@ async function demarrer() {
   etat.avancees = stockage.lire("avancees", false);
   etat.traits = stockage.lire("traits", false);
   $("#c-avancees").checked = etat.avancees; $("#c-traits").checked = etat.traits;
-  if (atelier().length) nouveau(); else await chargerExemple();
+  const b = brouillon();
+  if (b && (b.pieces || []).some(p => (p.reference || "").trim())) {
+    // Le projet en cours d'avant le rechargement : c'est lui qu'on reprend.
+    etat.pieces = b.pieces.map(p => ({ ...DEFAUTS_LIGNE.pieces, ...p }));
+    etat.stock = [...(b.stock || []).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s })), ...atelier()];
+    etat.parametres = { ...etat.parametres, ...(b.parametres || {}) };
+    etat.epingles = b.epingles || []; etat.nomProjet = b.nomProjet || "";
+    rendreTout(); historique.courant = instantane(); calculer();
+    $("#etat").textContent = "Brouillon repris" + (b.nomProjet ? " : " + b.nomProjet : "");
+  } else if (atelier().length) nouveau(); else await chargerExemple();
+  historique.courant = instantane();
 }
 
 function aide() {
@@ -613,6 +677,9 @@ function brancher() {
   $("#b-ouvrir").onclick = ouvrirProjet;
   $("#b-enregistrer").onclick = enregistrerProjet;
   $("#b-calculer").onclick = calculer;
+  $("#b-interrompre").onclick = interrompre;
+  $("#b-annuler").onclick = annuler;
+  $("#b-refaire").onclick = refaire;
   $("#b-imprimer").onclick = () => window.print();
   $("#b-importer-csv").onclick = importerCsv;
   $("#b-exporter-csv").onclick = exporterCsv;
@@ -637,7 +704,12 @@ function brancher() {
   $("#plan").addEventListener("click", (e) => { const c = e.target.closest("[data-planche]"); if (c) { etat.planche = Number(c.dataset.planche); dessinerPlan(); } });
   document.addEventListener("click", (e) => { if (!e.target.closest("#menu-contextuel")) fermerMenu(); });
   for (const b of document.querySelectorAll("[data-onglet]")) b.onclick = () => { for (const x of document.querySelectorAll("[data-onglet]")) x.classList.toggle("actif", x === b); for (const o of document.querySelectorAll(".onglet")) o.classList.toggle("actif", o.id === "o-" + b.dataset.onglet); if (b.dataset.onglet === "plan") ajusterZoom(); };
-  document.addEventListener("keydown", (e) => { if (e.key === "F5") { e.preventDefault(); calculer(); } });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "F5") { e.preventDefault(); calculer(); }
+    else if (e.key === "Escape" && !$("#b-interrompre").hidden) interrompre();
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey && e.target.tagName !== "INPUT") { e.preventDefault(); annuler(); }
+    else if ((e.ctrlKey || e.metaKey) && ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y")) { e.preventDefault(); refaire(); }
+  });
   window.addEventListener("resize", ajusterZoom);
   window.addEventListener("beforeprint", () => { etat.zoom = 1; ajusterZoom(); });
   $("#menu-contextuel").hidden = true;
@@ -652,4 +724,4 @@ brancher();
 rendreReglages();
 // Point d'accès pour les essais automatisés (et la console) : l'état, le
 // calcul, l'ajout de formes — rien de plus que ce que la page fait déjà.
-window.chutier = { etat, calculer, appeler, rendreTout, ajouterFormes: (formes) => { const premier = etat.stock.find(s => (s.reference || "").trim()); etat.pieces = etat.pieces.filter(p => (p.reference || "").trim()); for (const f of formes) etat.pieces.push({ ...DEFAUTS_LIGNE.pieces, reference: f.nom, longueur: f.longueur, largeur: f.largeur, epaisseur: premier ? premier.epaisseur : 18, matiere: premier ? premier.matiere : "", fil: "indifferent", contour: f.contour, trous: f.trous, quantite: f.quantite || 1 }); rendreTable("pieces"); } };
+window.chutier = { etat, calculer, appeler, rendreTout, annuler, refaire, interrompre, enregistrerBrouillon, ajouterFormes: (formes) => { const premier = etat.stock.find(s => (s.reference || "").trim()); etat.pieces = etat.pieces.filter(p => (p.reference || "").trim()); for (const f of formes) etat.pieces.push({ ...DEFAUTS_LIGNE.pieces, reference: f.nom, longueur: f.longueur, largeur: f.largeur, epaisseur: premier ? premier.epaisseur : 18, matiere: premier ? premier.matiere : "", fil: "indifferent", contour: f.contour, trous: f.trous, quantite: f.quantite || 1 }); rendreTable("pieces"); } };
