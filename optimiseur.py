@@ -47,7 +47,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -154,6 +154,52 @@ def _perimetre(points) -> float:
     return sum(((points[(i + 1) % n][0] - points[i][0]) ** 2
                 + (points[(i + 1) % n][1] - points[i][1]) ** 2) ** 0.5
                for i in range(n))
+
+
+def _segments_se_croisent(a, b, c, d) -> bool:
+    """Les segments [a, b] et [c, d] se coupent-ils franchement (en un
+    point intérieur aux deux) ?"""
+    def orient(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    o1, o2 = orient(a, b, c), orient(a, b, d)
+    o3, o4 = orient(c, d, a), orient(c, d, b)
+    return ((o1 > EPS and o2 < -EPS) or (o1 < -EPS and o2 > EPS)) and \
+           ((o3 > EPS and o4 < -EPS) or (o3 < -EPS and o4 > EPS))
+
+
+def _contour_se_croise(points) -> bool:
+    """Un contour dont deux côtés non voisins se coupent — le papillon,
+    le lacet — n'est pas une pièce : on le refuse plutôt que de le
+    laisser réparer en silence."""
+    n = len(points)
+    if n < 4:
+        return False
+    cotes = [(points[i], points[(i + 1) % n]) for i in range(n)]
+    for i in range(n):
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue                      # voisins par le bouclage
+            if _segments_se_croisent(*cotes[i], *cotes[j]):
+                return True
+    return False
+
+
+def _dans_polygone(point, points) -> bool:
+    """Le point est-il dans le polygone (bord compris) ? Lancer de rayon."""
+    x, y = point
+    dedans = False
+    n = len(points)
+    for i in range(n):
+        (x1, y1), (x2, y2) = points[i], points[(i + 1) % n]
+        if abs((x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)) <= EPS * 1e3 \
+                and min(x1, x2) - EPS <= x <= max(x1, x2) + EPS \
+                and min(y1, y2) - EPS <= y <= max(y1, y2) + EPS:
+            return True                       # sur le bord
+        if (y1 > y) != (y2 > y):
+            xc = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < xc:
+                dedans = not dedans
+    return dedans
 
 
 def _aire_polygone(points) -> float:
@@ -278,7 +324,9 @@ class Parametres:
       atteignent ces seuils ; en dessous il part dans les pertes.
     - ``surcote_longueur`` / ``surcote_largeur`` : marge de recoupe
       ajoutée à chaque pièce au débit (les dimensions posées la
-      comprennent, la pièce garde ses cotes nominales).
+      comprennent, la pièce garde ses cotes nominales). Débit à la SCIE
+      seulement : un lot imbriqué à la fraise (dès qu'une pièce y a un
+      contour) sort chaque pièce à sa cote, rectangles compris.
     - ``tolerance_epaisseur`` : marge de mesure sur la règle « la planche
       doit être au moins aussi épaisse que la pièce » (le brut se rabote
       à la cote voulue, jamais l'inverse) ; ne sert qu'à absorber le
@@ -818,71 +866,139 @@ def _intersection(r: _Rect, zone) -> "_Rect | None":
     return _Rect(x0, y0, x1 - x0, y1 - y0)
 
 
-def _autour_en_travers(r: _Rect, d: _Rect, trait: float):
-    """Retire ``d`` de ``r`` en tronçonnant d'abord (deux traits en
+def _bornes_ecartees(r0: float, r1: float, z0: float, z1: float,
+                     trait: float):
+    """Sur un axe, un rectangle libre [r0, r1] et une zone de défaut
+    [z0, z1] : où passer les deux traits qui écartent la zone, et ce qu'il
+    reste de chaque côté. Rend ``(avant, apres)``, chacun ``None`` ou
+    ``(position_du_trait, debut_du_reste, fin_du_reste)``, plus les bornes
+    ``(m0, m1)`` de la bande du milieu (ce qui reste entre les deux traits).
+
+    Le trait de scie tombe TOUJOURS hors de la zone, dans le bon bois : ce
+    qui est déclaré défaut est perdu en entier, jamais rogné d'un trait.
+    Le rectangle n'a pas besoin de recouvrir la zone : s'il ne fait que la
+    border — à moins d'un trait, comme le reste laissé par le trait d'un
+    AUTRE défaut, dont la lame était passée dans celui-ci —, il est rogné
+    d'un trait pour qu'une pièce ne se pose jamais bord à bord avec un
+    nœud (vu à l'audit du 05/09/2026 : deux zones voisines, une pièce à
+    0 mm du défaut et la lame dans le nœud)."""
+    avant = apres = None
+    m0, m1 = r0, r1
+    p = min(z0, r1) - trait
+    if p > r0 + EPS:
+        avant = (p, r0, p)
+        m0 = p + trait
+    p = max(z1, r0)
+    if p + trait < r1 - EPS:
+        apres = (p, p + trait, r1)
+        m1 = p
+    return avant, apres, (m0, m1)
+
+
+def _autour_en_travers(r: _Rect, zone, trait: float):
+    """Retire ``zone`` de ``r`` en tronçonnant d'abord (deux traits en
     travers, de bord à bord), puis en délignant la bande du milieu. Rend
     (rectangles gardés, coupes) — les coupes en ``(sens, position, de,
-    a)``, dans l'ordre où on les passe. Le trait de scie tombe TOUJOURS
-    hors de la zone, dans le bon bois : ce qui est déclaré défaut est
-    perdu en entier, jamais rogné d'un trait."""
+    a)``, dans l'ordre où on les passe."""
+    zx, zy, zw, zh = zone
     rects, coupes = [], []
-    ml, mr = r.x, r.x + r.w
-    if d.x - trait > r.x + EPS:
-        coupes.append((TRONCONNAGE, d.x - trait, r.y, r.y + r.h))
-        rects.append(_Rect(r.x, r.y, d.x - trait - r.x, r.h))
-        ml = d.x
-    if d.x + d.w + trait < r.x + r.w - EPS:
-        coupes.append((TRONCONNAGE, d.x + d.w, r.y, r.y + r.h))
-        rects.append(_Rect(d.x + d.w + trait, r.y,
-                           r.x + r.w - (d.x + d.w + trait), r.h))
-        mr = d.x + d.w
-    if d.y - trait > r.y + EPS:
-        coupes.append((DELIGNAGE, d.y - trait, ml, mr))
-        rects.append(_Rect(ml, r.y, mr - ml, d.y - trait - r.y))
-    if d.y + d.h + trait < r.y + r.h - EPS:
-        coupes.append((DELIGNAGE, d.y + d.h, ml, mr))
-        rects.append(_Rect(ml, d.y + d.h + trait, mr - ml,
-                           r.y + r.h - (d.y + d.h + trait)))
+    avant, apres, (ml, mr) = _bornes_ecartees(r.x, r.x + r.w, zx, zx + zw, trait)
+    for cote in (avant, apres):
+        if cote:
+            p, d0, d1 = cote
+            coupes.append((TRONCONNAGE, p, r.y, r.y + r.h))
+            rects.append(_Rect(d0, r.y, d1 - d0, r.h))
+    if mr - ml <= EPS:
+        return rects, coupes
+    avant, apres, _ = _bornes_ecartees(r.y, r.y + r.h, zy, zy + zh, trait)
+    for cote in (avant, apres):
+        if cote:
+            p, d0, d1 = cote
+            coupes.append((DELIGNAGE, p, ml, mr))
+            rects.append(_Rect(ml, d0, mr - ml, d1 - d0))
     return rects, coupes
 
 
-def _autour_en_long(r: _Rect, d: _Rect, trait: float):
+def _autour_en_long(r: _Rect, zone, trait: float):
     """Même chose en délignant d'abord (deux traits le long, de bord à
     bord), puis en tronçonnant la bande du milieu — l'ordre qui garde des
     brins pleine longueur de part et d'autre d'une fente."""
+    zx, zy, zw, zh = zone
     rects, coupes = [], []
-    mb, mh = r.y, r.y + r.h
-    if d.y - trait > r.y + EPS:
-        coupes.append((DELIGNAGE, d.y - trait, r.x, r.x + r.w))
-        rects.append(_Rect(r.x, r.y, r.w, d.y - trait - r.y))
-        mb = d.y
-    if d.y + d.h + trait < r.y + r.h - EPS:
-        coupes.append((DELIGNAGE, d.y + d.h, r.x, r.x + r.w))
-        rects.append(_Rect(r.x, d.y + d.h + trait, r.w,
-                           r.y + r.h - (d.y + d.h + trait)))
-        mh = d.y + d.h
-    if d.x - trait > r.x + EPS:
-        coupes.append((TRONCONNAGE, d.x - trait, mb, mh))
-        rects.append(_Rect(r.x, mb, d.x - trait - r.x, mh - mb))
-    if d.x + d.w + trait < r.x + r.w - EPS:
-        coupes.append((TRONCONNAGE, d.x + d.w, mb, mh))
-        rects.append(_Rect(d.x + d.w + trait, mb,
-                           r.x + r.w - (d.x + d.w + trait), mh - mb))
+    avant, apres, (mb, mh) = _bornes_ecartees(r.y, r.y + r.h, zy, zy + zh, trait)
+    for cote in (avant, apres):
+        if cote:
+            p, d0, d1 = cote
+            coupes.append((DELIGNAGE, p, r.x, r.x + r.w))
+            rects.append(_Rect(r.x, d0, r.w, d1 - d0))
+    if mh - mb <= EPS:
+        return rects, coupes
+    avant, apres, _ = _bornes_ecartees(r.x, r.x + r.w, zx, zx + zw, trait)
+    for cote in (avant, apres):
+        if cote:
+            p, d0, d1 = cote
+            coupes.append((TRONCONNAGE, p, mb, mh))
+            rects.append(_Rect(d0, mb, d1 - d0, mh - mb))
     return rects, coupes
+
+
+def _retirer_zone_en_bandes(o: _Ouverte, zone, trait: float,
+                            x0: float, x1: float):
+    """En coupe en bandes, un défaut s'écarte comme une scie à panneaux
+    le ferait : deux délignages PLEINE LONGUEUR isolent la bande qui le
+    porte — ils traversent tous les restes, même ceux qui ne touchent pas
+    la zone —, puis la bande est tronçonnée de part et d'autre du nœud.
+    Écarter le défaut reste par reste (comme en guillotine libre)
+    produisait, dès qu'un reste n'était plus pleine longueur, un
+    délignage partiel que ce mode interdit (audit du 05/09/2026)."""
+    zx, zy, zw, zh = zone
+    elargie = (zx - trait, zy - trait, zw + 2 * trait, zh + 2 * trait)
+    if all(_intersection(r, elargie) is None for r in o.libres):
+        return
+    bande = (x0, zy - trait, x1 - x0, zh + 2 * trait)
+    deja = set()
+    milieu = []
+    for r in list(o.libres):
+        if _intersection(r, bande) is None:
+            continue
+        o.libres.remove(r)
+        avant, apres, (mb, mh) = _bornes_ecartees(r.y, r.y + r.h, zy, zy + zh,
+                                                  trait)
+        for cote in (avant, apres):
+            if cote:
+                p, d0, d1 = cote
+                if round(p, 6) not in deja:
+                    deja.add(round(p, 6))
+                    _couper(o, DELIGNAGE, p, x0, x1)
+                _liberer(o, r.x, d0, r.w, d1 - d0)
+        if mh - mb > EPS:
+            milieu.append(_Rect(r.x, mb, r.w, mh - mb))
+    for r in milieu:
+        if _intersection(r, elargie) is None:
+            o.libres.append(r)
+            continue
+        avant, apres, _ = _bornes_ecartees(r.x, r.x + r.w, zx, zx + zw, trait)
+        for cote in (avant, apres):
+            if cote:
+                p, d0, d1 = cote
+                _couper(o, TRONCONNAGE, p, r.y, r.y + r.h)
+                _liberer(o, d0, r.y, d1 - d0, r.h)
 
 
 def _retirer_zone(o: _Ouverte, zone, trait: float, split: str):
     """Écarte une zone de défaut de tous les rectangles libres qu'elle
-    touche, par des coupes guillotine. ``split`` choisit l'ordre des
-    traits : « v » tronçonne d'abord, « h » déligne d'abord, « auto »
-    garde l'ordre qui laisse le plus grand rectangle d'un seul tenant."""
+    touche — ou qu'elle borde à moins d'un trait —, par des coupes
+    guillotine. ``split`` choisit l'ordre des traits : « v » tronçonne
+    d'abord, « h » déligne d'abord, « auto » garde l'ordre qui laisse le
+    plus grand rectangle d'un seul tenant."""
+    x, y, dx, dy = zone
+    elargie = (x - trait, y - trait, dx + 2 * trait, dy + 2 * trait)
     for r in list(o.libres):
-        d = _intersection(r, zone)
-        if d is None:
+        if _intersection(r, elargie) is None:
             continue
         o.libres.remove(r)
-        travers = _autour_en_travers(r, d, trait)
-        long_ = _autour_en_long(r, d, trait)
+        travers = _autour_en_travers(r, zone, trait)
+        long_ = _autour_en_long(r, zone, trait)
         if split == "v":
             rects, coupes = travers
         elif split == "h":
@@ -928,7 +1044,10 @@ def _preparer(o: _Ouverte, params: Parametres, split: str):
         # sur « auto », qui tronçonnait d'abord — plus aucun reste ne
         # courait alors sur toute la longueur, et la planche ne recevait
         # plus RIEN (13 pièces non placées pour un nœud de 100 × 80).
-        _retirer_zone(o, zone, trait, "h" if split == "bandes" else split)
+        if split == "bandes":
+            _retirer_zone_en_bandes(o, zone, trait, x0, x1)
+        else:
+            _retirer_zone(o, zone, trait, split)
 
 
 def _liberer(o: _Ouverte, x: float, y: float, w: float, h: float):
@@ -1128,6 +1247,11 @@ def _copier(o: _Ouverte) -> _Ouverte:
     copie.libres = list(o.libres)
     copie.poses = list(o.poses)
     copie.coupes = list(o.coupes)
+    # Oubliée jusqu'au 05/09/2026 : sans elle, en coupe en bandes avec
+    # recoupe des bouts, plus aucun reste d'une planche copiée n'était
+    # « pleine largeur », et la recherche locale ne pouvait plus y ouvrir
+    # de bande (15 plans sur 60 changeaient une fois corrigé).
+    copie.largeur_utile = o.largeur_utile
     return copie
 
 
@@ -1304,14 +1428,40 @@ def _plus_large_compatible(piece: Piece, stock: list,
     pour cette pièce — celle qui limite la largeur d'une lame. ``None``
     si aucune planche de cette matière n'est même assez épaisse.
 
-    Largeur BRUTE de la planche : c'est l'appelant qui en retire la
-    surcote de largeur, puisque c'est lui qui sait qu'une lame sera
-    débitée surcotée."""
-    candidats = [s.largeur for s in stock
-                if _cle_matiere(s.matiere) == _cle_matiere(piece.matiere)
-                and _epaisseur_compatible(piece.epaisseur, s.epaisseur,
-                                          params)]
+    Largeur UTILE de la planche (rives recoupées, traits compris) :
+    c'est l'appelant qui en retire la surcote de largeur, puisque c'est
+    lui qui sait qu'une lame sera débitée surcotée. Compter la largeur
+    brute taillait des lames qui ne rentraient plus une fois les rives
+    ôtées (audit du 05/09/2026)."""
+    candidats = [_dims_utiles(s, params)[1]
+                 for s in _bruts_compatibles(piece, stock, params)]
     return max(candidats) if candidats else None
+
+
+def _bruts_compatibles(piece: Piece, stock: list, params: Parametres) -> list:
+    """Les planches dans lesquelles une lame de cette pièce peut se
+    tailler : même matière, assez épaisses, la planche imposée s'il y en
+    a une — et jamais une chute biscornue, qu'un lot de rectangles
+    ignore (sa boîte n'est pas du bois : audit du 05/09/2026)."""
+    return [s for s in stock
+            if not s.contour
+            and _cle_matiere(s.matiere) == _cle_matiere(piece.matiere)
+            and _epaisseur_compatible(piece.epaisseur, s.epaisseur, params)
+            and (not piece.planche or s.reference == piece.planche)]
+
+
+def _loge_telle_quelle(piece: Piece, stock: list, params: Parametres) -> bool:
+    """La pièce tient-elle d'un seul tenant dans au moins un brut
+    compatible, dans une orientation que son fil permet — pivotée
+    comprise, sur un panneau sans fil ou à fil indifférent ? Alors on ne
+    la décompose pas : elle était décomposée alors qu'elle logeait en
+    travers (audit du 05/09/2026)."""
+    for s in _bruts_compatibles(piece, stock, params):
+        lg, la = _dims_utiles(s, params)
+        for dx, dy, _ in _orientations(piece, s, params):
+            if dx <= lg + EPS and dy <= la + EPS:
+                return True
+    return False
 
 
 def _nombre_de_lames(largeur_totale: float, largeur_max: float,
@@ -1341,9 +1491,9 @@ def _decomposer_composables(pieces: list, stock: list,
             resultat.append(p)
             continue
         largeur_max = _plus_large_compatible(p, stock, params)
-        if largeur_max is None:
-            resultat.append(p)      # aucun brut compatible : le débit le dira
-            continue
+        if largeur_max is None or _loge_telle_quelle(p, stock, params):
+            resultat.append(p)      # aucun brut compatible (le débit le
+            continue                # dira), ou elle loge d'un tenant
         # Une lame est débitée SURCOTÉE comme n'importe quelle pièce : ce
         # qu'elle peut mesurer une fois finie, c'est la largeur du brut
         # moins cette surcote. L'oublier taillait des lames larges
@@ -1486,6 +1636,20 @@ def _valider(pieces: list, stock: list, params: Parametres):
             # cassait sur un NaN bien plus loin.
             raise ValueError("pièce « %s » : contour d'aire nulle"
                              % p.reference)
+        if p.contour and _contour_se_croise(p.contour):
+            # Un contour croisé d'aire non nulle passait : shapely le
+            # « réparait » en silence et n'en posait qu'un lobe — la pièce
+            # fraisée n'était plus celle dessinée (audit du 05/09/2026).
+            raise ValueError("pièce « %s » : le contour se croise lui-même"
+                             % p.reference)
+        for trou in p.trous:
+            if _contour_se_croise(trou):
+                raise ValueError("pièce « %s » : un trou se croise lui-même"
+                                 % p.reference)
+            if p.contour and not all(_dans_polygone(pt, p.contour)
+                                     for pt in trou):
+                raise ValueError("pièce « %s » : un trou sort du contour"
+                                 % p.reference)
         if p.trous and not p.contour:
             raise ValueError("pièce « %s » : des trous sans contour"
                              % p.reference)

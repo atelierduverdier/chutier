@@ -276,7 +276,9 @@ print(resultat.texte())               # résumé lisible
   mesure, pas un vrai manque d'épaisseur. Une même planche peut donc
   fournir des pièces de finitions différentes.
 - La `surcote` (marge de recoupe) s'ajoute aux dimensions débitées ;
-  la pièce garde ses cotes nominales.
+  la pièce garde ses cotes nominales. Elle ne concerne que le débit à
+  la **scie** : un lot imbriqué à la fraise sort chaque pièce à sa cote,
+  rectangles compris — il n'y a rien à recouper après un fraisage.
 - Une pièce `composable` trop large pour tout brut se décompose
   d'abord en lames à coller (ou à assembler tenon-rainure) — jamais si
   elle logerait déjà telle quelle. `surcote_joint` : largeur perdue à

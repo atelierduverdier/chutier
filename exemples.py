@@ -43,14 +43,23 @@ def _coeur(largeur):
 
 
 def _croissant(rayon):
-    # Un disque moins un disque décalé : concave, en un seul contour.
+    """Un disque moins un disque décalé : concave, en un seul contour.
+    Les deux arcs se rejoignent EXACTEMENT aux deux points où les cercles
+    se coupent — le premier tracé faisait déborder l'arc intérieur et le
+    contour se croisait aux pointes ; shapely le réparait en silence, et
+    la validation du 05/09/2026 le refuse désormais."""
+    centre, petit = rayon * 0.55, rayon * 0.75
+    # Intersection des deux cercles : x commun, puis les angles vus de
+    # chaque centre.
+    x = (rayon ** 2 - petit ** 2 + centre ** 2) / (2 * centre)
+    y = math.sqrt(rayon ** 2 - x ** 2)
+    phi = math.atan2(y, x)                      # sur le grand cercle
+    theta = math.atan2(y, x - centre)           # sur le petit cercle
     ext = [(rayon * math.cos(a), rayon * math.sin(a))
-           for a in (math.pi / 2 - 2 * math.pi * i / 24 for i in range(13))]
-    dedans = [(rayon * 0.55 + rayon * 0.75 * math.cos(a),
-               rayon * 0.75 * math.sin(a))
-              for a in (-math.pi / 2 + 1.2 + (math.pi - 2 * 1.2) * i / 10
-                        for i in range(11))]
-    ext.reverse()
+           for a in (phi + (2 * math.pi - 2 * phi) * i / 14 for i in range(15))]
+    dedans = [(centre + petit * math.cos(a), petit * math.sin(a))
+              for a in ((2 * math.pi - theta) - (2 * math.pi - 2 * theta) * i / 10
+                        for i in range(1, 10))]
     return _au_coin(ext + dedans)
 
 

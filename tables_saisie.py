@@ -18,7 +18,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QRect, Qt
 from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QHeaderView, QLineEdit,
+    QAbstractItemDelegate, QAbstractItemView, QApplication, QComboBox, QHeaderView, QLineEdit,
     QStyle, QStyleOptionButton, QStyleOptionViewItem, QStyledItemDelegate,
     QTableWidget, QTableWidgetItem,
 )
@@ -202,6 +202,19 @@ class TableEditable(QTableWidget):
     # Colonnes rarement remplies, repliables — jamais si une ligne s'en
     # sert : on ne cache pas une valeur saisie.
     AVANCEES: tuple = ()
+
+    def valider_edition(self):
+        """Pousse dans la cellule ce que l'éditeur ouvert contient, et le
+        ferme — ce qu'Entrée aurait fait. À appeler avant de LIRE la
+        table pour calculer, enregistrer ou fermer : sans quoi la valeur
+        en cours de frappe n'existe que dans l'éditeur."""
+        if self.state() != QAbstractItemView.State.EditingState:
+            return
+        editeur = self.focusWidget()
+        if editeur is None or editeur is self:
+            return
+        self.commitData(editeur)
+        self.closeEditor(editeur, QAbstractItemDelegate.EndEditHint.NoHint)
 
     def montrer_avancees(self, montrer: bool):
         for i in self.AVANCEES:

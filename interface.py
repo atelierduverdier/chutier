@@ -287,6 +287,8 @@ class FenetrePrincipale(QMainWindow):
         self._chemin = None
         self._modifie = False
         self._a_jour = False
+        self._generation = 0       # monte à chaque saisie qui périme le plan
+        self._generation_calculee = -1
         self._chargement = True
         self._reglages = QSettings("AtelierDuVerdier", "Chutier")
         self._chemin_atelier = projet_io.chemin_atelier()
@@ -1039,7 +1041,7 @@ class FenetrePrincipale(QMainWindow):
         self._resultat = None
         self._epingles = []
         self.vue.epinglees = set()
-        self._a_jour = False
+        self._perimer()
         self.bilan.vider()
         self.vue.message_vide = (
             "Saisissez les pièces à débiter, vérifiez le stock,\n"
@@ -1060,11 +1062,29 @@ class FenetrePrincipale(QMainWindow):
         self.onglets_resultats.tabBar().setTabTextColor(
             NON_PLACEES, self.palette().text().color())
 
+    def _perimer(self):
+        """Le plan affiché ne correspond plus à la saisie. La génération
+        monte : un calcul lancé AVANT cette saisie ne pourra pas, en
+        finissant, déclarer le plan « à jour » (audit du 05/09/2026 :
+        une cote corrigée pendant le sablier était effacée par la barre
+        verte, et Ranger / épingler / exporter s'appuyaient dessus)."""
+        self._a_jour = False
+        self._generation += 1
+
+    def _valider_editions(self):
+        """Pousse dans les cellules ce que les éditeurs ouverts
+        contiennent : F5, Ctrl+S et la fermeture lisaient les cellules,
+        pas l'éditeur — le plan et le fichier gardaient l'ancienne
+        valeur, et l'atelier s'écrivait avec, sans un mot (audit du
+        05/09/2026)."""
+        self.table_pieces.valider_edition()
+        self.table_stock.valider_edition()
+
     def _saisie_changee(self, *_):
         if self._chargement:
             return
         self._modifie = True
-        self._a_jour = False
+        self._perimer()
         self._rafraichir_etat()
         if not self._restauration:
             # Une frappe = un pas d'historique, mais pas une lettre : la
@@ -1100,7 +1120,7 @@ class FenetrePrincipale(QMainWindow):
             self._restauration = False
         self._instantane = instantane
         self._modifie = True
-        self._a_jour = False
+        self._perimer()
         # Le liseré ÉPINGLÉE du plan vient de vue.epinglees, pas de
         # _epingles : sans cette ligne, « Relâcher la planche » restait
         # proposé sur une planche qui ne l'était plus, et ne faisait rien.
@@ -1314,6 +1334,8 @@ class FenetrePrincipale(QMainWindow):
         sablier sans issue n'est pas une réponse."""
         if self._calcul is not None:
             return                          # déjà en cours
+        self._valider_editions()
+        self._generation_calculee = self._generation
         try:
             pieces = self.table_pieces.pieces()
             stock = self.table_stock.stock()
@@ -1365,7 +1387,7 @@ class FenetrePrincipale(QMainWindow):
             self._rafraichir_etat()
             return
         self._resultat = resultat
-        self._a_jour = True
+        self._a_jour = self._generation == self._generation_calculee
         self._afficher_resultat()
         self._rafraichir_etat()
 
@@ -1679,7 +1701,7 @@ class FenetrePrincipale(QMainWindow):
 
         self.table_stock.remplir(
             stock_apres_debit(self.table_stock.stock(), self._resultat))
-        self._a_jour = False
+        self._perimer()
         self._modifie = True
         self._rafraichir_etat()
         self.table_stock.setFocus()
@@ -1707,6 +1729,7 @@ class FenetrePrincipale(QMainWindow):
         """Écrit au fichier commun les lignes cochées « Atelier ». Une
         saisie illisible n'écrit rien (et rend faux) : on ne remplace pas
         un inventaire par un fichier tronqué."""
+        self._valider_editions()
         try:
             stock = self.table_stock.stock()
         except ErreurSaisie:
@@ -1776,6 +1799,7 @@ class FenetrePrincipale(QMainWindow):
         Trois issues, pas deux : n'offrir qu'« abandonner ou annuler »
         obligeait à annuler, enregistrer à la main, puis recommencer le
         geste — et invitait à cliquer « abandonner » de lassitude."""
+        self._valider_editions()
         if not self._modifie:
             return True
         reponse = QMessageBox.warning(
@@ -1822,6 +1846,7 @@ class FenetrePrincipale(QMainWindow):
     def _enregistrer(self):
         if not self._chemin:
             return self._enregistrer_sous()
+        self._valider_editions()
         try:
             stock = self.table_stock.stock()
             projet_io.enregistrer(self._chemin, self.table_pieces.pieces(),
@@ -1836,6 +1861,7 @@ class FenetrePrincipale(QMainWindow):
         self._rafraichir_etat()
 
     def _enregistrer_sous(self):
+        self._valider_editions()
         chemin, _ = QFileDialog.getSaveFileName(
             self, "Enregistrer le projet", self._dossier(),
             "Projet chutier (*.json)")

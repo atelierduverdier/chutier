@@ -69,10 +69,24 @@ def _segments_se_croisent(p1, p2, q1, q2) -> bool:
            ((d3 > EPS and d4 < -EPS) or (d3 < -EPS and d4 > EPS))
 
 
-def _ponter(exterieur: list, trou: list) -> list:
+def _dans_angle(prec, sommet, suiv, p) -> bool:
+    """La direction ``sommet → p`` tombe-t-elle dans l'angle intérieur
+    (à gauche, sens direct) du contour au ``sommet`` ?"""
+    convexe = _produit(prec, sommet, suiv) > EPS
+    gauche_sortante = _produit(sommet, suiv, p) > EPS
+    gauche_entrante = _produit(prec, sommet, p) > EPS
+    if convexe:
+        return gauche_sortante and gauche_entrante
+    return gauche_sortante or gauche_entrante
+
+
+def _ponter(exterieur: list, trou: list, autres: tuple = ()) -> list:
     """Relie un trou (sens indirect) au contour (sens direct) par un
     pont aller-retour depuis le sommet du trou le plus à droite vers un
-    sommet visible du contour — le polygone reste simple, faiblement."""
+    sommet visible du contour — le polygone reste simple, faiblement.
+    ``autres`` : les trous pas encore pontés, que le pont ne doit pas
+    traverser non plus — il ne les regardait pas, et dès deux trous le
+    découpage recouvrait un trou sur huit (audit du 05/09/2026)."""
     i_t = max(range(len(trou)), key=lambda i: (trou[i][0], trou[i][1]))
     pt = trou[i_t]
     # Candidats : les sommets du contour à droite du point, du plus
@@ -85,6 +99,13 @@ def _ponter(exterieur: list, trou: list) -> list:
     m = len(trou)
     for j in candidats:
         pe = exterieur[j]
+        # Le pont doit partir DANS l'angle intérieur du contour à ce
+        # sommet — sinon il sort de la matière sans croiser d'arête (par
+        # un sommet rentrant), ou, quand le sommet a déjà servi de pont à
+        # un autre trou et figure deux fois dans l'anneau, le nouveau tour
+        # s'insère à la mauvaise occurrence et l'anneau se recouvre.
+        if not _dans_angle(exterieur[j - 1], pe, exterieur[(j + 1) % n], pt):
+            continue
         croise = False
         for k in range(n):
             a, b = exterieur[k], exterieur[(k + 1) % n]
@@ -100,6 +121,15 @@ def _ponter(exterieur: list, trou: list) -> list:
                     continue
                 if _segments_se_croisent(pt, pe, a, b):
                     croise = True
+                    break
+        if not croise:
+            for autre in autres:
+                for k in range(len(autre)):
+                    a, b = autre[k], autre[(k + 1) % len(autre)]
+                    if _segments_se_croisent(pt, pe, a, b):
+                        croise = True
+                        break
+                if croise:
                     break
         if not croise:
             # exterieur[..j] + pe, trou à partir de pt (tour complet), pt, pe…
@@ -157,6 +187,6 @@ def trianguler(exterieur, trous=()) -> list:
     propres = [_nettoyer(t, direct=False) for t in trous]
     propres = [t for t in propres if len(t) >= 3]
     propres.sort(key=lambda t: -max(p[0] for p in t))
-    for trou in propres:
-        anneau = _ponter(anneau, trou)
+    for k, trou in enumerate(propres):
+        anneau = _ponter(anneau, trou, tuple(propres[k + 1:]))
     return _oreilles(anneau)
