@@ -43,11 +43,12 @@ Tout est déterministe : mêmes entrées, même graine → même résultat.
 from __future__ import annotations
 
 import dataclasses
+import math
 import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -132,12 +133,25 @@ class Piece:
         object.__setattr__(self, "contour", _points(self.contour))
         object.__setattr__(self, "trous",
                            tuple(_points(t) for t in self.trous))
+        _entiere(self, "quantite")
 
     @property
     def aire(self) -> float:
         if self.contour:
             return _aire_avec_trous(self.contour, self.trous)
         return self.longueur * self.largeur
+
+
+def _entiere(objet, champ: str) -> None:
+    """« 2.0 » relu d'un JSON reste un ``int`` pour le solveur : ailleurs
+    non convertie, une quantité flottante passait la validation (2.0 est
+    un nombre entier) puis cassait plus loin sur un ``range()`` qui exige
+    un vrai ``int`` — un TypeError technique à la place d'une saisie
+    nommée (audit du 05/09/2026). Une valeur non entière (2.5) reste
+    telle quelle : c'est _valider qui la refuse, en la nommant."""
+    valeur = getattr(objet, champ)
+    if isinstance(valeur, float) and valeur == int(valeur):
+        object.__setattr__(objet, champ, int(valeur))
 
 
 def _points(anneau) -> tuple:
@@ -301,6 +315,7 @@ class Planche:
             object.__setattr__(self, "largeur", round(max(ys) - y0, 4))
         object.__setattr__(self, "contour", contour)
         object.__setattr__(self, "trous", trous)
+        _entiere(self, "quantite")
 
     @property
     def aire(self) -> float:
@@ -1583,7 +1598,13 @@ def _appliquer_epingles(pieces: list, stock: list, epingles: list):
         cle = _meme(pl)
         pris = min(besoin_stock.get(cle, 0), pl.quantite)
         besoin_stock[cle] = besoin_stock.get(cle, 0) - pris
-        if pl.quantite - pris > 0:
+        if pl.illimite:
+            # Un profil de catalogue n'a rien à ÉPUISER : sa quantité ne
+            # borne rien, une valeur à 0 (« je n'en ai pas encore »)
+            # faisait sortir la planche du stock restant à chaque appel,
+            # épinglé ou non (audit du 05/09/2026).
+            restant.append(pl)
+        elif pl.quantite - pris > 0:
             restant.append(dataclasses.replace(pl, quantite=pl.quantite - pris))
     for cle, reste in besoin_stock.items():
         if reste > 0:
@@ -1622,8 +1643,25 @@ def _renumeroter(debits: list, pieces: list, stock: list) -> list:
 # Entrée principale
 # ---------------------------------------------------------------------------
 
+def _finis(nom: str, *valeurs: float):
+    """Refuse nan, inf, et tout ce qui n'est même pas un nombre — une
+    cote relue « 100 » en texte d'un JSON ou d'un CSV tapé à la main
+    cassait plus loin sur un TypeError technique (« can only concatenate
+    str »), et une planche ou un trait à l'infini passait la validation
+    en silence (aucune comparaison n'est vraie contre un NaN) pour
+    ressortir dans le bilan sans qu'on sache d'où : une chute
+    (inf, 100), une perte de 95 % (audit du 05/09/2026)."""
+    for v in valeurs:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError("%s : nombre attendu, %r lu" % (nom, v))
+        if not math.isfinite(v):
+            raise ValueError("%s : nombre non fini (%s)" % (nom, v))
+
+
 def _valider(pieces: list, stock: list, params: Parametres):
     for p in pieces:
+        _finis("pièce « %s »" % p.reference, p.longueur, p.largeur,
+              p.epaisseur)
         if p.longueur <= EPS or p.largeur <= EPS or p.epaisseur < 0:
             raise ValueError("pièce « %s » : dimensions invalides"
                              % p.reference)
@@ -1656,7 +1694,11 @@ def _valider(pieces: list, stock: list, params: Parametres):
         if any(len(t) < 3 for t in p.trous):
             raise ValueError("pièce « %s » : un trou demande au moins"
                              " trois points" % p.reference)
-        if p.quantite < 1:
+        if p.quantite < 1 or p.quantite != int(p.quantite):
+            # « 2.0 » passait ici puis levait un TypeError bien plus
+            # loin (un round() ou un range() sur un flottant) — un
+            # message technique à la place d'une saisie nommée (audit
+            # du 05/09/2026).
             raise ValueError("pièce « %s » : quantité invalide (%r)"
                              % (p.reference, p.quantite))
         if p.fil not in _FILS_VALIDES:
@@ -1664,10 +1706,15 @@ def _valider(pieces: list, stock: list, params: Parametres):
                 "pièce « %s » : fil inconnu « %s » (attendu : %s)"
                 % (p.reference, p.fil, ", ".join(_FILS_VALIDES)))
     for s in stock:
+        _finis("planche « %s »" % s.reference, s.longueur, s.largeur,
+              s.epaisseur, s.recoupe_bouts, s.recoupe_rives, s.prix)
         if s.longueur <= EPS or s.largeur <= EPS or s.epaisseur < 0:
             raise ValueError("planche « %s » : dimensions invalides"
                              % s.reference)
-        if s.quantite < 1:
+        if s.quantite != int(s.quantite) or (s.quantite < 1 and not s.illimite):
+            # Un profil de catalogue (illimite) n'a rien À BORNER : une
+            # quantité de 0 y a un sens (« je n'en ai pas encore, j'en
+            # achèterai ») et se refusait à tort (audit du 05/09/2026).
             raise ValueError("planche « %s » : quantité invalide (%r)"
                              % (s.reference, s.quantite))
         if s.recoupe_bouts < 0 or s.recoupe_rives < 0:
@@ -1688,6 +1735,11 @@ def _valider(pieces: list, stock: list, params: Parametres):
                 raise ValueError("planche « %s » : zone de défaut %s hors"
                                  " de la planche ou vide"
                                  % (s.reference, tuple(_mm(v) for v in zone)))
+    _finis("paramètres", params.trait_de_scie, params.chute_mini_longueur,
+          params.chute_mini_largeur, params.surcote_longueur,
+          params.surcote_largeur, params.tolerance_epaisseur,
+          params.surcote_joint, params.ecart_contours, params.marge_bord,
+          params.vitesse_fraisage)
     if (params.trait_de_scie < 0 or params.chute_mini_longueur < 0
             or params.chute_mini_largeur < 0 or params.surcote_longueur < 0
             or params.surcote_largeur < 0 or params.tolerance_epaisseur < 0

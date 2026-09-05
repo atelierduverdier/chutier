@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.3.3";
+export const VERSION = "1.3.4";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -195,7 +195,12 @@ async function tenter(fn, ...args) {
   try {
     return await appeler(fn, ...args);
   } catch (erreur) {
-    $("#etat").textContent = t("Le calcul a échoué : ") + erreur.message;
+    // « Le calcul a échoué » ici pour TOUT appel au pont — enregistrer un
+    // projet, exporter un CSV, importer un SVG n'ont rien d'un calcul,
+    // et le mot faisait chercher un bug dans le débit là où la faute
+    // était, par exemple, une cote illisible à l'enregistrement (audit
+    // du 05/09/2026).
+    $("#etat").textContent = t("Erreur : ") + erreur.message;
     return null;
   }
 }
@@ -348,9 +353,26 @@ function brouillon() { return stockage.lire("brouillon", null); }
 
 // -- stockage local : atelier, réglages, préférences ----------------------------
 
+let stockagePanneDite = false;
 const stockage = {
   lire(cle, defaut) { try { const v = localStorage.getItem("chutier." + cle); return v === null ? defaut : JSON.parse(v); } catch { return defaut; } },
-  ecrire(cle, valeur) { try { localStorage.setItem("chutier." + cle, JSON.stringify(valeur)); } catch { /* navigation privée */ } },
+  ecrire(cle, valeur) {
+    try {
+      localStorage.setItem("chutier." + cle, JSON.stringify(valeur));
+    } catch {
+      // Navigation privée, quota dépassé, stockage désactivé : l'atelier,
+      // le brouillon et les réglages n'étaient alors JAMAIS écrits, sans
+      // un mot — tout semblait fonctionner jusqu'à ce que l'onglet se
+      // ferme et que rien n'ait survécu (audit du 05/09/2026). Une fois
+      // par session suffit : le répéter à chaque frappe serait pire que
+      // le silence.
+      if (!stockagePanneDite) {
+        stockagePanneDite = true;
+        const el = $("#etat");
+        if (el) el.textContent = t("⚠ Ce navigateur refuse d'enregistrer : rien de ce qui se tape ne sera retrouvé à la réouverture (navigation privée, ou stockage désactivé).");
+      }
+    }
+  },
 };
 
 let atelierConnu = [];   // les lignes Atelier telles que LUES par CET onglet

@@ -49,6 +49,7 @@ import dataclasses
 import os
 import random
 import sys
+import warnings
 
 import numpy as np
 import shapely
@@ -480,16 +481,44 @@ def _ouvrir(plateaux, dispo, piece, params, formes, objectif):
     return None
 
 
+def _logerait_a_neuf_imbrique(piece, stock_unites, params) -> bool:
+    """La pièce logerait-elle dans au moins une planche VIERGE de ce
+    lot, marge au bord et écart entre contours comptés ? La version du
+    cœur (``opt._logerait_a_neuf``) ne connaît que le trait de scie et
+    les recoupes — des notions de sciage sans rapport avec l'imbrication
+    à la fraise — et une pièce refusée pour tenir tout juste SOUS la
+    marge ressortait « plus de place », comme si une planche neuve
+    l'aurait acceptée (audit du 05/09/2026 : 195 mm sur 200 mm de large,
+    marge 5 des deux côtés — aucune planche, neuve ou pas, ne l'aurait
+    reçue)."""
+    marge = 2 * params.marge_bord
+    return any(opt._epaisseur_compatible(piece.epaisseur, pl.epaisseur, params)
+               and dx + marge <= pl.longueur + opt.EPS
+               and dy + marge <= pl.largeur + opt.EPS
+               for pl, _ex in stock_unites
+               for dx, dy, _ in opt._orientations(piece, pl, params))
+
+
+def _logerait_dims_imbrique(piece, stock_unites, params) -> bool:
+    """Même chose, épaisseur mise à part — pour distinguer « aucune
+    planche assez épaisse » de « trop grande, épaisseur ou pas »."""
+    marge = 2 * params.marge_bord
+    return any(dx + marge <= pl.longueur + opt.EPS
+               and dy + marge <= pl.largeur + opt.EPS
+               for pl, _ex in stock_unites
+               for dx, dy, _ in opt._orientations(piece, pl, params))
+
+
 def _raison(piece, stock_unites, params):
     admises = [(pl, ex) for pl, ex in stock_unites if opt._admise(piece, pl)]
     if piece.planche and not admises:
         return opt.RAISON_PLANCHE_INCONNUE
-    if opt._logerait_a_neuf(piece, admises, params):
+    if _logerait_a_neuf_imbrique(piece, admises, params):
         return (opt.RAISON_PLANCHE_PLEINE if piece.planche
                 else opt.RAISON_PLUS_DE_PLACE)
     if piece.planche:
         return opt.RAISON_PLANCHE_IMPOSEE
-    if opt._logerait_dims(piece, admises, params):
+    if _logerait_dims_imbrique(piece, admises, params):
         return opt.RAISON_TROP_EPAISSE
     return opt.RAISON_TROP_GRANDE
 
@@ -794,7 +823,20 @@ def imbriquer(unites: list, stock_unites: list,
             with contexte.Pool(min(nb, len(taches)), _recevoir_caches,
                                _emballer_caches()) as pool:
                 resultats = _attendre(pool, pool.map_async(_tache, taches))
-        except (OSError, RuntimeError, ValueError, ImportError):
+        except (OSError, RuntimeError, ImportError) as erreur:
+            # Une vraie panne de l'infrastructure (pool qui ne démarre
+            # pas, objet impossible à transmettre à un fils) — on
+            # repasse en séquentiel plutôt que de planter, mais on le
+            # DIT : muet, ce repli redoublait le temps de calcul sans
+            # qu'on sache pourquoi. ValueError n'est plus rattrapée ici :
+            # un fils qui en lève une le fait pour une vraie raison
+            # géométrique (un bug du solveur), pas une panne de
+            # multiprocessing — la laisser remonter, c'est la voir une
+            # fois, pas deux fois plus lentement (audit du 05/09/2026).
+            warnings.warn(
+                "imbrication en parallèle indisponible (%s), repli en"
+                " séquentiel — deux fois plus lent" % erreur, RuntimeWarning,
+                stacklevel=2)
             resultats = None            # on repasse en séquentiel
     if resultats is None:
         if taches_nfp:

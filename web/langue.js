@@ -290,6 +290,8 @@ const ANGLAIS = {
   "Dépassement sous la planche (mm)": "Overcut below the board (mm)",
   "Ce qu'on mord dans le martyr, pour traverser vraiment.": "How far into the spoilboard, so it really goes through.",
   "Avance en XY (mm/min)": "Feed in XY (mm/min)",
+  "Erreur : ": "Error: ",
+  "⚠ Ce navigateur refuse d'enregistrer : rien de ce qui se tape ne sera retrouvé à la réouverture (navigation privée, ou stockage désactivé).": "⚠ This browser refuses to save: nothing typed here will be found again on reopening (private browsing, or storage disabled).",
   "La vitesse d'avance du programme G-code écrit — absente ici jusqu'au 05/09/2026, le fichier sortait toujours à la valeur par défaut.": "The feed rate of the G-code program it writes — missing here until 2026-09-05, the file always came out at the default value.",
   "Plongée en Z (mm/min)": "Plunge in Z (mm/min)",
   "Bien plus lente que l'avance : la fraise coupe mal par le bout.": "Much slower than the feed: an end mill cuts badly with its tip.",

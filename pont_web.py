@@ -33,42 +33,59 @@ _CHAMPS_PLANCHE = {f.name for f in dataclasses.fields(opt.Planche)}
 _CHAMPS_PARAMS = {f.name for f in dataclasses.fields(opt.Parametres)}
 
 
-def _nombre(v, defaut=0.0):
+def _nombre(v, defaut=0.0, ou=""):
     if v is None or v == "":
         return defaut
+    brut = v
     if isinstance(v, str):
         v = v.replace(",", ".").strip()
-    return float(v)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        # « could not convert string to float: 'abc' » ne nommait ni la
+        # pièce ni la colonne fautive — le bureau, lui, le fait
+        # (tables_saisie._lire_flottant) depuis toujours (audit du
+        # 05/09/2026).
+        raise ValueError("%s: nombre attendu, « %s » lu"
+                         % (ou or "champ", brut)) from None
 
 
-def _entier(v, defaut=1):
+def _entier(v, defaut=1, ou=""):
     if v is None or v == "":
         return defaut
-    valeur = float(str(v).replace(",", "."))
+    try:
+        valeur = float(str(v).replace(",", "."))
+    except ValueError:
+        raise ValueError("%s: entier attendu, « %s » lu"
+                         % (ou or "champ", v)) from None
     if valeur != int(valeur):
         # Tronquée en silence jusqu'au 05/09/2026 : « 2,5 » devenait 2
         # exemplaires sans un mot — une pièce de moins, sans que rien ne
         # le dise.
-        raise ValueError("un entier était attendu, « %s » a une virgule"
-                         % v)
+        raise ValueError("%s: un entier était attendu, « %s » a une"
+                         " virgule" % (ou or "champ", v))
     return int(valeur)
 
 
 def _piece(d: dict) -> opt.Piece:
     champs = {k: v for k, v in d.items() if k in _CHAMPS_PIECE}
+    ou = "pièce « %s »" % (d.get("reference") or "?")
     for cle in ("longueur", "largeur", "epaisseur"):
-        champs[cle] = _nombre(champs.get(cle))
-    champs["quantite"] = _entier(champs.get("quantite"))
+        champs[cle] = _nombre(champs.get(cle), ou="%s, %s" % (ou, cle))
+    champs["quantite"] = _entier(champs.get("quantite"),
+                                 ou="%s, quantité" % ou)
     champs["composable"] = bool(champs.get("composable", False))
     return opt.Piece(**champs)
 
 
 def _planche(d: dict) -> opt.Planche:
     champs = {k: v for k, v in d.items() if k in _CHAMPS_PLANCHE}
+    ou = "planche « %s »" % (d.get("reference") or "?")
     for cle in ("longueur", "largeur", "epaisseur", "prix", "recoupe_bouts",
                 "recoupe_rives"):
-        champs[cle] = _nombre(champs.get(cle))
-    champs["quantite"] = _entier(champs.get("quantite"))
+        champs[cle] = _nombre(champs.get(cle), ou="%s, %s" % (ou, cle))
+    champs["quantite"] = _entier(champs.get("quantite"),
+                                 ou="%s, quantité" % ou)
     for cle in ("chute", "illimite", "atelier"):
         champs[cle] = bool(champs.get(cle, False))
     champs["fil"] = bool(champs.get("fil", True))

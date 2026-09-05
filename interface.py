@@ -268,7 +268,20 @@ class _Calcul(QThread):
         return resultat, None, relachees
 
     def run(self):
-        self.fini.emit(*self.calculer(*self._args))
+        # Le fil ne doit JAMAIS mourir sans un mot : une exception qui
+        # échappe à run() (un bug du cœur, shapely absent, un contour
+        # tordu) tue le thread en silence — Qt n'en dit rien à la
+        # fenêtre. « fini » ne s'émettait alors jamais, _calcul restait
+        # posé pour toujours, F5 retournait en silence, le curseur
+        # d'attente et la boîte de progression collaient à l'écran
+        # (audit du 05/09/2026). Rattrapée ici, elle devient un message
+        # au lieu d'un blocage.
+        try:
+            resultat = self.calculer(*self._args)
+        except Exception as erreur:      # noqa: BLE001 - filet du fil
+            resultat = (None, "Erreur inattendue pendant le calcul : %s"
+                             % erreur, None)
+        self.fini.emit(*resultat)
 
 
 class FenetrePrincipale(QMainWindow):
@@ -1277,7 +1290,19 @@ class FenetrePrincipale(QMainWindow):
         if not brut:
             return gcode_mod.Reglages()
         try:
-            return gcode_mod.Reglages(**json.loads(brut))
+            valeurs = json.loads(brut)
+        except ValueError:
+            return gcode_mod.Reglages()
+        # Une clé RETIRÉE de Reglages depuis la dernière séance (un champ
+        # renommé entre deux versions) levait un TypeError que le
+        # rattrapage jetait tout entier : Ø de fraise, attaches, sens...
+        # tout redevenait « d'usine » pour une seule clé de trop
+        # (audit du 05/09/2026). On ne garde que les clés qui existent
+        # encore, plutôt que d'oublier tout le reste.
+        champs = {f.name for f in dataclasses.fields(gcode_mod.Reglages)}
+        valeurs = {c: v for c, v in valeurs.items() if c in champs}
+        try:
+            return gcode_mod.Reglages(**valeurs)
         except (ValueError, TypeError):
             return gcode_mod.Reglages()
 
