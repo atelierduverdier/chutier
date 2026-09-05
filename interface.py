@@ -152,7 +152,9 @@ class DialogueGcode(QDialog):
         self.spin_securite = self._mm(reglages.hauteur_securite, 0.5, 100)
         colonne.addWidget(self._groupe("Les vitesses", [
             ("Avance en XY", self.spin_avance,
-             "C'est elle qui donne le temps annoncé au bilan."),
+             "La vitesse d'avance du programme G-code écrit. Le temps"
+             " annoncé au bilan lit Réglages › La CNC › Vitesse de"
+             " fraisage, pas celle-ci."),
             ("Plongée en Z", self.spin_plongee,
              "Bien plus lente que l'avance : la fraise coupe mal par le"
              " bout."),
@@ -533,9 +535,10 @@ class FenetrePrincipale(QMainWindow):
         self.a_avancees = QAction("Colonnes &avancées", self)
         self.a_avancees.setCheckable(True)
         self.a_avancees.setStatusTip(
-            "Montrer les colonnes rarement remplies (Composable, Planche ;"
-            " Fil, Catalogue, Prix) — elles reviennent d'elles-mêmes dès"
-            " qu'une ligne s'en sert")
+            "Montrer les colonnes rarement remplies (Composable, Planche"
+            " et Contour aux pièces ; Fil, Catalogue, Prix et Contour au"
+            " stock) — elles reviennent d'elles-mêmes dès qu'une ligne"
+            " s'en sert")
         self.a_avancees.toggled.connect(self._basculer_avancees)
         self.a_desepingler = self._acte(
             "Tout &désépingler", self._tout_desepingler, None, None,
@@ -1573,14 +1576,29 @@ class FenetrePrincipale(QMainWindow):
             for pose in debit.poses:
                 reference = pose.piece.reference
                 comptes[reference] = comptes.get(reference, 0) + 1
-                cotes[reference] = (pose.dim_x, pose.dim_y)
+                # Un ENSEMBLE, pas une valeur : deux lignes de la même
+                # référence à des cotes différentes existent (rien ne
+                # l'interdit) — la dernière pose vue écrasait la
+                # précédente, et la bulle d'aide affichait de fausses
+                # cotes pour les autres exemplaires (audit du
+                # 05/09/2026).
+                cotes.setdefault(reference, set()).add(
+                    (pose.dim_x, pose.dim_y))
         for reference, nombre in comptes.items():
-            dim_x, dim_y = cotes[reference]
+            dims = cotes[reference]
             item = QListWidgetItem(
                 apparence.pastille(self.vue.couleur(reference)),
                 "%s  ×%d" % (reference, nombre))
-            item.setToolTip("%s — débitée à %s × %s mm"
-                            % (reference, opt._mm(dim_x), opt._mm(dim_y)))
+            if len(dims) == 1:
+                dim_x, dim_y = next(iter(dims))
+                item.setToolTip("%s — débitée à %s × %s mm"
+                                % (reference, opt._mm(dim_x), opt._mm(dim_y)))
+            else:
+                item.setToolTip(
+                    "%s — débitée à %d cotes différentes : %s"
+                    % (reference, len(dims),
+                       ", ".join("%s × %s mm" % (opt._mm(x), opt._mm(y))
+                                for x, y in sorted(dims))))
             self.legende.addItem(item)
         if any(debit.chutes for _, debit in debits):
             self.legende.addItem(QListWidgetItem(
@@ -1858,6 +1876,12 @@ class FenetrePrincipale(QMainWindow):
     def _nouveau(self):
         if not self._confirmer_abandon():
             return
+        # Point de coupure naturel : les formes du projet qu'on quitte ne
+        # serviront plus, autant libérer ce qu'elles ont fait grossir
+        # (rien ne le faisait jusqu'au 05/09/2026 — 124 cadres après 30
+        # planches, mesuré sur une longue séance).
+        import imbrication
+        imbrication.vider_caches()
         atelier = self._atelier_frais()
         self._chargement = True
         self.table_pieces.setRowCount(0)
@@ -2622,41 +2646,15 @@ class FenetrePrincipale(QMainWindow):
             self._calculer()
 
     def _charger_exemple_volets(self):
-        """Débit réel d'une paire de volets battants (projet Christophe,
-        29/08/2026) : cotes de débit en douglas 27 mm (finies + surcotes
-        de corroyage) sorties du modèle FreeCAD AtelierVolets. Le
-        couvre-joint (15 mm) vient d'une autre section, il n'est pas ici.
-        """
+        """Débit réel d'une paire de volets battants — la donnée vit dans
+        exemples.volets_battants, partagée avec la page web depuis le
+        05/09/2026 (le README promettait les trois exemples des deux
+        côtés ; celui-ci n'a longtemps vécu qu'ici)."""
         if not self._confirmer_abandon(
                 "L'exemple va remplacer les pièces et le stock."):
             return
-        # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
-        # d'épaisseur : les planches sont du brut (30) à raboter à la cote
-        # finie (27) — sans cet écart, le stock et les pièces ne se rangent
-        # pas dans le même lot (par matière + épaisseur À LA TOLÉRANCE PRÈS).
-        self._remplir(
-            [opt.Piece("Lame 1 G", 1140, 119, 27, "douglas", 1),
-             opt.Piece("Lame 2 G", 1140, 119, 27, "douglas", 1),
-             opt.Piece("Lame 3 G", 1140, 119, 27, "douglas", 1),
-             opt.Piece("Lame 4 G", 1140, 119, 27, "douglas", 1),
-             opt.Piece("Lame 5 G", 1140, 105, 27, "douglas", 1),
-             opt.Piece("Traverse haute G", 550, 125, 27, "douglas", 1),
-             opt.Piece("Barre du Z G", 515, 105, 27, "douglas", 2),
-             opt.Piece("Echarpe G", 829.6857318589343, 105, 27, "douglas", 1),
-             opt.Piece("Lame 1 D", 1140, 117, 27, "douglas", 1),
-             opt.Piece("Lame 2 D", 1140, 117, 27, "douglas", 1),
-             opt.Piece("Lame 3 D", 1140, 117, 27, "douglas", 1),
-             opt.Piece("Lame 4 D", 1140, 117, 27, "douglas", 1),
-             opt.Piece("Lame 5 D", 1140, 103, 27, "douglas", 1),
-             opt.Piece("Traverse haute D", 540, 125, 27, "douglas", 1),
-             opt.Piece("Barre du Z D", 505, 105, 27, "douglas", 2),
-             opt.Piece("Echarpe D", 824.9482377125985, 105, 27, "douglas", 1)],
-            [opt.Planche("douglas 150x30 -- 3 m", 3000, 150, 30, "douglas",
-                         quantite=3),
-             opt.Planche("douglas 150x30 -- 4 m", 4000, 150, 30, "douglas",
-                         quantite=2)]
-            + self._atelier_frais(),
-            opt.Parametres(trait_de_scie=4.0, tolerance_epaisseur=5.0))
+        pieces, stock, parametres = exemples.volets_battants()
+        self._remplir(pieces, stock + self._atelier_frais(), parametres)
         self._calculer()
 
     def _charger_exemple_formes(self):

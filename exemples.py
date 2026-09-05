@@ -120,3 +120,44 @@ def formes_biscornues():
     # millimètres près — les pièces se décalent, rien d'autre.
     return pieces, stock, opt.Parametres(ecart_contours=6.0, marge_bord=8.0,
                                         pas_rotation=180)
+
+
+def volets_battants():
+    """Débit réel d'une paire de volets battants (projet Christophe,
+    29/08/2026) : cotes de débit en douglas 27 mm (finies + surcotes de
+    corroyage) sorties du modèle FreeCAD AtelierVolets. Le couvre-joint
+    (15 mm) vient d'une autre section, il n'est pas ici.
+
+    Partagé entre le bureau et la page web depuis le 05/09/2026 — il ne
+    vivait qu'au bureau, alors que le README promettait les trois
+    exemples des deux côtés."""
+    # 4 mm : le TRAIT_DE_SCIE du projet volets. 5 mm de tolérance
+    # d'épaisseur : les planches sont du brut (30) à raboter à la cote
+    # finie (27) — sans cet écart, le stock et les pièces ne se rangent
+    # pas dans le même lot (par matière + épaisseur À LA TOLÉRANCE PRÈS).
+    pieces = [
+        opt.Piece("Lame 1 G", 1140, 119, 27, "douglas", 1),
+        opt.Piece("Lame 2 G", 1140, 119, 27, "douglas", 1),
+        opt.Piece("Lame 3 G", 1140, 119, 27, "douglas", 1),
+        opt.Piece("Lame 4 G", 1140, 119, 27, "douglas", 1),
+        opt.Piece("Lame 5 G", 1140, 105, 27, "douglas", 1),
+        opt.Piece("Traverse haute G", 550, 125, 27, "douglas", 1),
+        opt.Piece("Barre du Z G", 515, 105, 27, "douglas", 2),
+        opt.Piece("Echarpe G", 829.6857318589343, 105, 27, "douglas", 1),
+        opt.Piece("Lame 1 D", 1140, 117, 27, "douglas", 1),
+        opt.Piece("Lame 2 D", 1140, 117, 27, "douglas", 1),
+        opt.Piece("Lame 3 D", 1140, 117, 27, "douglas", 1),
+        opt.Piece("Lame 4 D", 1140, 117, 27, "douglas", 1),
+        opt.Piece("Lame 5 D", 1140, 103, 27, "douglas", 1),
+        opt.Piece("Traverse haute D", 540, 125, 27, "douglas", 1),
+        opt.Piece("Barre du Z D", 505, 105, 27, "douglas", 2),
+        opt.Piece("Echarpe D", 824.9482377125985, 105, 27, "douglas", 1),
+    ]
+    stock = [
+        opt.Planche("douglas 150x30 -- 3 m", 3000, 150, 30, "douglas",
+                    quantite=3),
+        opt.Planche("douglas 150x30 -- 4 m", 4000, 150, 30, "douglas",
+                    quantite=2),
+    ]
+    return pieces, stock, opt.Parametres(trait_de_scie=4.0,
+                                         tolerance_epaisseur=5.0)

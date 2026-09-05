@@ -143,10 +143,11 @@ bois, pas dans sa boîte. Un lot de rectangles à scier les ignore, et le
 dit si le stock n'a plus qu'elles.
 
 **Le temps de fraisage.** Une planche imbriquée n'a pas de coupes à
-compter mais des contours à suivre : la tuile Pertes, le cartouche de
-chaque planche et la fiche d'atelier donnent la **longueur de fraisage**
-(contours et trous) et le temps qu'elle demande à la vitesse d'avance du
-réglage (1 500 mm/min par défaut), sans les déplacements à vide.
+compter mais des contours à suivre : le cartouche de chaque planche et
+la fiche d'atelier donnent la **longueur de fraisage** (contours et
+trous) ; la tuile Pertes, elle, en tire aussi le **temps** que cette
+longueur demande à la vitesse d'avance du réglage (1 500 mm/min par
+défaut), sans les déplacements à vide.
 
 ## L'atelier
 
@@ -226,9 +227,11 @@ pouce.
 **Coupe en bandes** (réglages de la scie) : pour une scie à panneaux ou
 à format, qui déligne d'abord la planche en bandes pleine longueur puis
 tronçonne chaque bande. Le plan ne comporte alors que ces coupes en deux
-étapes — une recoupe de largeur dans la bande à la rigueur, jamais une
-recoupe de longueur —, là où le guillotine libre produit des plans
-qu'une telle scie exécute mal. Ça coûte en général un peu de bois.
+étapes, jamais une recoupe de longueur dans une bande déjà ouverte —
+seules des pièces de la MÊME largeur s'y tronçonnent les unes derrière
+les autres ; une pièce plus étroite ouvre sa propre bande —, là où le
+guillotine libre produit des plans qu'une telle scie exécute mal. Ça
+coûte en général un peu de bois.
 
 Le trait de scie, les surcotes et les seuils de chute sont **retenus
 d'une séance à l'autre** — ce sont des propriétés de la scie et de

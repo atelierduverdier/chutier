@@ -167,6 +167,20 @@ _NFPS = {}             # (ecart, cle_a, cle_b) -> NFP, cle_a <= cle_b
 _CADRES = {}           # (wkb du bord utile, cle_b) -> NFP du bord
 
 
+def vider_caches() -> None:
+    """Oublie tout ce qui a été précalculé (formes, NFP, cadres).
+
+    Rien ne les vidait jusqu'au 05/09/2026 — sur une longue séance à
+    imbriquer des formes variées, ils ne font que croître (124 cadres
+    après 30 planches, mesuré). Sans effet sur la justesse : ce n'est
+    QUE du cache, une clé absente se recalcule. À appeler à un point
+    naturel de coupure (un nouveau projet, par exemple), pas au milieu
+    d'une séance qui réutilise les mêmes formes — recalculer coûte cher."""
+    _VARIANTES.clear()
+    _NFPS.clear()
+    _CADRES.clear()
+
+
 def _variante(piece: opt.Piece, angle: float):
     """(clé, exact, simplifié élargi, largeur, hauteur) de la pièce
     tournée de ``angle`` degrés, coin bas-gauche de la boîte en (0, 0)."""
@@ -570,7 +584,11 @@ def _chutes(plateau: _Plateau, params: opt.Parametres) -> list:
     # page entière, il n'y a pas d'exception à rattraper).
     reste = _robuste(_bord_brut(pl)).difference(
         _robuste(shapely.union_all(fraisees, grid_size=_PRECISION)))
-    reste = reste.simplify(0.2, preserve_topology=True)
+    # 0,2 mm jusqu'au 05/09/2026 : la chute rendue pouvait alors mordre
+    # jusqu'à deux dixièmes de millimètre dans le passage de la fraise
+    # (measuré) — une simplification qui ne fait QUE réduire le nombre
+    # de sommets n'a pas besoin d'une tolérance aussi large.
+    reste = reste.simplify(0.02, preserve_topology=True)
     morceaux = reste.geoms if hasattr(reste, "geoms") else [reste]
     chutes = []
     for g in morceaux:
@@ -625,7 +643,11 @@ def deplacer(debit: "opt.Debit", indice: int, dx: float, dy: float,
     if not utile.buffer(1e-3).contains(bouge):
         return None
     for j, autre in enumerate(polygones):
-        if j != indice and autre.distance(bouge) < params.ecart_contours - 0.25:
+        if j != indice and autre.distance(bouge) < params.ecart_contours - 1e-3:
+            # 1e-3 mm absorbe le bruit géométrique réel (une translation,
+            # un polygone recomposé) ; 0,25 mm laissait un déplacement à
+            # la souris s'approcher d'un quart de millimètre de plus que
+            # l'écart réglé, sans qu'on le sache (audit du 05/09/2026).
             return None
     deplace = dataclasses.replace(
         pose, x=pose.x + dx, y=pose.y + dy,

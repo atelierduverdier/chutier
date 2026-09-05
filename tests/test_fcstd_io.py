@@ -82,6 +82,17 @@ class Lecture(unittest.TestCase):
     def test_le_titre_de_section_et_la_ligne_vide_sont_sautes(self):
         self.assertEqual(len(fcstd_io.lire_pieces(self.donnees)), 3)
 
+    def test_une_feuille_renommee_se_retrouve_par_son_label(self):
+        # FreeCAD écrit les formules par le LABEL affiché dans l'arbre
+        # (« =Parametres.HautVantail »), pas par le nom interne
+        # (« Spreadsheet001 ») : les deux ne coïncident que tant que
+        # personne n'a renommé la feuille — audit du 05/09/2026.
+        donnees = fcstd_io.fabriquer(
+            {"Spreadsheet001": PARAMETRES, "Debit": DEBIT},
+            labels={"Spreadsheet001": "Parametres"})
+        pieces = fcstd_io.lire_pieces(donnees)
+        self.assertEqual(pieces[0].longueur, 1900.0)
+
     def test_feuille_nommee(self):
         self.assertEqual(len(fcstd_io.lire_pieces(self.donnees, "Debit")), 3)
         with self.assertRaises(ValueError) as leve:

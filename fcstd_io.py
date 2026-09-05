@@ -42,14 +42,24 @@ _ATTRIBUT = re.compile(r'(\w+)="([^"]*)"')
 _OBJET = re.compile(r'<Object name="([^"]+)"')
 _FEUILLE = re.compile(r'<Object type="Spreadsheet::Sheet" name="([^"]+)"')
 _ADRESSE = re.compile(r"^([A-Z]{1,3})(\d{1,5})$")
+_LABEL = re.compile(
+    r'<Property name="Label"[^>]*>\s*<String value="([^"]*)"')
 
 # Ce que peut s'appeler chaque colonne, une fois passé par _normaliser.
 _ALIAS = {
     "rep": ("rep", "repere", "ref", "reference"),
     "designation": ("designation", "piece", "nom", "libelle", "name"),
-    "longueur": ("longueur", "long", "l", "length"),
-    "largeur": ("largeur", "larg", "w", "width"),
-    "epaisseur": ("epaisseur", "ep", "epais", "e", "thickness"),
+    # « Longueur (mm) » — l'en-tête le plus courant d'une feuille de
+    # débit — se normalise en « longueurmm » (espace et parenthèses
+    # tombent) : absent de la liste, il se refusait comme si aucune
+    # ligne d'en-tête n'existait (audit du 05/09/2026). Même chose pour
+    # largeur et épaisseur, à l'unité près (cm, m).
+    "longueur": ("longueur", "long", "l", "length",
+                "longueurmm", "longueurcm", "longueurm"),
+    "largeur": ("largeur", "larg", "w", "width",
+               "largeurmm", "largeurcm", "largeurm"),
+    "epaisseur": ("epaisseur", "ep", "epais", "e", "thickness",
+                 "epaisseurmm", "epaisseurcm", "epaisseurm"),
     "matiere": ("matiere", "mat", "essence", "bois", "material"),
     "quantite": ("quantite", "qte", "qty", "nombre", "nb", "n"),
     "fil": ("fil", "grain"),
@@ -97,8 +107,9 @@ def feuilles(donnees: bytes) -> dict:
         if nom not in noms:
             continue
         fin = bornes[k + 1][1] if k + 1 < len(bornes) else len(xml)
+        bloc = xml[debut:fin]
         feuille = Feuille(nom)
-        for m in _BALISE_CELLULE.finditer(xml[debut:fin]):
+        for m in _BALISE_CELLULE.finditer(bloc):
             attrs = {c: html.unescape(v) for c, v in _ATTRIBUT.findall(m.group(1))}
             adresse = _ADRESSE.match(attrs.get("address", ""))
             if not adresse or "content" not in attrs:
@@ -109,6 +120,16 @@ def feuilles(donnees: bytes) -> dict:
                 feuille.alias[attrs["alias"]] = cle
         if feuille.cellules:
             resultat[nom] = feuille
+            # FreeCAD écrit les formules inter-feuilles par le LABEL
+            # affiché dans l'arbre (« =Parametres.HautVantail »), pas par
+            # le nom interne (« Spreadsheet001 ») — les deux ne
+            # coïncident que tant que personne n'a renommé la feuille.
+            # Une feuille renommée se refusait en « feuille inconnue »
+            # (audit du 05/09/2026) ; les deux clés mènent maintenant à
+            # la même Feuille.
+            label = _LABEL.search(bloc)
+            if label and html.unescape(label.group(1)) != nom:
+                resultat[html.unescape(label.group(1))] = feuille
     return resultat
 
 
@@ -438,10 +459,13 @@ def lire_fichier(chemin: str, feuille: str = None) -> list:
         return lire_pieces(f.read(), feuille)
 
 
-def fabriquer(feuilles_: dict) -> bytes:
+def fabriquer(feuilles_: dict, labels: dict = None) -> bytes:
     """Un .FCStd minimal en mémoire, pour les tests et pour montrer ce que
     le chutier attend. ``feuilles_`` : {nom -> lignes}, chaque ligne une
-    liste de cellules (texte, nombre, ou ``(valeur, alias)``)."""
+    liste de cellules (texte, nombre, ou ``(valeur, alias)``). ``labels``
+    optionnel : {nom -> label affiché dans l'arbre}, quand il diffère du
+    nom interne — le cas d'une feuille renommée depuis sa création."""
+    labels = labels or {}
     objets, declarations = [], []
     for nom, lignes in feuilles_.items():
         cellules = []
@@ -458,10 +482,13 @@ def fabriquer(feuilles_: dict) -> bytes:
                 cellules.append('<Cell address="%s%d" content="%s"%s />' % (
                     col, l, html.escape(contenu, quote=True),
                     ' alias="%s"' % alias if alias else ""))
-        objets.append('<Object name="%s">\n<Properties>\n<Property name="cells"'
+        label_xml = ('<Property name="Label" type="App::PropertyString">\n'
+                    '<String value="%s"/>\n</Property>\n'
+                    % html.escape(labels[nom], quote=True)) if nom in labels else ""
+        objets.append('<Object name="%s">\n<Properties>\n%s<Property name="cells"'
                       ' type="Spreadsheet::PropertySheet">\n<Cells Count="%d">\n'
                       '%s\n</Cells>\n</Property>\n</Properties>\n</Object>'
-                      % (nom, len(cellules), "\n".join(cellules)))
+                      % (nom, label_xml, len(cellules), "\n".join(cellules)))
         declarations.append('<Object type="Spreadsheet::Sheet" name="%s" />' % nom)
     xml = ('<?xml version="1.0" encoding="utf-8"?>\n<Document>\n'
            '<Objects Count="%d">\n%s\n</Objects>\n<ObjectData Count="%d">\n%s\n'

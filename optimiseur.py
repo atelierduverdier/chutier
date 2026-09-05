@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -363,9 +363,11 @@ class Parametres:
     - ``coupe_en_bandes`` : pour une scie à panneaux ou à format, qui
       déligne d'abord la planche en bandes pleine longueur puis tronçonne
       chaque bande. Le plan ne comporte alors que des coupes en deux
-      étapes (plus une recoupe de largeur dans la bande, jamais une
-      recoupe de longueur) — le guillotine libre produit des plans qu'une
-      telle scie exécute mal.
+      étapes, jamais une recoupe de longueur dans une bande déjà ouverte
+      — seules des pièces de la MÊME largeur s'y tronçonnent les unes
+      derrière les autres, une pièce plus étroite ouvrant sa propre
+      bande — là où le guillotine libre produit des plans qu'une telle
+      scie exécute mal.
     - ``vitesse_fraisage`` : en mm/min, pour estimer le temps de découpe
       d'une planche imbriquée à partir de la longueur des contours.
     - ``passes_amelioration`` : nombre de balayages de la recherche
@@ -561,7 +563,13 @@ class Debit:
     @property
     def perte(self) -> float:
         """Sciure + rebuts sous les minis de chute (par conservation)."""
-        return self.surface - self.surface_poses - self.surface_chutes
+        # max(0, ...) : les aires des pièces (formule exacte) et des
+        # chutes (géométrie shapely, simplifiée) ne se calculent pas par
+        # la même voie — leur somme dépassait parfois d'un cheveu la
+        # surface de la planche, pour une perte négative de quelques
+        # centièmes de mm² (mesuré à écart 0, audit du 05/09/2026), une
+        # grandeur qui n'existe pas physiquement.
+        return max(0.0, self.surface - self.surface_poses - self.surface_chutes)
 
     @property
     def rendement(self) -> float:
@@ -630,12 +638,19 @@ class Resultat:
             pl = d.planche
             if pl.chute:
                 continue
-            if pl.reference not in compte:
-                compte[pl.reference] = 0
+            # Regroupées par RÉFÉRENCE SEULE jusqu'au 05/09/2026 : deux
+            # profils de catalogue homonymes mais de cotes différentes
+            # (deux « brut » à des longueurs différentes) fusionnaient en
+            # un seul achat, aux cotes de celui vu en premier — l'autre
+            # disparaissait de la liste. _meme() distingue par toutes
+            # les cotes, quantité mise à part.
+            cle = _meme(pl)
+            if cle not in compte:
+                compte[cle] = 0
                 ordre.append(pl)
-            compte[pl.reference] += 1
+            compte[cle] += 1
         return [Achat(pl.reference, pl.longueur, pl.largeur, pl.epaisseur,
-                      pl.matiere, compte[pl.reference], pl.prix)
+                      pl.matiere, compte[_meme(pl)], pl.prix)
                 for pl in ordre]
 
     def texte(self) -> str:
@@ -830,10 +845,11 @@ def _meilleure_dans(o: _Ouverte, piece: Piece, params: Parametres, fit: str,
     """La meilleure pose possible dans cette planche ouverte, ou None.
 
     En coupe en bandes, un reste de bande (la partie à droite d'une pièce
-    déjà posée dans la bande) ne reçoit qu'une pièce de la MÊME largeur
-    — ou plus étroite, ce qui vaut une recoupe de largeur dans la bande,
-    jamais une recoupe de longueur ; un reste pleine largeur ouvre une
-    nouvelle bande."""
+    déjà posée dans la bande) ne reçoit qu'une pièce de la MÊME largeur,
+    tronçonnée à sa suite ; une pièce plus étroite n'y entre pas — elle
+    ouvrirait une recoupe de longueur dans une bande déjà ouverte, que ce
+    mode exclut — et ouvre sa propre bande ailleurs. Seul un reste
+    PLEINE LARGEUR ouvre une nouvelle bande."""
     meilleur = None
     for ir, r in enumerate(o.libres):
         for ior, (dx, dy, piv) in enumerate(_orientations(piece, o.planche,

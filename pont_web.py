@@ -483,5 +483,16 @@ def exemple_formes() -> str:
     return json.dumps(donnees, ensure_ascii=False)
 
 
+def exemple_volets() -> str:
+    """L'exemple des volets battants — un débit réel, en douglas. Absent
+    du web jusqu'au 05/09/2026 : le README promettait les trois exemples
+    des deux côtés, celui-ci ne vivait qu'au bureau."""
+    pieces, stock, parametres = exemples.volets_battants()
+    donnees = projet_io.donnees_projet(pieces, stock, parametres)
+    for s in donnees["stock"]:
+        s["defauts_texte"] = saisie.texte_defauts(opt.Planche(**s))
+    return json.dumps(donnees, ensure_ascii=False)
+
+
 def parametres_defaut() -> str:
     return json.dumps(dataclasses.asdict(opt.Parametres()))

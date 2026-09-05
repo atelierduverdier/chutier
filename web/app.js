@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.3.4";
+export const VERSION = "1.3.5";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -1152,6 +1152,7 @@ function brancher() {
   $("#b-exporter-gcode").onclick = () => exporterDecoupe("gcode");
   $("#b-fiche").onclick = exporterFiche;
   $("#b-exemple").onclick = () => chargerExemple("exemple");
+  $("#b-exemple-volets").onclick = () => chargerExemple("exemple_volets");
   $("#b-exemple-formes").onclick = () => chargerExemple("exemple_formes");
   $("#b-desepingler").onclick = () => { etat.epingles = []; calculer(); };
   $("#b-aide").onclick = aide;
