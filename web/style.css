@@ -73,7 +73,14 @@ input.faux { background: rgba(192,57,43,.25) !important; }
 #reglages .discret { grid-column: 1 / -1; margin: 0 0 4px; }
 #reglages input, #reglages select { width: 9em; }
 .resultats { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
-.tuiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+/* auto-fit plutôt qu'un compte fixe : la place réelle des tuiles dépend
+   de LA POIGNÉE saisie/plan (déplaçable), pas seulement de la largeur de
+   la fenêtre — un média-requête sur la page entière ne pouvait pas le
+   savoir. À 1000 px de fenêtre (poignée à sa position par défaut), les
+   six tuiles n'avaient que ~410 px : une valeur comme « 0,125 m² » ou
+   « 21 / 21 » s'y coupait en deux lignes, en plein milieu du nombre
+   (audit du 05/09/2026). */
+.tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
 .tuile { background: var(--carte); border: 1px solid var(--bord); border-radius: 5px; padding: 6px 10px; }
 .tuile .libelle { font-size: 11px; letter-spacing: .04em; color: var(--mid); text-transform: uppercase; }
 .tuile .valeur { font-size: 20px; font-weight: 600; }
@@ -115,7 +122,6 @@ footer a { color: inherit; }
   .saisie { overflow: visible; }
   .table-cadre { max-height: 50vh; }
   .plan { min-height: 60vh; }
-  .tuiles { grid-template-columns: repeat(3, 1fr); }
 }
 
 /* Un écran bas — une tablette couchée, une fenêtre réduite : le plan ne

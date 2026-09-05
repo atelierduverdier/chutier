@@ -130,7 +130,12 @@ class Fichiers(unittest.TestCase):
         svg = pont_web.svg_planche(json.dumps(debit["epingle"]), 1, "essai")
         self.assertIn("<svg", svg)
         relu = json.loads(pont_web.depuis_svg(svg))
-        self.assertEqual(len(relu["formes"]), 3)      # planche + 2 pièces
+        # Le tour de planche (groupe "planche") ne revient plus comme
+        # une pièce à part entière depuis le 05/09/2026 : seules les 2
+        # vraies pièces reviennent, avec un avertissement qui le dit.
+        self.assertEqual(len(relu["formes"]), 2)
+        self.assertTrue(any("tour(s) de planche" in a
+                            for a in relu["avertissements"]), relu)
 
     def test_fcstd_en_base64(self):
         import base64

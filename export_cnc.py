@@ -40,7 +40,11 @@ from xml.sax.saxutils import escape
 
 
 def _nombre(v: float) -> str:
-    return ("%.4f" % v).rstrip("0").rstrip(".") or "0"
+    # -0.00001, arrondi à quatre décimales, ressortait « -0 » — légal en
+    # DXF mais laid, et signe d'une soustraction qui n'est pas tombée
+    # pile (audit du 05/09/2026). gcode.py._n() porte la même garde.
+    texte = ("%.4f" % v).rstrip("0").rstrip(".")
+    return "0" if texte in ("", "-0") else texte
 
 
 def _anneaux(pose):

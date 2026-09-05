@@ -823,6 +823,14 @@ def _walk(elem, matrix, inherited_fill, tol, records, skipped,
             skipped["_degenere"] += 1
         if d_forme and not vu:
             skipped["_masque"] += 1
+        elif d_forme and groupe == "planche":
+            # Le tour de planche que svg_planche() écrit lui-même dans
+            # un groupe « planche » : réimporté (Fichier → Importer des
+            # contours), il devenait une pièce à part entière, aux cotes
+            # mêmes de la planche (audit du 05/09/2026). Cette
+            # convention est la NÔTRE ; elle ne concerne qu'un SVG déjà
+            # exporté d'ici.
+            skipped["_planche"] += 1
         elif d_forme:
             subpaths, warns = path_d_to_subpaths(d_forme, tol)
             if warns:
@@ -890,6 +898,10 @@ def parse_svg_root(root):
             warnings.append(
                 "{} élément(s) masqué(s) dans le dessin (display:none / "
                 "visibility:hidden) : non importés, comme à l'écran".format(count))
+        elif tag == "_planche":
+            warnings.append(
+                "{} tour(s) de planche (groupe « planche », écrit par le"
+                " chutier lui-même) non importé(s) comme pièce".format(count))
         else:
             warnings.append("{} élément(s) <{}> ignoré(s) : {}".format(
                 count, tag, _UNSUPPORTED_LABELS.get(tag, "non pris en charge")))
@@ -942,6 +954,18 @@ def _dedans(point, polygone):
     return dedans
 
 
+def _contient(parent, enfant):
+    """``enfant`` est-il ENTIÈREMENT dans ``parent`` ? Tester un seul
+    point (le premier sommet, jusqu'au 05/09/2026) laissait deux tracés
+    qui se CHEVAUCHENT (sans qu'aucun ne contienne vraiment l'autre)
+    devenir l'un le trou de l'autre — leur premier sommet tombant chez
+    le voisin par hasard. Tous les sommets doivent y être : un vrai trou
+    (une fenêtre dans un cadre) a chacun des siens dans le cadre : le
+    cadre, lui, a des sommets (ses coins) hors de la fenêtre, et n'est
+    donc pas réciproquement « dans » son propre trou."""
+    return all(_dedans(p, parent) for p in enfant)
+
+
 def _nettoyer(points, tol=1e-6):
     """Ôte les doublons consécutifs et le point de fermeture, oriente
     dans le sens direct. Vide si moins de trois points restent."""
@@ -991,6 +1015,7 @@ def _formes(records, avertissements):
     direct, coin bas-gauche en (0, 0), les trous déplacés d'autant."""
     formes = []
     ouverts = 0
+    degeneres = 0
     for index, record in enumerate(records, 1):
         fermes = [sp["points"] for sp in record["subpaths"]
                   if sp["closed"] and len(sp["points"]) >= 3]
@@ -1002,7 +1027,7 @@ def _formes(records, avertissements):
         parents = []
         for i, pts in enumerate(fermes):
             contenants = [j for j, autre in enumerate(fermes)
-                          if j != i and _dedans(pts[0], autre)]
+                          if j != i and _contient(autre, pts)]
             parents.append(contenants)
         exterieurs = [i for i, c in enumerate(parents) if len(c) % 2 == 0]
         trous_de = {i: [] for i in exterieurs}
@@ -1017,6 +1042,12 @@ def _formes(records, avertissements):
         for k, i in enumerate(exterieurs, 1):
             contour, trous = _normaliser(fermes[i], trous_de[i])
             if not contour:
+                # Fermé, au moins trois points bruts (le filtre plus
+                # haut), mais réduit à moins de trois une fois les
+                # doublons et le point de fermeture ôtés — un aller-
+                # retour sur lui-même, pas une forme. Disparaissait sans
+                # un mot (audit du 05/09/2026), comme un « d="" » vide.
+                degeneres += 1
                 continue
             nom = base if len(exterieurs) == 1 else "%s (%d)" % (base, k)
             formes.append({
@@ -1031,6 +1062,10 @@ def _formes(records, avertissements):
         avertissements.append(
             "%d tracé(s) ouvert(s) non importé(s) : une forme à découper"
             " est un contour fermé" % ouverts)
+    if degeneres:
+        avertissements.append(
+            "%d tracé(s) dégénéré(s) non importé(s) : un contour réduit à"
+            " un aller-retour n'est pas une forme" % degeneres)
     return formes, avertissements
 
 

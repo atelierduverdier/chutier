@@ -343,19 +343,34 @@ class _Evaluateur:
 
 def _entete(feuille: Feuille):
     """(numéro de ligne, {champ -> colonne}) de la ligne d'en-tête, ou
-    None si cette feuille n'en a pas."""
+    None si cette feuille n'en a pas. Lève ``ValueError`` si DEUX
+    colonnes de la même ligne se lisent comme le même champ (deux
+    « Longueur », une faute de frappe ou une colonne inutilisée
+    laissée en place) : la seconde était ignorée en silence jusqu'au
+    05/09/2026, sans qu'on sache laquelle avait vraiment compté."""
     par_ligne = {}
     for (col, lig), contenu in feuille.cellules.items():
         par_ligne.setdefault(lig, {})[col] = _normaliser(_texte(contenu))
     for lig in sorted(par_ligne):
-        colonnes = {}
+        colonnes, doublons = {}, {}
         for col in sorted(par_ligne[lig]):
             mot = par_ligne[lig][col]
             for champ, alias in _ALIAS.items():
-                if mot in alias and champ not in colonnes:
+                if mot not in alias:
+                    continue
+                if champ in colonnes:
+                    doublons.setdefault(champ, [colonnes[champ]]).append(col)
+                else:
                     colonnes[champ] = col
-        if ("rep" in colonnes or "designation" in colonnes) \
-                and {"longueur", "largeur"} <= set(colonnes):
+        valide = (("rep" in colonnes or "designation" in colonnes)
+                  and {"longueur", "largeur"} <= set(colonnes))
+        if valide and doublons:
+            champ, cols = next(iter(doublons.items()))
+            raise ValueError(
+                "%s!%s%d et %s%d : deux colonnes se lisent comme « %s » —"
+                " laquelle compte n'est pas sûr"
+                % (feuille.nom, cols[0], lig, cols[1], lig, champ))
+        if valide:
             return lig, colonnes
     return None
 
@@ -368,13 +383,27 @@ def lire_pieces(donnees: bytes, feuille: str = None) -> list:
     if not document:
         raise ValueError("ce document FreeCAD n'a aucun tableur")
     candidates = [feuille] if feuille else sorted(document)
+    valides = []
     for nom in candidates:
         if nom not in document:
             raise ValueError("pas de tableur « %s » dans ce document (il y a :"
                              " %s)" % (nom, ", ".join(sorted(document))))
         trouve = _entete(document[nom])
         if trouve:
-            return _lire(document, document[nom], *trouve)
+            valides.append((nom, trouve))
+    if valides:
+        if not feuille and len(valides) > 1:
+            # La première feuille valide dans l'ordre alphabétique gagnait
+            # en silence — un document avec deux vraies feuilles de débit
+            # (deux vantaux, par exemple) en perdait une sans un mot
+            # (audit du 05/09/2026).
+            raise ValueError(
+                "%d tableurs de ce document ont une ligne d'en-tête de"
+                " débit (%s) : lequel lire n'est pas sûr — passez son nom"
+                " (lire_pieces(feuille=...)), ou n'en gardez qu'un dans le"
+                " document" % (len(valides), ", ".join(n for n, _ in valides)))
+        nom, trouve = valides[0]
+        return _lire(document, document[nom], *trouve)
     # Dire ce qui manque ne suffit pas : un document MODELÉ n'a pas de
     # feuille de débit du tout, et son tableur ne porte que des cotes
     # pilotes. On indique alors le chemin, au lieu de laisser chercher.

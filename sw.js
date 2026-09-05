@@ -9,7 +9,7 @@
 //
 // La VERSION ci-dessous suit celle d'optimiseur.py (tests/test_version.py
 // y veille) : un cache par version, les autres s'effacent à l'activation.
-const VERSION = "1.3.6";
+const VERSION = "1.3.7";
 const CACHE = "chutier-v" + VERSION;
 const PORTEE = new URL("./", self.location).pathname;
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/";

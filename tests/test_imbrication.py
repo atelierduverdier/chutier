@@ -515,12 +515,15 @@ class EcritureSvg(unittest.TestCase):
         r = optimiser(_pieces(), stock, RAPIDE)
         chemin = os.path.join(tempfile.mkdtemp(), "decoupe.svg")
         contours_svg.ecrire_svg(chemin, r.debits[0], 1, "essai")
-        formes, _ = contours_svg.formes_depuis_svg(chemin)
-        # la planche elle-même, puis chaque pièce
-        self.assertEqual(len(formes), 1 + len(r.debits[0].poses))
-        self.assertAlmostEqual(formes[0]["longueur"], 600, places=3)
+        formes, avertissements = contours_svg.formes_depuis_svg(chemin)
+        # le tour de planche (groupe "planche") ne revient plus comme une
+        # pièce depuis le 05/09/2026 : seules les pièces reviennent, et
+        # l'avertissement le dit.
+        self.assertEqual(len(formes), len(r.debits[0].poses))
+        self.assertTrue(any("tour(s) de planche" in a for a in avertissements),
+                        avertissements)
         aires_lues = sorted(abs(contours_svg._aire_signee(f["contour"]))
-                            for f in formes[1:])
+                            for f in formes)
         aires_posees = sorted(p.aire for p in r.debits[0].poses)
         for a, b in zip(aires_lues, aires_posees):
             self.assertAlmostEqual(a, b, delta=b * 0.01)

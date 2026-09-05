@@ -15,7 +15,7 @@ feuille qu'on imprime et qu'on emporte à l'établi.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QBrush, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF,
 )
@@ -91,6 +91,10 @@ class VuePlan(QGraphicsView):
         self._traits_visibles = False
         self._facteur_texte = 1.0
         self.couleurs = {}          # référence -> QColor, posée par la fenêtre
+        self._minuterie_redim = QTimer(self)
+        self._minuterie_redim.setSingleShot(True)
+        self._minuterie_redim.setInterval(150)
+        self._minuterie_redim.timeout.connect(self._reconstruire_apres_redim)
 
     # -- construction de la scène ---------------------------------------
 
@@ -147,8 +151,20 @@ class VuePlan(QGraphicsView):
             # Le titre se pose EN HAUT de sa bande : le reste de la bande
             # reçoit les étiquettes qui débordent par le haut de la planche
             # (celles des pièces au ras du bord), qui sinon s'écrivent par
-            # dessus le titre.
-            return h, h * 2.2, h * 1.4
+            # dessus le titre. « h * 2.2 » suffit tant que h vaut son
+            # plein 14 px (_CARTOUCHE_PX) — mais un panneau ÉTROIT le
+            # plafonne à largeur_max * 0.55, rétrécissant la bande ET la
+            # marge qu'elle laisse aux étiquettes hors, en pixels ÉCRAN
+            # constants (elles ignorent le zoom, TAILLE_HORS) : sur un
+            # brin de 150 mm de large, une chute au ras du bord haut
+            # écrivait alors « chute » par-dessus le titre (mesuré,
+            # audit du 05/09/2026). La bande garde donc toujours, en plus
+            # de la hauteur du titre, de quoi loger une étiquette hors
+            # (sa hauteur en pixels écran, ramenée en unités de scène).
+            marge_hors = (self.TAILLE_HORS * 1.9 + 10) * self._facteur_texte \
+                / echelle
+            bande = max(h * 2.2, h + marge_hors)
+            return h, bande, h * 1.4
 
         hauteur_texte, bande, interligne = tailles(echelle_prevue)
         if largeur_prevue is None:
@@ -619,6 +635,22 @@ class VuePlan(QGraphicsView):
     def resizeEvent(self, evenement):
         super().resizeEvent(evenement)
         self._ajuster()
+        # Le cartouche (titre de chaque planche) est taillé une fois,
+        # dans afficher(), pour la largeur du viewport À CET INSTANT —
+        # redimensionner la fenêtre ne faisait ensuite que RÉÉCHELONNER
+        # cette même scène (fitInView, dans _ajuster ci-dessus), sans
+        # jamais retailler le texte : sur une petite fenêtre, un titre
+        # réglé pour un grand écran retombait à quelques pixels,
+        # illisible (audit du 05/09/2026). Une minuterie : reconstruire
+        # à CHAQUE pixel d'un redimensionnement à la souris coûterait
+        # cher pour rien, seule la taille FINALE compte.
+        if self._debits:
+            self._minuterie_redim.start()
+
+    def _reconstruire_apres_redim(self):
+        if self._debits:
+            self.afficher(self._debits, self._traits_visibles,
+                          facteur_texte=self._facteur_texte)
 
     def _ajuster(self):
         if self.scene() is None or self.scene().sceneRect().isEmpty():
