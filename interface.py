@@ -686,13 +686,22 @@ class FenetrePrincipale(QMainWindow):
         colonne.addLayout(ligne)
         return page
 
-    def _bouton(self, action, texte=None) -> QToolButton:
+    def _bouton(self, action, texte=None, table=None) -> QToolButton:
         """Un bouton de ligne, au libellé COURT.
 
         Le libellé long du menu (« Matière → lignes sélectionnées »)
         imposait au panneau de saisie une largeur minimale de 765 px : on
         ne pouvait plus le rétrécir pour donner de la place au plan.
-        L'info-bulle, elle, porte toujours la phrase entière."""
+        L'info-bulle, elle, porte toujours la phrase entière.
+
+        ``table`` : ce bouton vit SOUS une table précise et doit agir sur
+        ELLE — pas sur « celle qui a le focus », ce que l'action partagée
+        décide normalement (menu, raccourci clavier). Un clic sur un
+        BOUTON ne donne le focus à aucune cellule : la table active
+        restait celle du dernier clic dans une cellule, quelle qu'elle
+        soit — cliquer « + ligne » sous le Stock sans avoir d'abord
+        cliqué une cellule du Stock ajoutait la ligne aux Pièces (signalé
+        par Christophe en direct, 05/09/2026)."""
         bouton = QToolButton()
         bouton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         if texte is None:
@@ -701,6 +710,9 @@ class FenetrePrincipale(QMainWindow):
             bouton.setText(texte)
             bouton.setIcon(action.icon())
             bouton.setToolTip(action.toolTip())
+            if table is not None:
+                bouton.clicked.connect(
+                    lambda: setattr(self, "_table_active", table))
             bouton.clicked.connect(action.trigger)
         return bouton
 
@@ -711,10 +723,10 @@ class FenetrePrincipale(QMainWindow):
             "Ce qu'il faut débiter : une ligne par référence")
         return self._page_table(
             self.table_pieces, self.titre_pieces, self.resume_pieces,
-            [self._bouton(self.a_ligne, "+ ligne"),
-             self._bouton(self.a_dupliquer, "Dupliquer"),
-             self._bouton(self.a_supprimer, "Supprimer"),
-             self._bouton(self.a_matiere, "Matière…"),
+            [self._bouton(self.a_ligne, "+ ligne", self.table_pieces),
+             self._bouton(self.a_dupliquer, "Dupliquer", self.table_pieces),
+             self._bouton(self.a_supprimer, "Supprimer", self.table_pieces),
+             self._bouton(self.a_matiere, "Matière…", self.table_pieces),
              self._bouton(self.a_importer, "Importer…")])
 
     def _page_stock(self) -> QWidget:
@@ -728,9 +740,9 @@ class FenetrePrincipale(QMainWindow):
             "Ce qu'on a sous la main : planches, chutes, profils à acheter")
         return self._page_table(
             self.table_stock, self.titre_stock, self.resume_stock,
-            [self._bouton(self.a_ligne, "+ ligne"),
-             self._bouton(self.a_dupliquer, "Dupliquer"),
-             self._bouton(self.a_supprimer, "Supprimer")])
+            [self._bouton(self.a_ligne, "+ ligne", self.table_stock),
+             self._bouton(self.a_dupliquer, "Dupliquer", self.table_stock),
+             self._bouton(self.a_supprimer, "Supprimer", self.table_stock)])
 
     def _page_reglages(self) -> QWidget:
         defauts = opt.Parametres()
