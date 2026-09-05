@@ -109,7 +109,12 @@ def donnees_projet(pieces, stock, parametres, epingles=()) -> dict:
 def depuis_donnees(donnees: dict):
     """(pieces, stock, parametres, epingles) depuis le dictionnaire d'un
     projet — le chemin inverse de :func:`donnees_projet`. Lève
-    ``ValueError`` s'il est mal formé."""
+    ``ValueError`` s'il est mal formé, ou si une pièce ou une planche ne
+    tient pas debout (une quantité négative, une cote infinie, un
+    contour à deux points passaient jusqu'ici en silence — audit du
+    05/09/2026 : les mêmes règles qu'au calcul, rejouées ICI, dès
+    l'import plutôt qu'au prochain F5, ou jamais si le projet n'est que
+    rechargé puis réenregistré)."""
     try:
         pieces = [opt.Piece(**d) for d in donnees["pieces"]]
         stock = _planches(donnees["stock"], "fichier de projet")
@@ -118,6 +123,10 @@ def depuis_donnees(donnees: dict):
     except (KeyError, TypeError) as erreur:
         raise ValueError("fichier de projet mal formé : %s" % erreur) \
             from erreur
+    for p in pieces:
+        opt._valider_piece(p)
+    for s in stock:
+        opt._valider_planche(s)
     return pieces, stock, parametres, epingles
 
 
@@ -148,13 +157,7 @@ def lire(chemin: str):
     ``OSError`` (fichier introuvable) — à l'appelant de les rattraper.
     """
     donnees = _lire_json(chemin, "fichier de projet")
-    try:
-        pieces = [opt.Piece(**d) for d in donnees["pieces"]]
-        stock = _planches(donnees["stock"], "fichier de projet")
-        parametres = opt.Parametres(**donnees.get("parametres", {}))
-    except (KeyError, TypeError) as erreur:
-        raise ValueError("fichier de projet mal formé : %s" % erreur) \
-            from erreur
+    pieces, stock, parametres, _epingles = depuis_donnees(donnees)
     return pieces, stock, parametres
 
 

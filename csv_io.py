@@ -101,7 +101,7 @@ def _ligne_vers_piece(ligne: dict, num_ligne: int):
         if composable not in ("", "0", "1", "vrai", "faux", "true", "false"):
             raise ValueError("composable « %s » inconnu (attendu : vide,"
                              " 0, 1, vrai ou faux)" % composable)
-        return opt.Piece(
+        piece = opt.Piece(
             reference=reference,
             longueur=float(ligne["longueur"]),
             largeur=float(ligne["largeur"]),
@@ -110,5 +110,11 @@ def _ligne_vers_piece(ligne: dict, num_ligne: int):
             quantite=int(ligne["quantite"] or 1),
             fil=fil,
             composable=composable in ("1", "vrai", "true"))
+        # Une quantité négative, une longueur infinie (float("inf") ne
+        # lève rien) : rien ne les arrêtait avant le prochain calcul —
+        # ou jamais, si le CSV n'est que réexporté (audit du
+        # 05/09/2026). Les mêmes règles qu'au calcul, rejouées ICI.
+        opt._valider_piece(piece)
+        return piece
     except (TypeError, ValueError) as erreur:
         raise ValueError("ligne %d du CSV : %s" % (num_ligne, erreur)) from erreur

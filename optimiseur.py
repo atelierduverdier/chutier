@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.3.7"
+VERSION = "1.3.8"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -1674,83 +1674,97 @@ def _finis(nom: str, *valeurs: float):
             raise ValueError("%s : nombre non fini (%s)" % (nom, v))
 
 
+def _valider_piece(p: "Piece") -> None:
+    """Les règles qui ne dépendent QUE de la pièce elle-même — jamais du
+    reste de la saisie ni des réglages. Exposée pour que csv_io et
+    projet_io la rejouent DÈS L'IMPORT (une quantité négative, une
+    longueur infinie ou un contour à deux points passaient jusqu'ici en
+    silence, pour ne casser qu'au prochain calcul — ou jamais, si on ne
+    fait qu'exporter ce qu'on vient de lire ; audit du 05/09/2026)."""
+    _finis("pièce « %s »" % p.reference, p.longueur, p.largeur, p.epaisseur)
+    if p.longueur <= EPS or p.largeur <= EPS or p.epaisseur < 0:
+        raise ValueError("pièce « %s » : dimensions invalides"
+                         % p.reference)
+    if p.contour and len(p.contour) < 3:
+        raise ValueError("pièce « %s » : un contour demande au moins"
+                         " trois points" % p.reference)
+    if p.contour and abs(_aire_polygone(p.contour)) <= EPS:
+        # Trois points alignés, ou un contour croisé en papillon :
+        # shapely les réduisait à un polygone vide, et l'imbrication
+        # cassait sur un NaN bien plus loin.
+        raise ValueError("pièce « %s » : contour d'aire nulle"
+                         % p.reference)
+    if p.contour and _contour_se_croise(p.contour):
+        # Un contour croisé d'aire non nulle passait : shapely le
+        # « réparait » en silence et n'en posait qu'un lobe — la pièce
+        # fraisée n'était plus celle dessinée (audit du 05/09/2026).
+        raise ValueError("pièce « %s » : le contour se croise lui-même"
+                         % p.reference)
+    for trou in p.trous:
+        if _contour_se_croise(trou):
+            raise ValueError("pièce « %s » : un trou se croise lui-même"
+                             % p.reference)
+        if p.contour and not all(_dans_polygone(pt, p.contour)
+                                 for pt in trou):
+            raise ValueError("pièce « %s » : un trou sort du contour"
+                             % p.reference)
+    if p.trous and not p.contour:
+        raise ValueError("pièce « %s » : des trous sans contour"
+                         % p.reference)
+    if any(len(t) < 3 for t in p.trous):
+        raise ValueError("pièce « %s » : un trou demande au moins"
+                         " trois points" % p.reference)
+    if p.quantite < 1 or p.quantite != int(p.quantite):
+        # « 2.0 » passait ici puis levait un TypeError bien plus
+        # loin (un round() ou un range() sur un flottant) — un
+        # message technique à la place d'une saisie nommée (audit
+        # du 05/09/2026).
+        raise ValueError("pièce « %s » : quantité invalide (%r)"
+                         % (p.reference, p.quantite))
+    if p.fil not in _FILS_VALIDES:
+        raise ValueError(
+            "pièce « %s » : fil inconnu « %s » (attendu : %s)"
+            % (p.reference, p.fil, ", ".join(_FILS_VALIDES)))
+
+
+def _valider_planche(s: "Planche") -> None:
+    """Même chose pour une planche — voir :func:`_valider_piece`."""
+    _finis("planche « %s »" % s.reference, s.longueur, s.largeur,
+          s.epaisseur, s.recoupe_bouts, s.recoupe_rives, s.prix)
+    if s.longueur <= EPS or s.largeur <= EPS or s.epaisseur < 0:
+        raise ValueError("planche « %s » : dimensions invalides"
+                         % s.reference)
+    if s.quantite != int(s.quantite) or (s.quantite < 1 and not s.illimite):
+        # Un profil de catalogue (illimite) n'a rien À BORNER : une
+        # quantité de 0 y a un sens (« je n'en ai pas encore, j'en
+        # achèterai ») et se refusait à tort (audit du 05/09/2026).
+        raise ValueError("planche « %s » : quantité invalide (%r)"
+                         % (s.reference, s.quantite))
+    if s.recoupe_bouts < 0 or s.recoupe_rives < 0:
+        raise ValueError("planche « %s » : recoupe négative"
+                         % s.reference)
+    if (2 * s.recoupe_bouts >= s.longueur - EPS
+            or 2 * s.recoupe_rives >= s.largeur - EPS):
+        raise ValueError("planche « %s » : les recoupes mangent toute"
+                         " la planche" % s.reference)
+    for zone in s.defauts:
+        if len(zone) != 4:
+            raise ValueError("planche « %s » : une zone de défaut se"
+                             " donne en x, y, longueur, largeur"
+                             % s.reference)
+        x, y, dx, dy = zone
+        if (dx <= EPS or dy <= EPS or x < -EPS or y < -EPS
+                or x + dx > s.longueur + EPS or y + dy > s.largeur + EPS):
+            raise ValueError("planche « %s » : zone de défaut %s hors"
+                             " de la planche ou vide"
+                             % (s.reference, tuple(_mm(v) for v in zone)))
+
+
 def _valider(pieces: list, stock: list, params: Parametres):
     for p in pieces:
-        _finis("pièce « %s »" % p.reference, p.longueur, p.largeur,
-              p.epaisseur)
-        if p.longueur <= EPS or p.largeur <= EPS or p.epaisseur < 0:
-            raise ValueError("pièce « %s » : dimensions invalides"
-                             % p.reference)
-        if p.contour and len(p.contour) < 3:
-            raise ValueError("pièce « %s » : un contour demande au moins"
-                             " trois points" % p.reference)
-        if p.contour and abs(_aire_polygone(p.contour)) <= EPS:
-            # Trois points alignés, ou un contour croisé en papillon :
-            # shapely les réduisait à un polygone vide, et l'imbrication
-            # cassait sur un NaN bien plus loin.
-            raise ValueError("pièce « %s » : contour d'aire nulle"
-                             % p.reference)
-        if p.contour and _contour_se_croise(p.contour):
-            # Un contour croisé d'aire non nulle passait : shapely le
-            # « réparait » en silence et n'en posait qu'un lobe — la pièce
-            # fraisée n'était plus celle dessinée (audit du 05/09/2026).
-            raise ValueError("pièce « %s » : le contour se croise lui-même"
-                             % p.reference)
-        for trou in p.trous:
-            if _contour_se_croise(trou):
-                raise ValueError("pièce « %s » : un trou se croise lui-même"
-                                 % p.reference)
-            if p.contour and not all(_dans_polygone(pt, p.contour)
-                                     for pt in trou):
-                raise ValueError("pièce « %s » : un trou sort du contour"
-                                 % p.reference)
-        if p.trous and not p.contour:
-            raise ValueError("pièce « %s » : des trous sans contour"
-                             % p.reference)
-        if any(len(t) < 3 for t in p.trous):
-            raise ValueError("pièce « %s » : un trou demande au moins"
-                             " trois points" % p.reference)
-        if p.quantite < 1 or p.quantite != int(p.quantite):
-            # « 2.0 » passait ici puis levait un TypeError bien plus
-            # loin (un round() ou un range() sur un flottant) — un
-            # message technique à la place d'une saisie nommée (audit
-            # du 05/09/2026).
-            raise ValueError("pièce « %s » : quantité invalide (%r)"
-                             % (p.reference, p.quantite))
-        if p.fil not in _FILS_VALIDES:
-            raise ValueError(
-                "pièce « %s » : fil inconnu « %s » (attendu : %s)"
-                % (p.reference, p.fil, ", ".join(_FILS_VALIDES)))
+        _valider_piece(p)
     for s in stock:
-        _finis("planche « %s »" % s.reference, s.longueur, s.largeur,
-              s.epaisseur, s.recoupe_bouts, s.recoupe_rives, s.prix)
-        if s.longueur <= EPS or s.largeur <= EPS or s.epaisseur < 0:
-            raise ValueError("planche « %s » : dimensions invalides"
-                             % s.reference)
-        if s.quantite != int(s.quantite) or (s.quantite < 1 and not s.illimite):
-            # Un profil de catalogue (illimite) n'a rien À BORNER : une
-            # quantité de 0 y a un sens (« je n'en ai pas encore, j'en
-            # achèterai ») et se refusait à tort (audit du 05/09/2026).
-            raise ValueError("planche « %s » : quantité invalide (%r)"
-                             % (s.reference, s.quantite))
-        if s.recoupe_bouts < 0 or s.recoupe_rives < 0:
-            raise ValueError("planche « %s » : recoupe négative"
-                             % s.reference)
-        if (2 * s.recoupe_bouts >= s.longueur - EPS
-                or 2 * s.recoupe_rives >= s.largeur - EPS):
-            raise ValueError("planche « %s » : les recoupes mangent toute"
-                             " la planche" % s.reference)
-        for zone in s.defauts:
-            if len(zone) != 4:
-                raise ValueError("planche « %s » : une zone de défaut se"
-                                 " donne en x, y, longueur, largeur"
-                                 % s.reference)
-            x, y, dx, dy = zone
-            if (dx <= EPS or dy <= EPS or x < -EPS or y < -EPS
-                    or x + dx > s.longueur + EPS or y + dy > s.largeur + EPS):
-                raise ValueError("planche « %s » : zone de défaut %s hors"
-                                 " de la planche ou vide"
-                                 % (s.reference, tuple(_mm(v) for v in zone)))
+        _valider_planche(s)
     _finis("paramètres", params.trait_de_scie, params.chute_mini_longueur,
           params.chute_mini_largeur, params.surcote_longueur,
           params.surcote_largeur, params.tolerance_epaisseur,
