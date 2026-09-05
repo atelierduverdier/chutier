@@ -358,14 +358,24 @@ def decoupe(format_: str, debit_json: str, numero: int = 1,
     la page le reconnaît à cela, un SVG commence par « <?xml »)."""
     try:
         debit = projet_io._debit(json.loads(debit_json))
-        reglages = None
         if format_ == "gcode":
+            # À part : le G-code porte des avertissements (la fraise
+            # mordrait dans une voisine, ou son centre sortirait de la
+            # planche) qu'``export_cnc.decoupe`` jetait en silence — le
+            # bureau les affiche depuis le programme lui-même
+            # (``gcode.programme``) plutôt que par ce détour, pour la
+            # même raison ici : le web les taisait complètement, sans
+            # même le petit mot de remarque (audit du 05/09/2026).
             import gcode
             champs = {f.name for f in dataclasses.fields(gcode.Reglages)}
             brut = json.loads(reglages_json) if reglages_json else {}
             reglages = gcode.Reglages(**{c: v for c, v in brut.items()
                                          if c in champs})
-        return export_cnc.decoupe(format_, debit, numero, titre, reglages)
+            texte, fautes, remarques = gcode.programme(debit, reglages,
+                                                       numero, titre)
+            return json.dumps({"texte": texte, "avertissements": fautes,
+                               "remarques": remarques}, ensure_ascii=False)
+        return export_cnc.decoupe(format_, debit, numero, titre)
     except Exception as erreur:              # noqa: BLE001
         return json.dumps({"erreur": str(erreur)}, ensure_ascii=False)
 

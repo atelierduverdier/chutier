@@ -80,6 +80,7 @@ const REGLAGES_GCODE = [
       [["avalant", "en avalant"], ["opposition", "en opposition"]]],
     ["profondeur_passe", "Profondeur de passe (mm)", "nombre", "Ce qu'on descend par tour. La moitié du diamètre en panneau, le diamètre en tendre."],
     ["depassement", "Dépassement sous la planche (mm)", "nombre", "Ce qu'on mord dans le martyr, pour traverser vraiment."],
+    ["vitesse_avance", "Avance en XY (mm/min)", "nombre", "La vitesse d'avance du programme G-code écrit — absente ici jusqu'au 05/09/2026, le fichier sortait toujours à la valeur par défaut."],
     ["vitesse_plongee", "Plongée en Z (mm/min)", "nombre", "Bien plus lente que l'avance : la fraise coupe mal par le bout."],
     ["vitesse_broche", "Broche (tr/min)", "entier", "Zéro n'écrit ni M3 ni M5 — pour une broche lancée à la main."],
     ["hauteur_securite", "Hauteur de sécurité (mm)", "nombre", "La hauteur des déplacements rapides au-dessus de la planche."],
@@ -132,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.3.1";
+export const VERSION = "1.3.2";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -853,14 +854,33 @@ async function exporterDecoupe(format) {
   if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; }
   const titre = etat.nomProjet || t("Feuille de débit");
   const [extension, type] = FORMATS_DECOUPE[format];
+  const avertissements = [];
+  let remarques = [];
   for (const [i, d] of etat.resultat.debits.entries()) {
-    const texte = await tenter("decoupe", format, JSON.stringify(d.epingle), i + 1, titre, format === "gcode" ? JSON.stringify(etat.gcode) : "");
-    if (texte === null) return;
-    // Un débit mal formé revient en JSON d'erreur, pas en dessin : un SVG
-    // commence par « <?xml », un DXF par « 999 », jamais par « { ».
-    if (texte.startsWith('{"erreur"')) { alerter(t("Le calcul a échoué : ") + JSON.parse(texte).erreur); return; }
-    telecharger(`${titre}-planche-${i + 1}.${extension}`, texte, type);
+    const reponse = await tenter("decoupe", format, JSON.stringify(d.epingle), i + 1, titre, format === "gcode" ? JSON.stringify(etat.gcode) : "");
+    if (reponse === null) return;
+    if (format === "gcode") {
+      // Le G-code revient toujours en JSON — {"erreur"} au premier
+      // souci, sinon {texte, avertissements, remarques} : le fichier
+      // ET ce qu'il faut en savoir, comme le bureau (audit du
+      // 05/09/2026 : le web écrivait le fichier sans jamais le dire).
+      const d2 = JSON.parse(reponse);
+      if (d2.erreur) { alerter(t("Le calcul a échoué : ") + d2.erreur); return; }
+      avertissements.push(...d2.avertissements.map(a => t`planche ${i + 1} : ` + a));
+      remarques = remarques.concat(d2.remarques);
+      telecharger(`${titre}-planche-${i + 1}.${extension}`, d2.texte, type);
+    } else {
+      // Un débit mal formé revient en JSON d'erreur, pas en dessin : un
+      // SVG commence par « <?xml », un DXF par « 999 », jamais par « { ».
+      if (reponse.startsWith('{"erreur"')) { alerter(t("Le calcul a échoué : ") + JSON.parse(reponse).erreur); return; }
+      telecharger(`${titre}-planche-${i + 1}.${extension}`, reponse, type);
+    }
     await new Promise(r => setTimeout(r, 300));
+  }
+  if (avertissements.length) {
+    alerter(t("Le programme est écrit, mais :\n\n• ") + avertissements.slice(0, 12).join("\n• "));
+  } else if (remarques.length) {
+    $("#etat").textContent = t`${remarques.length} remarque(s) en tête des programmes : ` + remarques[0];
   }
 }
 function exporterFiche() { if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; } telecharger((etat.nomProjet || "fiche-atelier") + ".txt", (etat.nomProjet || t("Feuille de débit")) + "\n\n" + etat.resultat.fiche + "\n"); }

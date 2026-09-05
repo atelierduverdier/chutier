@@ -181,23 +181,52 @@ class Gcode(unittest.TestCase):
         return sortie["resultat"]["debits"][0]["epingle"]
 
     def test_les_reglages_de_la_page_arrivent_au_programme(self):
+        # Le G-code revient en JSON {texte, avertissements, remarques} —
+        # pas en texte brut : le web jetait les avertissements en silence
+        # avant le 05/09/2026, sans même le message « écrit, avec des
+        # réserves » du bureau ; ils voyagent maintenant jusqu'à la page.
         debit = json.dumps(self._debit())
         reglages = json.loads(pont_web.gcode_defaut())
         self.assertIn("diametre_fraise", reglages)
         reglages.update(diametre_fraise=3, attaches=2, vitesse_broche=12000,
                         dialecte="grbl")
-        texte = pont_web.decoupe("gcode", debit, 1, "essai",
-                                 json.dumps(reglages))
+        sortie = json.loads(pont_web.decoupe("gcode", debit, 1, "essai",
+                                             json.dumps(reglages)))
+        texte = sortie["texte"]
         self.assertIn("fraise D3 mm", texte)
         self.assertIn("M3 S12000", texte)
         self.assertIn("2 attache[s]", texte)
         self.assertNotIn("G64", texte)          # GRBL refuse le mot
         self.assertTrue(texte.rstrip().endswith("M30"))
+        self.assertIn("avertissements", sortie)
+        self.assertIn("remarques", sortie)
 
     def test_sans_reglages_on_prend_les_defauts(self):
-        texte = pont_web.decoupe("gcode", json.dumps(self._debit()), 1, "e")
-        self.assertIn("G21 G90 G94", texte)
-        self.assertIn("M2", texte)
+        sortie = json.loads(pont_web.decoupe("gcode",
+                                             json.dumps(self._debit()), 1, "e"))
+        self.assertIn("G21 G90 G94", sortie["texte"])
+        self.assertIn("M2", sortie["texte"])
+
+    def test_les_avertissements_du_gcode_arrivent_jusqu_a_la_page(self):
+        # Une pièce trop près du bord : le CENTRE de la fraise en sort —
+        # une faute, pas une remarque — et ``export_cnc.decoupe`` seul
+        # (le chemin d'avant le 05/09/2026) la faisait disparaître.
+        debit = {
+            "planche": {"reference": "p", "longueur": 200.0, "largeur": 200.0,
+                       "epaisseur": 18.0, "matiere": "b"},
+            "exemplaire": 1,
+            "poses": [{
+                "piece": {"reference": "x", "longueur": 100.0, "largeur": 50.0,
+                         "epaisseur": 18.0, "matiere": "b",
+                         "contour": [[20, 20], [120, 20], [120, 70], [20, 70]]},
+                "x": 0.1, "y": 0.1, "dim_x": 100.0, "dim_y": 50.0,
+                "pivotee": False, "exemplaire": 1,
+            }],
+        }
+        sortie = json.loads(pont_web.decoupe("gcode", json.dumps(debit), 1, "e",
+                                             json.dumps({"diametre_fraise": 6})))
+        self.assertTrue(any("sort de la planche" in a
+                            for a in sortie["avertissements"]), sortie)
 
     def test_un_reglage_impossible_ne_leve_pas(self):
         debit = json.dumps(self._debit())
@@ -205,9 +234,9 @@ class Gcode(unittest.TestCase):
                                   json.dumps({"diametre_fraise": 0}))
         self.assertIn("erreur", json.loads(sortie))
         # une clé inconnue est ignorée, pas fatale
-        texte = pont_web.decoupe("gcode", debit, 1, "e",
-                                 json.dumps({"inconnu": 3}))
-        self.assertIn("G21", texte)
+        sortie = json.loads(pont_web.decoupe("gcode", debit, 1, "e",
+                                             json.dumps({"inconnu": 3})))
+        self.assertIn("G21", sortie["texte"])
 
 
 class NfpEnParallele(unittest.TestCase):

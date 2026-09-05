@@ -132,6 +132,16 @@ class Reglages:
         if self.aspiration not in ("", "M7", "M8"):
             raise ValueError('aspiration : "", M7 ou M8 — c\'est le câblage'
                              " qui décide")
+        if self.hauteur_securite <= 0:
+            # Zéro passait la garde « négatif » : un rapide à hauteur de
+            # sécurité nulle rase la planche à pleine vitesse (audit du
+            # 05/09/2026).
+            raise ValueError("la hauteur de sécurité doit être positive")
+        if self.attaches and self.longueur_attache > EPS \
+                and self.hauteur_attache <= 0:
+            raise ValueError(
+                "une attache de hauteur nulle ne laisse rien sous la"
+                " fraise : la pièce se libère comme sans attache")
         if self.attaches and epaisseur and self.hauteur_attache >= epaisseur:
             raise ValueError(
                 "attache de %g mm dans une planche de %g : il ne resterait"
@@ -273,6 +283,36 @@ def _parcours(pose, reglages: Reglages, avertissements: list) -> list:
 
     piece = Polygon(exterieur, holes=trous or None)
     dehors = piece.buffer(rayon, quad_segs=_QUARTS)
+    # Une rainure, une encoche ou la bouche d'un « C » plus étroites que
+    # le diamètre de la fraise se referment en silence dans ce décalage,
+    # exactement comme un trou trop petit se referme dans le décalage
+    # intérieur (ci-dessus) — mais sans l'avertissement qui va avec :
+    # le tour ne les voit plus du tout, et rien ne le dit (audit du
+    # 05/09/2026). Le repli (fermeture morphologique) le révèle : ce
+    # qu'un aller-retour du même rayon ne rend pas au contour d'origine
+    # est la matière qu'aucun tour ne visitera jamais.
+    repli = dehors.buffer(-rayon, quad_segs=_QUARTS)
+    # ``repli`` est la pièce RÉELLEMENT finie une fois le tour usiné : ce
+    # qu'elle laisse EN TROP par rapport à la pièce voulue est la matière
+    # d'une rainure refermée par le décalage — pas l'inverse (une
+    # fermeture morphologique contient TOUJOURS le polygone de départ,
+    # comparer dans l'autre sens rend zéro à coup sûr).
+    manque = repli.difference(piece)
+    # Un sommet concave simplement effilé (la pointe d'un cœur, par
+    # exemple) s'arrondit lui aussi dans ce repli, quel que soit le
+    # diamètre — AUCUNE fraise, si fine soit-elle, ne fait un angle
+    # rentrant vif : ce n'est pas une rainure trop étroite, et le dire
+    # à chaque pointe noierait le vrai signal. Le seuil ne retient que
+    # ce qu'une fraise entière (l'aire d'un disque de son diamètre)
+    # laisserait en trop, la marque d'un canal qui court sur une vraie
+    # longueur.
+    if manque.area > 2 * rayon * rayon:
+        avertissements.append(
+            "« %s » : une rainure, une encoche ou une bouche de moins de"
+            " Ø %s mm (le diamètre de la fraise) n'est pas fraisée — %s"
+            " mm² de matière y resteraient en trop"
+            % (_nom(pose), _n(reglages.diametre_fraise),
+               _n(round(manque.area))))
     anneaux = _exterieurs(dehors)
     if not anneaux:
         avertissements.append("« %s » : contour introuvable après décalage"
@@ -304,7 +344,16 @@ def _verifier(debit, parcours, reglages: Reglages, avertissements: list,
     (4 septembre 2026). On dit de combien, et on passe."""
     Polygon, boite, LineString = _shapely()
     pl = debit.planche
-    planche = boite(0, 0, pl.longueur, pl.largeur)
+    if pl.contour:
+        # Une chute biscornue n'est pas son rectangle englobant : la
+        # juger sur sa boîte laissait passer un centre de fraise promené
+        # dans le vide, hors du bois réel (audit du 05/09/2026).
+        planche = Polygon(pl.contour, holes=[list(t) for t in pl.trous]
+                          if pl.trous else None)
+        if not planche.is_valid:
+            planche = planche.buffer(0)
+    else:
+        planche = boite(0, 0, pl.longueur, pl.largeur)
     rayon = reglages.diametre_fraise / 2.0
     matiere, balaye, centres, noms = [], [], [], []
     for pose, chemins in parcours:
@@ -403,17 +452,34 @@ def _attaches(anneau: _Anneau, reglages: Reglages, depart: float) -> list:
 
 
 def _passe(anneau: _Anneau, reglages: Reglages, z_haut: float, z_bas: float,
-           z_attache: float, derniere: bool) -> list:
+           z_attache: float, derniere: bool, phase: float = 0.0) -> list:
     """Un tour complet à la profondeur ``z_bas`` : la rampe descend de
-    ``z_haut`` à ``z_bas`` sur les premiers millimètres, puis le tour se
-    ferme à plat en repassant sur la rampe. Rend des ``(x, y, z)``."""
+    ``z_haut`` à ``z_bas`` sur les premiers millimètres À PARTIR DE
+    ``phase``, puis le tour se ferme à plat en repassant sur la rampe.
+    Rend des ``(x, y, z)``.
+
+    ``phase`` avance d'une longueur de rampe à chaque passe (l'appelant
+    la fait tourner) : la rampe de la passe suivante reprend exactement
+    où la précédente s'est arrêtée, au lieu de revenir au point 0 — y
+    revenir en ligne droite traçait une CORDE à travers le coin du
+    contour, donc à travers la pièce, à chaque changement de passe (audit
+    du 05/09/2026)."""
     rampe = min(reglages.longueur_rampe, anneau.tour)
     if anneau.tour <= EPS:
         return []
-    attaches = _attaches(anneau, reglages, rampe) if derniere else []
+    attaches = _attaches(anneau, reglages, phase + rampe) if derniere else []
     bornes = [s for paire in attaches for s in paire]
 
     def hauteur(s: float) -> float:
+        """La hauteur à l'abscisse ``s`` EXACTEMENT — pas juste avant :
+        évaluer juste avant ratait la marche d'entrée sur le plateau (le
+        point à ``debut`` retombait à ``z_bas``) et laissait la montée
+        empiéter sur toute la longueur déclarée de l'attache, la
+        descente se poursuivant ensuite au-delà de sa fin (audit du
+        05/09/2026 : attache annoncée de 8 mm, plateau réduit à un point,
+        bois laissé sur 6 + 17,7 mm). Une rampe, avant ``debut`` et après
+        ``fin``, se fait naturellement sur le segment qui y mène : les
+        points AUX bornes sont déjà forcés par ``bornes`` ci-dessus."""
         for debut, fin in attaches:
             if debut - EPS <= s <= fin + EPS:
                 return z_attache
@@ -421,18 +487,19 @@ def _passe(anneau: _Anneau, reglages: Reglages, z_haut: float, z_bas: float,
 
     sortie = []
     if rampe > EPS:
-        for s, (x, y) in anneau.entre(0.0, rampe):
-            sortie.append((x, y, z_haut + (z_bas - z_haut) * (s / rampe)))
+        for s, (x, y) in anneau.entre(phase, phase + rampe):
+            sortie.append((x, y,
+                          z_haut + (z_bas - z_haut) * ((s - phase) / rampe)))
     else:
-        x, y = anneau.point(0.0)
+        x, y = anneau.point(phase)
         sortie.append((x, y, z_bas))
     # Le tour complet à partir du bout de la rampe : il repasse dessus, ce
     # qui coupe à plat le morceau parcouru en descendant.
-    for s, (x, y) in anneau.entre(rampe, rampe + anneau.tour, bornes):
-        if s <= rampe + EPS:
+    for s, (x, y) in anneau.entre(phase + rampe, phase + rampe + anneau.tour,
+                                  bornes):
+        if s <= phase + rampe + EPS:
             continue
-        milieu = s - 1e-6
-        sortie.append((x, y, hauteur(milieu)))
+        sortie.append((x, y, hauteur(s)))
     return sortie
 
 
@@ -481,8 +548,8 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
            reglages.vitesse_broche),
     ]
     if reglages.attaches:
-        lignes.append("(%d attache[s] par contour, %s mm de long, %s mm"
-                      " laisses dessous)"
+        lignes.append("(%d attache[s] par contour, jusqu'a %s mm de long,"
+                      " %s mm laisses dessous)"
                       % (reglages.attaches, _n(reglages.longueur_attache),
                          _n(reglages.hauteur_attache)))
     lignes.append("(origine en bas a gauche de la planche, Z0 = dessus)")
@@ -492,6 +559,12 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
         lignes.append("(note : %s)" % _sans_parentheses(mot))
 
     lignes.append("G21 G90 G94 G17")
+    # Le dégagement AVANT le changement d'outil : T/M6 peut suspendre le
+    # programme (changeur manuel, remap), et la fraise ne doit pas rester
+    # à une hauteur de coupe pendant la pause — c'était le cas ici, T/M6
+    # et G43 partaient avant le premier "G0 Z haut" (audit du
+    # 05/09/2026).
+    lignes.append("G0 Z%s" % _n(haut))
     if reglages.dialecte == "linuxcnc":
         # G64 mélange les segments dans une tolérance : sans lui, la
         # machine marque un arrêt à chaque sommet d'une polyligne. GRBL
@@ -500,7 +573,6 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
         if reglages.outil:
             lignes.append("T%d M6" % reglages.outil)
             lignes.append("G43 H%d" % reglages.outil)
-    lignes.append("G0 Z%s" % _n(haut))
     if reglages.aspiration:
         lignes.append(reglages.aspiration)
     if reglages.vitesse_broche:
@@ -523,19 +595,50 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
             debut = anneau.point(0.0)
             lignes.append("G0 X%s Y%s" % (_n(debut[0]), _n(debut[1])))
             lignes.append("G0 Z%s" % _n(APPROCHE))
+            rampe = min(reglages.longueur_rampe, anneau.tour)
+            if reglages.attaches and rampe > EPS \
+                    and reglages.longueur_attache > EPS:
+                # La longueur d'attache réglée ne tient pas forcément sur
+                # un petit tour : _attaches() la ramène alors à la moitié
+                # du pas entre deux attaches, mais l'en-tête annonçait
+                # toujours la valeur réglée, sans un mot (audit du
+                # 05/09/2026).
+                pas = anneau.tour / reglages.attaches
+                reelle = min(reglages.longueur_attache, pas / 2.0)
+                if reelle < reglages.longueur_attache - EPS:
+                    remarques.append(
+                        "« %s » (%s) : le tour de %s mm ne permet que"
+                        " %s mm d'attache, pas %s mm comme réglé"
+                        % (_nom(pose),
+                           "trou" if genre == "trou" else "tour de piece",
+                           _n(round(anneau.tour, 1)), _n(round(reelle, 2)),
+                           _n(reglages.longueur_attache)))
             z_precedent = APPROCHE
+            # ``phase`` avance d'une longueur de rampe à chaque passe : la
+            # rampe suivante reprend où la précédente s'est arrêtée — y
+            # revenir par une ligne droite traçait une corde à travers le
+            # coin du contour, donc à travers la pièce (audit du
+            # 05/09/2026).
+            phase = 0.0
+            dernier_z, feed = None, None
             for indice, z in enumerate(profondeurs):
                 derniere = indice == len(profondeurs) - 1
                 chemin = _passe(anneau, reglages, z_precedent, z, z_attache,
-                                derniere)
+                                derniere, phase)
                 if not chemin:
                     continue
-                if reglages.longueur_rampe <= EPS:
-                    lignes.append("G1 Z%s F%s"
-                                  % (_n(z), _n(reglages.vitesse_plongee)))
-                lignes.append("F%s" % _n(reglages.vitesse_avance))
-                dernier_z = None
                 for x, y, zz in chemin:
+                    plonge = dernier_z is None or abs(zz - dernier_z) > EPS
+                    # En rampe, la fraise descend en même temps qu'elle
+                    # avance en XY : c'est la vitesse de PLONGÉE qui
+                    # s'applique à ce mouvement-là, pas celle d'avance —
+                    # elle restait sur l'avance XY pendant toute la rampe
+                    # (audit du 05/09/2026).
+                    voulue = (reglages.vitesse_plongee if plonge
+                             else reglages.vitesse_avance)
+                    if voulue != feed:
+                        lignes.append("F%s" % _n(voulue))
+                        feed = voulue
                     if dernier_z is not None and abs(zz - dernier_z) <= EPS:
                         lignes.append("G1 X%s Y%s" % (_n(x), _n(y)))
                     else:
@@ -543,6 +646,8 @@ def programme(debit, reglages: "Reglages | None" = None, numero: int = 1,
                                       % (_n(x), _n(y), _n(zz)))
                     dernier_z = zz
                 z_precedent = z
+                if rampe > EPS:
+                    phase = (phase + rampe) % anneau.tour
             lignes.append("G0 Z%s" % _n(haut))
 
     if reglages.vitesse_broche:
