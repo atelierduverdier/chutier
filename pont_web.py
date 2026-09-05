@@ -44,7 +44,14 @@ def _nombre(v, defaut=0.0):
 def _entier(v, defaut=1):
     if v is None or v == "":
         return defaut
-    return int(float(str(v).replace(",", ".")))
+    valeur = float(str(v).replace(",", "."))
+    if valeur != int(valeur):
+        # Tronquée en silence jusqu'au 05/09/2026 : « 2,5 » devenait 2
+        # exemplaires sans un mot — une pièce de moins, sans que rien ne
+        # le dise.
+        raise ValueError("un entier était attendu, « %s » a une virgule"
+                         % v)
+    return int(valeur)
 
 
 def _piece(d: dict) -> opt.Piece:

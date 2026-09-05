@@ -201,6 +201,7 @@ const ANGLAIS = {
   "Aucun tracé fermé dans ce SVG.\n": "No closed path in this SVG.\n",
   "Le programme est écrit, mais :\n\n• ": "The program is written, but:\n\n• ",
   "planche {} : ": "board {}: ",
+  "{} pièce(s) sur {} ont un contour, des trous ou une planche imposée : le CSV ne les porte pas (huit colonnes seulement). Réimportées, ces pièces seraient sciées comme des rectangles au lieu d'être imbriquées. Pour tout garder, enregistrez le projet (.json).": "{} out of {} piece(s) have an outline, holes or an imposed board: the CSV doesn't carry those (eight columns only). Reimported, these pieces would come back sawn as rectangles instead of nested. To keep everything, save the project (.json).",
   "{} remarque(s) en tête des programmes : ": "{} note(s) at the head of the programs: ",
   "{} contour(s) importé(s)\n\n": "{} outline(s) imported\n\n",
   "{} contour(s) importé(s)": "{} outline(s) imported",

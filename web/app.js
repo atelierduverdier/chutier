@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.3.2";
+export const VERSION = "1.3.3";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -353,10 +353,29 @@ const stockage = {
   ecrire(cle, valeur) { try { localStorage.setItem("chutier." + cle, JSON.stringify(valeur)); } catch { /* navigation privée */ } },
 };
 
+let atelierConnu = [];   // les lignes Atelier telles que LUES par CET onglet
 function enregistrerAtelier() {
-  stockage.ecrire("atelier", etat.stock.filter(s => s.atelier && (s.reference || "").trim()));
+  const courante = etat.stock.filter(s => s.atelier && (s.reference || "").trim());
+  // Chaque frappe dans le stock rappelait cette fonction, qui réécrivait
+  // TOUT l'atelier du navigateur — partagé entre onglets — même quand
+  // rien n'y touchait : un onglet A qui venait d'y ranger une chute se
+  // faisait effacer par le premier caractère tapé dans un autre onglet
+  // B (audit du 05/09/2026). On ne réécrit que si CET onglet a vraiment
+  // changé quelque chose depuis la dernière lecture ou écriture.
+  if (memeAtelier(courante, atelierConnu)) return;
+  stockage.ecrire("atelier", courante);
+  atelierConnu = courante;
 }
-function atelier() { return stockage.lire("atelier", []).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s, atelier: true })); }
+function memeAtelier(a, b) {
+  if (a.length !== b.length) return false;
+  const cle = s => JSON.stringify(Object.keys(s).sort().map(k => [k, s[k]]));
+  const ta = a.map(cle).sort(), tb = b.map(cle).sort();
+  return ta.every((v, i) => v === tb[i]);
+}
+function atelier() {
+  atelierConnu = stockage.lire("atelier", []).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s, atelier: true }));
+  return atelierConnu;
+}
 
 // -- tables ---------------------------------------------------------------------
 
@@ -837,7 +856,16 @@ async function importerFcstd() {
   etat.aJour = false; rendreTable("pieces"); rafraichirEtat(); marquerChangement();
   signalerMatieresOrphelines(d.pieces.length, f.nom);
 }
-async function exporterCsv() { const texte = await tenter("vers_csv", JSON.stringify(etat.pieces)); if (texte !== null) telecharger((etat.nomProjet || "pieces") + ".csv", texte, "text/csv"); }
+async function exporterCsv() {
+  const texte = await tenter("vers_csv", JSON.stringify(etat.pieces));
+  if (texte === null) return;
+  // Le CSV est un contrat à huit colonnes, pensé pour un générateur tiers
+  // (une macro FreeCAD) — pas pour porter un contour de la CNC : celui-ci
+  // se perdait sans un mot des deux côtés (audit du 05/09/2026).
+  const perdent = etat.pieces.filter(p => (p.contour && p.contour.length) || (p.trous && p.trous.length) || p.planche).length;
+  if (perdent) alerter(t`${perdent} pièce(s) sur ${etat.pieces.length} ont un contour, des trous ou une planche imposée : le CSV ne les porte pas (huit colonnes seulement). Réimportées, ces pièces seraient sciées comme des rectangles au lieu d'être imbriquées. Pour tout garder, enregistrez le projet (.json).`);
+  telecharger((etat.nomProjet || "pieces") + ".csv", texte, "text/csv");
+}
 async function importerSvg() {
   const f = await lireFichier($("#f-svg")); if (!f) return;
   const brut = await tenter("depuis_svg", f.texte); if (brut === null) return;

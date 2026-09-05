@@ -72,6 +72,14 @@ def dxf_planche(debit, numero: int = 1, titre: str = "") -> str:
                                                        pl.reference),
         "0", "SECTION", "2", "HEADER",
         "9", "$ACADVER", "1", "AC1009",
+        # Sans elle, un lecteur qui ne voit QUE le R12 (aucune indication
+        # d'encodage moderne) suppose le CODEPAGE de son système — et un
+        # nom accentué écrit en UTF-8 (le fichier l'est : voir
+        # interface.py, l'export DXF) en ressortait « Ã©querre 1 »
+        # (audit du 05/09/2026). ANSI_1252 est le codepage Windows le
+        # plus courant pour un DXF R12 ; le fichier DOIT alors être
+        # écrit en cp1252, pas en UTF-8, pour que les deux s'accordent.
+        "9", "$DWGCODEPAGE", "3", "ANSI_1252",
         "9", "$INSUNITS", "70", "4",
         "9", "$EXTMIN", "10", "0", "20", "0", "30", "0",
         "9", "$EXTMAX", "10", _nombre(pl.longueur), "20", _nombre(pl.largeur),

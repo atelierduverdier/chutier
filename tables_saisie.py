@@ -62,9 +62,16 @@ def _lire_flottant(texte: str, ou: str) -> float:
 
 def _lire_entier(texte: str, ou: str) -> int:
     try:
-        return int(float(texte.replace(",", ".").strip() or 1))
+        valeur = float(texte.replace(",", ".").strip() or 1)
     except ValueError:
         raise ErreurSaisie("%s : entier attendu, « %s » lu" % (ou, texte))
+    if valeur != int(valeur):
+        # Tronquée en silence jusqu'au 05/09/2026 : « 2,5 » devenait 2
+        # exemplaires sans un mot — une pièce de moins, ou une attache
+        # de moins, sans que rien ne le dise.
+        raise ErreurSaisie("%s : un entier était attendu, « %s » a une"
+                           " virgule" % (ou, texte))
+    return int(valeur)
 
 
 def _vers_booleen(texte: str) -> bool:

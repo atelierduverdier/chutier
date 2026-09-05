@@ -289,6 +289,13 @@ class FenetrePrincipale(QMainWindow):
         self._a_jour = False
         self._generation = 0       # monte à chaque saisie qui périme le plan
         self._generation_calculee = -1
+        self._atelier_connue = []  # les lignes Atelier telles que LUES —
+                                    # pour ne réécrire que ce que CETTE
+                                    # fenêtre a vraiment changé (voir
+                                    # _atelier_frais)
+        self._parametres_reference = None  # les réglages tels qu'AFFICHÉS
+                                    # par le dernier _appliquer_parametres
+                                    # (voir _memoriser_reglages)
         self._chargement = True
         self._reglages = QSettings("AtelierDuVerdier", "Chutier")
         self._chemin_atelier = projet_io.chemin_atelier()
@@ -297,6 +304,7 @@ class FenetrePrincipale(QMainWindow):
         self.a_avancees.setChecked(
             self._reglages.value("colonnes_avancees", False, type=bool))
         atelier = self._atelier()
+        self._atelier_connue = atelier   # ce que CETTE fenêtre vient de lire
         if atelier:
             # Un atelier déjà garni : on ouvre sur lui, feuille de pièces
             # blanche — c'est le vrai point de départ d'un débit. L'exemple
@@ -1085,6 +1093,14 @@ class FenetrePrincipale(QMainWindow):
             return
         self._modifie = True
         self._perimer()
+        # Trait de scie, surcotes... sont des proprietes de LA SCIE, pas
+        # du projet : les memoriser seulement a la fermeture les figeait
+        # a ce qu'ils etaient a la DERNIERE fermeture -- un trait change
+        # en cours de seance revenait a l'ancien des "Nouveau" (audit du
+        # 05/09/2026). _memoriser_reglages ne reecrit rien quand seule
+        # une piece ou une ligne de stock a bouge (les reglages affiches
+        # n'ont alors pas change).
+        self._memoriser_reglages()
         self._rafraichir_etat()
         if not self._restauration:
             # Une frappe = un pas d'historique, mais pas une lettre : la
@@ -1274,8 +1290,20 @@ class FenetrePrincipale(QMainWindow):
             parametres = self._parametres_actuels()
         except (ErreurSaisie, ValueError):
             return
+        if (self._parametres_reference is not None
+                and parametres == self._parametres_reference):
+            # Rien n'a bougé depuis le dernier _appliquer_parametres : si
+            # celui-ci venait d'un PROJET ouvert ou d'un exemple, le
+            # laisser s'écrire ici en ferait la scie de la prochaine
+            # séance — trait de scie et chute mini d'un projet
+            # deviendraient ceux « d'usine » pour tout projet neuf,
+            # jusqu'à ce qu'on les change à la main (audit du
+            # 05/09/2026). On ne mémorise que ce que l'utilisateur a
+            # vraiment choisi lui-même, en y touchant.
+            return
         self._reglages.setValue(
             "parametres", json.dumps(dataclasses.asdict(parametres)))
+        self._parametres_reference = parametres
 
     def _parametres_actuels(self) -> opt.Parametres:
         return opt.Parametres(
@@ -1316,6 +1344,9 @@ class FenetrePrincipale(QMainWindow):
             max(0, self.choix_priorite.findData(p.priorite)))
         self.choix_rotation.setCurrentIndex(
             max(0, self.choix_rotation.findData(p.pas_rotation)))
+        # Ce que les widgets affichent MAINTENANT — qu'ils viennent des
+        # réglages de la scie, d'un projet ouvert ou d'un exemple.
+        self._parametres_reference = p
 
     def _calculer_si_pieces(self):
         """Le calcul d'accueil : sur un atelier garni, la feuille de
@@ -1732,7 +1763,16 @@ class FenetrePrincipale(QMainWindow):
         self._valider_editions()
         try:
             stock = self.table_stock.stock()
-        except ErreurSaisie:
+        except ErreurSaisie as erreur:
+            # Silencieux jusqu'au 05/09/2026 : à la fermeture ou à
+            # l'enregistrement, une ligne de stock illisible empêchait
+            # d'écrire l'atelier SANS UN MOT — la chute qu'on venait de
+            # taper n'était jamais rangée, et rien ne le disait.
+            QMessageBox.warning(
+                self, "Atelier non enregistré",
+                "%s\n\nLe stock de l'atelier n'a pas été mis à jour :"
+                " corrigez la ligne en cause, ou il gardera son ancien"
+                " contenu." % erreur)
             return False
         try:
             projet_io.enregistrer_atelier(
@@ -1743,11 +1783,25 @@ class FenetrePrincipale(QMainWindow):
         return True
 
     def _atelier_frais(self) -> list:
-        """Sauve les lignes d'atelier de la table, puis relit le fichier :
-        ce qui a été tapé n'est jamais perdu, ce qu'une autre fenêtre a
-        rangé entre-temps est repris."""
-        self._enregistrer_atelier()
-        return self._atelier()
+        """Relit le fichier commun — sauf que ce que CETTE fenêtre vient
+        de taper n'est jamais perdu : on ne réécrit le fichier QUE si les
+        lignes Atelier de la table diffèrent de ce qu'on a lu ou écrit la
+        dernière fois. Écrire d'abord SANS CETTE GARDE, comme avant le
+        05/09/2026, avait deux effets : au démarrage, une table encore
+        vide écrasait un atelier réel — voire un atelier CORROMPU, qu'on
+        privait ainsi de toute chance d'être réparé à la main — par
+        « {"stock": []} » ; et entre deux fenêtres, celle qui rappelait
+        cette méthode en second effaçait ce que l'autre venait de ranger,
+        avant même de la relire."""
+        try:
+            courante = [s for s in self.table_stock.stock() if s.atelier]
+        except ErreurSaisie:
+            courante = None
+        if courante is not None and set(courante) != set(self._atelier_connue):
+            self._enregistrer_atelier()
+        fraiche = self._atelier()
+        self._atelier_connue = fraiche
+        return fraiche
 
     def _recharger_atelier(self):
         try:
@@ -2020,9 +2074,21 @@ class FenetrePrincipale(QMainWindow):
                     remarques += dits
                 else:
                     texte = export_cnc.decoupe(format_, debit, numero, titre)
-                with open(nom, "w", encoding="utf-8") as f:
+                # Le DXF R12 déclare $DWGCODEPAGE ANSI_1252 en tête (voir
+                # export_cnc.dxf_planche) : l'écrire en UTF-8 comme les
+                # autres formats contredisait sa propre déclaration, et
+                # une référence accentuée revenait « Ã©querre 1 » dans un
+                # lecteur qui la croit sur parole (audit du 05/09/2026).
+                encodage = "cp1252" if format_ == "dxf" else "utf-8"
+                with open(nom, "w", encoding=encodage) as f:
                     f.write(texte)
                 ecrits.append(nom)
+        except UnicodeEncodeError as erreur:
+            QMessageBox.warning(
+                self, "Export impossible",
+                "Un caractère de « %s » n'existe pas dans l'alphabet du"
+                " DXF (Windows-1252) : %s" % (titre, erreur))
+            return
         except (OSError, ValueError) as erreur:
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
@@ -2469,6 +2535,20 @@ class FenetrePrincipale(QMainWindow):
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
         self._retenir_dossier(chemin)
+        # Le CSV est un contrat à HUIT colonnes, pensé pour un générateur
+        # tiers (une macro FreeCAD) — pas pour porter un contour de la
+        # CNC : celui-ci se perdait sans un mot (audit du 05/09/2026), et
+        # la pièce revenait sciée au lieu d'être imbriquée.
+        perdent = sum(1 for p in pieces if p.contour or p.trous or p.planche)
+        if perdent:
+            QMessageBox.information(
+                self, "Contours non portés par le CSV",
+                "%d pièce(s) sur %d ont un contour, des trous ou une"
+                " planche imposée : le CSV ne les porte pas (huit"
+                " colonnes seulement). Réimportées, ces pièces seraient"
+                " sciées comme des rectangles au lieu d'être imbriquées."
+                " Pour tout garder, enregistrez le projet (.json)."
+                % (perdent, len(pieces)))
         self.statusBar().showMessage(
             "%d pièce(s) exportée(s) : %s" % (len(pieces), chemin), 8000)
 
@@ -2638,6 +2718,20 @@ jamais. Les chutes passent avant les planches neuves.</p>"""
             self.saisie.restoreState(etat)
 
     def closeEvent(self, evenement):
+        if self._calcul is not None:
+            # Fermer PENDANT un calcul détruisait le QThread en marche —
+            # SIGABRT, sans un mot (audit du 05/09/2026). On l'interrompt
+            # et on attend qu'il se termine avant de continuer : le plan
+            # affiché reste le précédent, rien d'autre ne change.
+            self._interrompre()
+            self._calcul.wait()
+            # Le thread a fini, mais son signal « fini » est en file
+            # d'attente sur CE thread : sans ce tour de boucle,
+            # ``_fin_de_calcul`` ne nettoierait jamais ``_calcul``, la
+            # boîte de progression ni le curseur d'attente — et un
+            # abandon de la fermeture (Annuler sur « Projet modifié »)
+            # laisserait la fenêtre bloquée en « Calcul en cours ».
+            QApplication.processEvents()
         if not self._confirmer_abandon():
             evenement.ignore()
             return

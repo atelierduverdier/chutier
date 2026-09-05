@@ -409,13 +409,22 @@ def _lire(document: dict, feuille: Feuille, lig_entete: int,
                              " ou indifferent)" % (feuille.nom, colonnes["fil"],
                                                    lig, fil))
         composable = _normaliser(_texte(cellule("composable", lig) or ""))
+        # L'arrondi de FreeCAD (_arrondi), pas celui de Python : 2,5
+        # devenait 2 exemplaires, pas 3. Et 0 ou moins n'est pas ramené à
+        # 1 en silence — une ligne à 0 sert à désactiver une pièce sans
+        # la supprimer de la feuille, et lui en fournir quand même une
+        # ajoutait une pièce en trop, sans un mot (audit du 05/09/2026) ;
+        # la ligne est alors sautée, comme un titre de section.
+        quantite = int(_arrondi(nombre("quantite", lig, 1.0)))
+        if quantite <= 0:
+            continue
         pieces.append(opt.Piece(
             reference=reference,
             longueur=nombre("longueur", lig),
             largeur=nombre("largeur", lig),
             epaisseur=nombre("epaisseur", lig, 0.0),
             matiere=_texte(cellule("matiere", lig) or ""),
-            quantite=max(1, int(round(nombre("quantite", lig, 1.0)))),
+            quantite=quantite,
             fil=_FILS[fil],
             composable=composable in ("1", "x", "oui", "vrai", "true", "o")))
     if not pieces:
