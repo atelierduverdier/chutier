@@ -327,17 +327,18 @@ of rectangles to saw ignores them, and says so when the stock has
 nothing else left.
 
 **Milling time.** A nested board has no cuts to count but contours to
-follow: the Losses tile, each board's title and the workshop sheet give
-the **milling length** (contours and holes) and the time it takes at
-the configured feed rate (1,500 mm/min by default), rapid moves
-excluded.
+follow: each board's title and the workshop sheet give the **milling
+length** (contours and holes); the Losses tile, in turn, also derives
+the **time** that length takes at the configured feed rate (1,500
+mm/min by default), rapid moves excluded.
 
 **Strip cutting** (saw settings): for a panel saw or sliding table saw,
 which first rips the board into full-length strips and then crosscuts
-each strip. The plan then only contains such two-stage cuts — at most a
-width recut inside the strip, never a length recut — where free
-guillotine plans are awkward on such a saw. It usually costs a little
-wood.
+each strip. The plan then only contains such two-stage cuts, never a
+length recut inside a strip already open — only pieces of the SAME
+width crosscut one after another there; a narrower piece opens its own
+strip — where free guillotine plans are awkward on such a saw. It
+usually costs a little wood.
 
 ## Tests
 
