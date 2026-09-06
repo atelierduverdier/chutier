@@ -313,7 +313,14 @@ class FenetrePrincipale(QMainWindow):
                                     # (voir _memoriser_reglages)
         self._chargement = True
         self._reglages = QSettings("AtelierDuVerdier", "Chutier")
-        self._chemin_atelier = projet_io.chemin_atelier()
+        # $CHUTIER_ATELIER garde la priorité (c'est ce que les tests
+        # posent) ; sinon la préférence choisie via le menu Fichier —
+        # typiquement un fichier sur un disque partagé entre plusieurs
+        # postes ; sinon l'emplacement par défaut.
+        self._chemin_atelier = (
+            os.environ.get(projet_io.VARIABLE_ATELIER)
+            or self._reglages.value("chemin_atelier", "", str)
+            or projet_io.chemin_atelier())
 
         self._construire()
         self.a_avancees.setChecked(
@@ -504,6 +511,11 @@ class FenetrePrincipale(QMainWindow):
             ("view-refresh",),
             "Relire le fichier commun de l'atelier (chutes rangées, planches"
             " en rayon) — utile s'il a été modifié par une autre fenêtre")
+        self.a_choisir_atelier = self._acte(
+            "&Choisir l'emplacement du stock d'atelier…",
+            self._choisir_chemin_atelier, None, ("folder-open",),
+            "Pointer vers un autre fichier atelier.json — par exemple sur"
+            " un disque partagé entre plusieurs postes")
         self.a_quitter = self._acte("&Quitter", self.close, "Ctrl+Q",
                                     ("application-exit",))
 
@@ -580,6 +592,7 @@ class FenetrePrincipale(QMainWindow):
         fichier.addAction(self.a_exporter_gcode)
         fichier.addSeparator()
         fichier.addAction(self.a_atelier)
+        fichier.addAction(self.a_choisir_atelier)
         fichier.addSeparator()
         fichier.addAction(self.a_exporter)
         fichier.addAction(self.a_fiche)
@@ -1876,6 +1889,42 @@ class FenetrePrincipale(QMainWindow):
         self.statusBar().showMessage(
             "%d ligne(s) relue(s) depuis %s" % (len(atelier),
                                                  self._chemin_atelier), 8000)
+
+    def _choisir_chemin_atelier(self):
+        """Change durablement (préférence Qt, retenue d'une session à
+        l'autre) le fichier atelier de CE poste — utile pour le pointer
+        vers un disque partagé et retrouver le même stock sur plusieurs
+        machines. N'écrit jamais le nouveau fichier avec le contenu de
+        l'ancien : une lecture sèche, comme à l'ouverture."""
+        chemin, _ = QFileDialog.getSaveFileName(
+            self, "Choisir l'emplacement du stock d'atelier",
+            self._chemin_atelier, "Atelier (*.json)")
+        if not chemin:
+            return
+        if not chemin.endswith(".json"):
+            chemin += ".json"
+        if not os.path.exists(chemin):
+            try:
+                projet_io.enregistrer_atelier(chemin, [])
+            except OSError as erreur:
+                QMessageBox.warning(self, "Atelier non créé", str(erreur))
+                return
+        try:
+            stock = [s for s in self.table_stock.stock() if not s.atelier]
+        except ErreurSaisie as erreur:
+            QMessageBox.warning(self, "Saisie invalide", str(erreur))
+            return
+        self._reglages.setValue("chemin_atelier", chemin)
+        self._chemin_atelier = chemin
+        atelier = self._atelier()
+        self._atelier_connue = atelier
+        self._chargement = True
+        self.table_stock.remplir(stock + atelier)
+        self._chargement = False
+        self._saisie_changee()
+        self.statusBar().showMessage(
+            "Stock de l'atelier désormais : %s (%d ligne(s))"
+            % (chemin, len(atelier)), 8000)
 
     # -- fichiers ---------------------------------------------------------------
 
