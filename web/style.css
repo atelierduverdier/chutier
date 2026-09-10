@@ -80,7 +80,18 @@ input.faux { background: rgba(192,57,43,.25) !important; }
 .grille-reglage { display: grid; grid-template-columns: 1fr auto;
   gap: 4px 10px; align-items: center; padding: 2px 8px 8px; }
 .grille-reglage .discret { grid-column: 1 / -1; margin: 0 0 4px; }
-.grille-reglage input, .grille-reglage select { width: 9em; }
+.grille-reglage input { width: 9em; }
+/* Un select prend la largeur de son libellé le plus long : figé à 9em,
+   « le bois — moins de pertes » se coupait en « le bois — moin » et il
+   fallait ouvrir la liste pour savoir ce qu'on avait choisi (signalé par
+   Christophe, 10/09/2026). Borné, pour ne pas écraser la colonne des
+   noms sur une fenêtre étroite. */
+.grille-reglage select { width: max-content; max-width: 100%; }
+/* Libellé et liste déroulante prennent chacun toute la largeur : côte à
+   côte, une liste qui porte une phrase mangeait la colonne des noms. */
+.grille-reglage .large { grid-column: 1 / -1; }
+.grille-reglage label.large { margin-bottom: -2px; }
+.grille-reglage select.large { width: 100%; }
 .grille-reglage input[type="checkbox"] { width: auto; }
 .resultats { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 /* auto-fit plutôt qu'un compte fixe : la place réelle des tuiles dépend

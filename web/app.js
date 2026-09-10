@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.0";
+export const VERSION = "1.4.1";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -581,6 +581,11 @@ function rubriqueReglages(titre, champs, cible, premiere) {
     } else {
       champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: ou[cle], oninput: (e) => { ou[cle] = Number(e.target.value); changerReglage(cible); } });
     }
+    // Une liste déroulante porte des phrases (« le bois — moins de
+    // pertes ») : à côté de son libellé, elle écrasait la colonne des
+    // noms à 102 px et « Passes d'amélioration » passait sur deux
+    // lignes. Elle prend donc sa propre ligne, sous son libellé.
+    if (genre === "choix") { etiquette.classList.add("large"); champ.classList.add("large"); }
     const explication = el("p", { class: "discret", text: t(info) });
     corps.append(etiquette, champ, explication);
     lignes.push({ elements: [etiquette, champ, explication], texte: sansAccent(t(libelle) + " " + t(info)) });
