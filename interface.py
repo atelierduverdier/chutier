@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import threading
+import unicodedata
 from xml.etree.ElementTree import ParseError as ET_ParseError
 
 from PySide6.QtCore import (
@@ -29,7 +30,8 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMainWindow, QMenu,
     QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
     QDialogButtonBox, QSplitter, QTabWidget, QToolButton, QVBoxLayout,
     QWidget,
@@ -62,6 +64,15 @@ ICONE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "resources", "icone.svg")
 
 PLAN, ACHATS, CHUTES, NON_PLACEES = range(4)
+
+
+
+def _sans_accent(texte: str) -> str:
+    """Minuscules sans accent : chercher « surcote » doit trouver
+    « Surcôte », et « melange » trouver « mélange »."""
+    texte = unicodedata.normalize("NFKD", texte or "")
+    return "".join(c for c in texte
+                   if not unicodedata.combining(c)).casefold()
 
 
 class DialogueGcode(QDialog):
@@ -815,6 +826,20 @@ class FenetrePrincipale(QMainWindow):
             " pour tout projet neuf — un trait de scie est une propriété de"
             " la scie, pas du projet. Un projet enregistré, lui, garde les"
             " siens et les réimpose à l'ouverture."))
+
+        # Vingt réglages en six rubriques : sans un filtre, retrouver
+        # « surcote de joint » demandait de tout parcourir (demandé par
+        # Christophe, 10/09/2026).
+        self.filtre_reglages = QLineEdit()
+        self.filtre_reglages.setPlaceholderText(
+            "Chercher un réglage — nom ou explication")
+        self.filtre_reglages.setClearButtonEnabled(True)
+        self.filtre_reglages.textChanged.connect(self._filtrer_reglages)
+        colonne.addWidget(self.filtre_reglages)
+
+        # Les rubriques vont du plus souvent touché au plus rare : on
+        # règle la scie à chaque séance, la CNC une fois pour toutes.
+        self._groupes_reglages = []
         colonne.addWidget(self._groupe_reglage("La scie", [
             ("Trait de scie (mm)", self.spin_trait,
              "Largeur de matière mangée par chaque coupe — 3 à 4 mm pour"
@@ -831,6 +856,23 @@ class FenetrePrincipale(QMainWindow):
             ("Surcote de largeur (mm)", self.spin_surcote_largeur,
              "Idem en travers — de quoi dresser les rives à la"
              " dégauchisseuse."),
+        ]))
+        colonne.addWidget(self._groupe_reglage("Le calcul", [
+            ("Privilégier", self.choix_priorite,
+             "Entre deux plans qui placent tout dans le même bois neuf :"
+             " garder celui qui perd le moins de matière, ou celui qui"
+             " demande le moins de coupes — à la circulaire, des pièces de"
+             " même largeur rangées en bandes se scient bien plus vite."),
+            ("Essais de mélange", self.spin_essais,
+             "Ordres de pièces tirés au hasard en plus des stratégies"
+             " réglées. Plus d'essais range parfois mieux, et calcule plus"
+             " longtemps. Le hasard est à graine fixe : mêmes entrées,"
+             " même plan."),
+            ("Passes d'amélioration", self.spin_passes,
+             "Après le meilleur rangement, on essaie planche par planche"
+             " de la vider et de replacer ses pièces dans les trous des"
+             " autres — c'est ainsi qu'une planche de trop disparaît."
+             " 0 pour s'en passer."),
         ]))
         colonne.addWidget(self._groupe_reglage("Ce qui mérite d'être gardé", [
             ("Chute mini — longueur (mm)", self.spin_chute_longueur,
@@ -849,7 +891,7 @@ class FenetrePrincipale(QMainWindow):
              "Largeur perdue à chaque collage entre deux lames d'une"
              " pièce composable — sans effet sur les autres."),
         ]))
-        colonne.addWidget(self._groupe_reglage("La CNC (contours imbriqués)", [
+        colonne.addWidget(self._groupe_reglage("La CNC — imbrication des contours", [
             ("Écart entre contours (mm)", self.spin_ecart,
              "Diamètre de fraise plus un jeu : la distance minimale entre"
              " deux pièces imbriquées. Ne joue que pour les matières qui"
@@ -869,23 +911,6 @@ class FenetrePrincipale(QMainWindow):
              "Les stratégies d'imbrication se répartissent sur les cœurs"
              " de la machine. Le résultat ne dépend pas de ce nombre ;"
              " seule la durée change. 1 pour calculer sans parallélisme."),
-        ]))
-        colonne.addWidget(self._groupe_reglage("Le calcul", [
-            ("Privilégier", self.choix_priorite,
-             "Entre deux plans qui placent tout dans le même bois neuf :"
-             " garder celui qui perd le moins de matière, ou celui qui"
-             " demande le moins de coupes — à la circulaire, des pièces de"
-             " même largeur rangées en bandes se scient bien plus vite."),
-            ("Essais de mélange", self.spin_essais,
-             "Ordres de pièces tirés au hasard en plus des stratégies"
-             " réglées. Plus d'essais range parfois mieux, et calcule plus"
-             " longtemps. Le hasard est à graine fixe : mêmes entrées,"
-             " même plan."),
-            ("Passes d'amélioration", self.spin_passes,
-             "Après le meilleur rangement, on essaie planche par planche"
-             " de la vider et de replacer ses pièces dans les trous des"
-             " autres — c'est ainsi qu'une planche de trop disparaît."
-             " 0 pour s'en passer."),
         ]))
         colonne.addStretch()
 
@@ -912,17 +937,54 @@ class FenetrePrincipale(QMainWindow):
             self.saisie.setSizes([int(reste * 0.55), reste - int(reste * 0.55),
                                   part])
 
-    def _groupe_reglage(self, titre, champs) -> QGroupBox:
-        groupe = QGroupBox(titre)
-        formulaire = QFormLayout(groupe)
+    def _groupe_reglage(self, titre, champs) -> QWidget:
+        """Une rubrique repliable. Chaque rubrique retient son état :
+        rouvrir le chutier, c'est retrouver le panneau tel qu'on l'avait
+        laissé — sinon les vingt réglages se redéroulent tous et il faut
+        de nouveau chercher le sien."""
+        contenu = QWidget()
+        formulaire = QFormLayout(contenu)
+        formulaire.setContentsMargins(6, 2, 6, 6)
         formulaire.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        lignes = []
         for libelle, widget, info in champs:
             formulaire.addRow(libelle, widget)
             explication = apparence.discret(info)
             formulaire.addRow("", explication)
             widget.setToolTip(info)
-        return groupe
+            lignes.append((formulaire.labelForField(widget), widget,
+                           explication,
+                           (" ".join((libelle, info))).casefold()))
+
+        repliable = apparence.Repliable(titre, contenu)
+        cle = "reglages_groupe_" + _sans_accent(titre)
+        # La première rubrique est ouverte par défaut : tout replier
+        # rendait le panneau vide à son ouverture — on ne savait plus
+        # s'il y avait quelque chose dedans.
+        defaut = not self._groupes_reglages
+        repliable.ouvrir(self._reglages.value(cle, defaut, type=bool))
+        repliable.bascule.connect(
+            lambda ouvert, cle=cle: self._reglages.setValue(cle, ouvert))
+        self._groupes_reglages.append((repliable, lignes))
+        return repliable
+
+    def _filtrer_reglages(self, motif: str):
+        """Ne montre que les réglages dont le nom ou l'explication porte
+        ce motif — et ouvre d'office les rubriques qui en gardent, sinon
+        le résultat resterait caché derrière un en-tête replié."""
+        motif = _sans_accent(motif.strip())
+        for repliable, lignes in self._groupes_reglages:
+            gardees = 0
+            for etiquette, widget, explication, texte in lignes:
+                visible = not motif or motif in _sans_accent(texte)
+                for element in (etiquette, widget, explication):
+                    if element is not None:
+                        element.setVisible(visible)
+                gardees += 1 if visible else 0
+            repliable.setVisible(bool(gardees))
+            if motif and gardees:
+                repliable.ouvrir(True)
 
     def _spin(self, valeur, minimum, maximum) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()

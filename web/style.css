@@ -68,10 +68,20 @@ tr.choisie { outline: 2px solid var(--orange); outline-offset: -2px; }
 tr.choisie td { background: rgba(255,138,0,.08); }
 input.faux { background: rgba(192,57,43,.25) !important; }
 .actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
-#reglages { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
-#reglages h3 { grid-column: 1 / -1; font-size: 13px; margin: 8px 0 2px; color: var(--mid); }
-#reglages .discret { grid-column: 1 / -1; margin: 0 0 4px; }
-#reglages input, #reglages select { width: 9em; }
+/* Les réglages sont rangés en rubriques repliables : vingt champs d'un
+   seul tenant, il fallait tout parcourir pour en retrouver un. La grille
+   label / champ / explication vit maintenant DANS chaque rubrique. */
+#filtre-reglages { width: 100%; margin: 4px 0 6px; }
+.titre-reglages { font-size: 13px; margin: 14px 0 2px; color: var(--mid);
+  border-top: 1px solid var(--bord); padding-top: 10px; }
+.groupe-reglage { border: 1px solid var(--bord); border-radius: 5px; margin-bottom: 4px; }
+.groupe-reglage > summary { cursor: pointer; padding: 5px 8px; font-weight: 600; font-size: 13px; }
+.groupe-reglage > summary:hover { background: var(--carte); }
+.grille-reglage { display: grid; grid-template-columns: 1fr auto;
+  gap: 4px 10px; align-items: center; padding: 2px 8px 8px; }
+.grille-reglage .discret { grid-column: 1 / -1; margin: 0 0 4px; }
+.grille-reglage input, .grille-reglage select { width: 9em; }
+.grille-reglage input[type="checkbox"] { width: auto; }
 .resultats { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 /* auto-fit plutôt qu'un compte fixe : la place réelle des tuiles dépend
    de LA POIGNÉE saisie/plan (déplaçable), pas seulement de la largeur de

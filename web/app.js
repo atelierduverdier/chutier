@@ -49,30 +49,30 @@ const REGLAGES = [
     ["coupe_en_bandes", "Coupe en bandes", "bool", "Scie à panneaux ou à format : déligner d'abord en bandes pleine longueur, puis tronçonner chaque bande."],
     ["surcote_longueur", "Surcote de longueur (mm)", "nombre", "Marge de recoupe ajoutée à chaque pièce au débit."],
     ["surcote_largeur", "Surcote de largeur (mm)", "nombre", "Idem en travers — de quoi dresser les rives."]]],
+  ["Le calcul", [
+    ["priorite", "Privilégier", "choix", "Entre deux plans dans le même bois neuf : moins de pertes, ou moins de coupes.",
+      [["bois", "le bois — moins de pertes"], ["scie", "le temps de scie — moins de coupes"]]],
+    ["essais_melanges", "Essais de mélange", "entier", "Ordres tirés au hasard en plus des stratégies réglées. Graine fixe : même plan."],
+    ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."]]],
   ["Ce qui mérite d'être gardé", [
     ["chute_mini_longueur", "Chute mini — longueur (mm)", "nombre", "En dessous, le reste part aux pertes."],
     ["chute_mini_largeur", "Chute mini — largeur (mm)", "nombre", "Le petit côté du reste."]]],
   ["Le bois", [
     ["tolerance_epaisseur", "Tolérance d'épaisseur (mm)", "nombre", "Le bruit de mesure, pas un vrai manque d'épaisseur."],
     ["surcote_joint", "Surcote de joint collé (mm)", "nombre", "Largeur perdue à chaque collage d'une pièce composable."]]],
-  ["La CNC (contours imbriqués)", [
+  ["La CNC — imbrication des contours", [
     ["ecart_contours", "Écart entre contours (mm)", "nombre", "Diamètre de fraise plus un jeu."],
     ["marge_bord", "Marge au bord (mm)", "nombre", "Distance entre un contour et le bord de la planche."],
     ["vitesse_fraisage", "Vitesse de fraisage (mm/min)", "nombre", "Pour estimer le temps de découpe d'une planche imbriquée."],
     ["pas_rotation", "Orientations", "choix", "Les angles essayés pour une pièce à fil indifférent.",
       [[180, "2 orientations (180°) — rapide"], [90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
-  ["Le calcul", [
-    ["priorite", "Privilégier", "choix", "Entre deux plans dans le même bois neuf : moins de pertes, ou moins de coupes.",
-      [["bois", "le bois — moins de pertes"], ["scie", "le temps de scie — moins de coupes"]]],
-    ["essais_melanges", "Essais de mélange", "entier", "Ordres tirés au hasard en plus des stratégies réglées. Graine fixe : même plan."],
-    ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."]]],
 ];
 
 // Les réglages du G-code ne touchent pas au plan : les changer ne périme
 // pas le calcul, ils ne servent qu'à l'écriture du programme. D'où un
 // bloc d'état à part, et « gcode » comme cible dans REGLAGES.
 const REGLAGES_GCODE = [
-  ["La CNC (G-code)", [
+  ["Le programme G-code", [
     ["dialecte", "Dialecte", "choix", "LinuxCNC accepte G64, le changement d'outil T/M6 et la correction G43 ; GRBL les refuse et mélange nativement.",
       [["linuxcnc", "LinuxCNC (RS274)"], ["grbl", "GRBL / grblHAL"]]],
     ["diametre_fraise", "Diamètre de fraise (mm)", "nombre", "Le diamètre RÉEL, mesuré. Il doit tenir dans l'écart entre contours du plan, sinon deux parcours voisins se recouvrent."],
@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.3.9";
+export const VERSION = "1.4.0";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -558,28 +558,72 @@ function rafraichirResumes() {
 
 // -- réglages ------------------------------------------------------------------------
 
+// Minuscules sans accent : chercher « surcote » doit trouver « Surcôte ».
+const sansAccent = (texte) => (texte || "").normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+// Chaque rubrique est un <details> qui retient son état : rouvrir la page,
+// c'est retrouver le panneau tel qu'on l'avait laissé. La première est
+// ouverte par défaut, sinon le panneau paraît vide.
+function rubriqueReglages(titre, champs, cible, premiere) {
+  const corps = el("div", { class: "grille-reglage" });
+  const lignes = [];
+  for (const [cle, libelle, genre, info, choix] of champs) {
+    const ou = etat[cible];
+    const etiquette = el("label", { text: t(libelle), title: t(info) });
+    let champ;
+    if (genre === "choix") {
+      champ = el("select", { onchange: (e) => { ou[cle] = isNaN(Number(e.target.value)) || e.target.value === "" ? e.target.value : Number(e.target.value); changerReglage(cible); } });
+      for (const [v, libelle] of choix) champ.append(el("option", { value: v, text: t(libelle) }));
+      champ.value = String(ou[cle]);
+    } else if (genre === "bool") {
+      champ = el("input", { type: "checkbox", onchange: (e) => { ou[cle] = e.target.checked; changerReglage(cible); } });
+      champ.checked = Boolean(ou[cle]);
+    } else {
+      champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: ou[cle], oninput: (e) => { ou[cle] = Number(e.target.value); changerReglage(cible); } });
+    }
+    const explication = el("p", { class: "discret", text: t(info) });
+    corps.append(etiquette, champ, explication);
+    lignes.push({ elements: [etiquette, champ, explication], texte: sansAccent(t(libelle) + " " + t(info)) });
+  }
+  const cleEtat = "reglage_ouvert." + titre;
+  const bloc = el("details", { class: "groupe-reglage" },
+    el("summary", { text: t(titre) }), corps);
+  bloc.open = stockage.lire(cleEtat, Boolean(premiere));
+  bloc.addEventListener("toggle", () => stockage.ecrire(cleEtat, bloc.open));
+  bloc._lignes = lignes;
+  return bloc;
+}
+
 function rendreReglages() {
   const zone = $("#reglages");
   zone.replaceChildren();
-  for (const [titre, champs, cible = "parametres"] of [...REGLAGES, ...REGLAGES_GCODE]) {
-    zone.append(el("h3", { text: t(titre) }));
-    for (const [cle, libelle, genre, info, choix] of champs) {
-      const ou = etat[cible];
-      zone.append(el("label", { text: t(libelle), title: t(info) }));
-      let champ;
-      if (genre === "choix") {
-        champ = el("select", { onchange: (e) => { ou[cle] = isNaN(Number(e.target.value)) || e.target.value === "" ? e.target.value : Number(e.target.value); changerReglage(cible); } });
-        for (const [v, libelle] of choix) champ.append(el("option", { value: v, text: t(libelle) }));
-        champ.value = String(ou[cle]);
-      } else if (genre === "bool") {
-        champ = el("input", { type: "checkbox", onchange: (e) => { ou[cle] = e.target.checked; changerReglage(cible); } });
-        champ.checked = Boolean(ou[cle]);
-      } else {
-        champ = el("input", { type: "number", step: genre === "entier" ? 1 : 0.5, min: 0, value: ou[cle], oninput: (e) => { ou[cle] = Number(e.target.value); changerReglage(cible); } });
-      }
-      zone.append(champ);
-      zone.append(el("p", { class: "discret", text: t(info) }));
+  REGLAGES.forEach(([titre, champs, cible = "parametres"], i) =>
+    zone.append(rubriqueReglages(titre, champs, cible, i === 0)));
+
+  // Les réglages du G-code ne périment pas le plan : ils ne décrivent pas
+  // le débit mais le programme qu'on en tire. Mêlés aux autres, on les
+  // croyait susceptibles de changer le rangement (signalé le 10/09/2026).
+  const gcode = $("#reglages-gcode");
+  gcode.replaceChildren();
+  for (const [titre, champs, cible = "gcode"] of REGLAGES_GCODE)
+    gcode.append(rubriqueReglages(titre, champs, cible, false));
+
+  filtrerReglages($("#filtre-reglages")?.value || "");
+}
+
+// Ne montre que les réglages dont le nom ou l'explication porte ce motif,
+// et ouvre d'office les rubriques qui en gardent.
+function filtrerReglages(motif) {
+  const cherche = sansAccent(motif.trim());
+  for (const bloc of document.querySelectorAll(".groupe-reglage")) {
+    let gardees = 0;
+    for (const ligne of bloc._lignes || []) {
+      const visible = !cherche || ligne.texte.includes(cherche);
+      for (const e of ligne.elements) e.hidden = !visible;
+      if (visible) gardees += 1;
     }
+    bloc.hidden = !gardees;
+    if (cherche && gardees) bloc.open = true;
   }
 }
 function changerReglage(cible = "parametres") {
@@ -1205,6 +1249,7 @@ function brancher() {
 
 brancher();
 rendreReglages();
+$("#filtre-reglages").addEventListener("input", (e) => filtrerReglages(e.target.value));
 // Point d'accès pour les essais automatisés (et la console) : l'état, le
 // calcul, l'ajout de formes — rien de plus que ce que la page fait déjà.
 window.chutier = { etat, calculer, appeler, rendreTout, annuler, refaire, interrompre, enregistrerBrouillon, ajouterFormes: (formes) => { const premier = etat.stock.find(s => (s.reference || "").trim()); etat.pieces = etat.pieces.filter(p => (p.reference || "").trim()); for (const f of formes) etat.pieces.push({ ...DEFAUTS_LIGNE.pieces, reference: f.nom, longueur: f.longueur, largeur: f.largeur, epaisseur: premier ? premier.epaisseur : 18, matiere: premier ? premier.matiere : "", fil: "indifferent", contour: f.contour, trous: f.trous, quantite: f.quantite || 1 }); rendreTable("pieces"); } };
