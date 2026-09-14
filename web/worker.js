@@ -39,6 +39,15 @@ demarrer().then(() => { pret = true; for (const m of enAttente) traiter(m); })
 function traiter(message) {
   const { id, fn, args } = message;
   try {
+    if (typeof pont[fn] !== "function") {
+      // Un déploiement en plein rechargement peut mélanger un app.js du
+      // jour avec un pont_web.py resservi périmé par le cache (bris de
+      // réseau sur CE fichier précis pendant qu'un autre passait) :
+      // « pont[fn] is not a function » ne dit rien à l'atelier. Un message
+      // qui nomme la fonction et pointe le geste qui répare (14/09/2026).
+      throw new Error("version des fichiers incohérente (" + fn
+        + " introuvable) — rechargez la page (Ctrl+Maj+R)");
+    }
     const valeur = pont[fn](...args);
     postMessage({ id, ok: true, valeur: typeof valeur === "string" ? valeur : String(valeur) });
   } catch (erreur) {
