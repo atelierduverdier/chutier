@@ -1,15 +1,24 @@
 // Pyodide dans un Web Worker : le cœur Python tourne ici, la page reste
 // vive. Protocole : {id, fn, args} → {id, ok, valeur | erreur}.
 // Les modules Python sont ceux du dépôt, chargés tels quels.
+//
+// Worker de MODULE, pas classique : depuis la 314.0.0, pyodide.mjs le
+// refuse tel quel (« Classic web workers are not supported ») — la page
+// (app.js) crée donc ce worker avec {type: "module"}. En échange, shapely
+// 2.1.2 (GEOS bien plus récent que la 3.12.1 de la 0.28) : une
+// TopologyException GEOS sur un NFP à pointes aiguës (une étoile SVG)
+// tuait tout le worker sans le moindre rattrapage possible côté Python —
+// vérifié réel sur le dossier de Christophe (14/09/2026), et vérifié
+// résolu par cette version.
 
-const VERSION_PYODIDE = "0.28.0";
+const VERSION_PYODIDE = "314.0.6";
 const CDN = `https://cdn.jsdelivr.net/pyodide/v${VERSION_PYODIDE}/full/`;
 const MODULES = ["optimiseur.py", "imbrication.py", "triangulation.py",
   "contours_svg.py", "projet_io.py", "csv_io.py", "couleurs.py",
   "saisie.py", "stock_atelier.py", "exemples.py", "export_cnc.py", "gcode.py",
   "fcstd_io.py", "pont_web.py"];
 
-importScripts(CDN + "pyodide.js");
+const { loadPyodide } = await import(CDN + "pyodide.mjs");
 
 let pont = null;
 let pyodide = null;

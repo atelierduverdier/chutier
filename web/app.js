@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.5";
+export const VERSION = "1.4.6";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -172,7 +172,7 @@ let pythonPret = false;
 let demarre = false;
 
 function lancerWorker() {
-  worker = new Worker(new URL("./worker.js", import.meta.url));
+  worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.etat) { $("#etat").textContent = m.etat; return; }
@@ -235,7 +235,7 @@ const SEUIL_NFP = 40;
 const auxiliaires = [];
 
 function naitreAuxiliaire() {
-  const aux = { w: new Worker(new URL("./worker.js", import.meta.url)), attentes: new Map(), compteur: 0, pret: null };
+  const aux = { w: new Worker(new URL("./worker.js", import.meta.url), { type: "module" }), attentes: new Map(), compteur: 0, pret: null };
   aux.pret = new Promise((resolve, rejeter) => {
     aux.w.onmessage = (e) => {
       const m = e.data;
