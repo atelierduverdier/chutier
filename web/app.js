@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.4";
+export const VERSION = "1.4.5";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -201,6 +201,12 @@ async function tenter(fn, ...args) {
     // était, par exemple, une cote illisible à l'enregistrement (audit
     // du 05/09/2026).
     $("#etat").textContent = t("Erreur : ") + erreur.message;
+    // Un rejet ici (hors interruption volontaire) n'arrive JAMAIS pour une
+    // faute de saisie ordinaire — pont_web l'attrape et répond en JSON,
+    // ok:false. Ça n'arrive que si le worker lui-même a cessé de
+    // répondre : le laisser mort planterait tout appel suivant, jusqu'au
+    // rechargement manuel de la page (14/09/2026).
+    if (erreur.message !== "interrompu") _redemarrerWorker($("#etat").textContent);
     return null;
   }
 }
@@ -289,19 +295,28 @@ async function precalculerNfp(entree) {
   }
 }
 
-// Interrompre : un worker qui calcule ne s'écoute pas. On le tue et on en
-// relance un — Python se recharge depuis le cache, deux secondes — et
-// les appels en attente reçoivent leur refus.
-function interrompre() {
-  if (!worker) return;
-  worker.terminate();
+// Tue le worker principal et les auxiliaires, refuse ce qui attendait une
+// réponse, en relance un neuf — Python se recharge depuis le cache, deux
+// secondes. Partagé par Interrompre ET par la reprise après un plantage :
+// une exception GEOS peut être FATALE dans le moteur WebAssembly de
+// Pyodide (une TopologyException sur un NFP d'étoile en a tué un, sans le
+// moindre rattrapage possible côté Python, 14/09/2026) — le worker reste
+// mort pour toujours si personne ne le relance.
+function _redemarrerWorker(message) {
+  if (worker) worker.terminate();
   for (const aux of auxiliaires) { aux.w.terminate(); for (const a of aux.attentes.values()) a.reject(new Error("interrompu")); }
   auxiliaires.length = 0;
   for (const a of attentes.values()) a.reject(new Error("interrompu"));
   attentes.clear();
   pythonPret = false;
-  $("#etat").textContent = t("Calcul interrompu — Python se recharge…");
+  $("#etat").textContent = message;
   lancerWorker();
+}
+
+// Interrompre : un worker qui calcule ne s'écoute pas.
+function interrompre() {
+  if (!worker) return;
+  _redemarrerWorker(t("Calcul interrompu — Python se recharge…"));
 }
 lancerWorker();
 
@@ -697,7 +712,10 @@ async function calculer() {
     afficherResultat();
   } catch (erreur) {
     if (erreur.message === "interrompu") { $("#etat").textContent = t("Calcul interrompu — le plan précédent reste affiché"); }
-    else { alerter(t("Le calcul a échoué : ") + erreur.message); $("#etat").textContent = t("Échec du calcul"); }
+    else {
+      alerter(t("Le calcul a échoué : ") + erreur.message);
+      _redemarrerWorker(t("Échec du calcul"));
+    }
   } finally {
     $("#b-calculer").disabled = false;
     $("#b-interrompre").hidden = true;

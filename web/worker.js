@@ -40,13 +40,17 @@ function traiter(message) {
   const { id, fn, args } = message;
   try {
     if (typeof pont[fn] !== "function") {
-      // Un déploiement en plein rechargement peut mélanger un app.js du
-      // jour avec un pont_web.py resservi périmé par le cache (bris de
-      // réseau sur CE fichier précis pendant qu'un autre passait) :
-      // « pont[fn] is not a function » ne dit rien à l'atelier. Un message
-      // qui nomme la fonction et pointe le geste qui répare (14/09/2026).
-      throw new Error("version des fichiers incohérente (" + fn
-        + " introuvable) — rechargez la page (Ctrl+Maj+R)");
+      // « pont[fn] is not a function » ne dit rien à l'atelier. Deux
+      // causes vues le 14/09/2026 : un déploiement en plein rechargement
+      // qui mélange un app.js du jour avec un pont_web.py resservi périmé
+      // par le cache — OU un module Python déjà mort d'un plantage fatal
+      // plus tôt dans CE worker (une TopologyException GEOS, par exemple,
+      // ne se rattrape pas en WebAssembly et emporte tout Python avec
+      // elle). app.js relance un worker neuf dès qu'il voit passer cette
+      // erreur ; pas la peine de le dire ici, un mot suffit à nommer la
+      // fonction absente.
+      throw new Error("le moteur de calcul ne répond plus (" + fn
+        + " introuvable)");
     }
     const valeur = pont[fn](...args);
     postMessage({ id, ok: true, valeur: typeof valeur === "string" ? valeur : String(valeur) });
