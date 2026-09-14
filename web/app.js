@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.3";
+export const VERSION = "1.4.4";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -443,6 +443,10 @@ function ajusterColonnes(table, colonnes) {
   });
 }
 
+// L'ancre du dernier clic simple/Ctrl-clic par table, pour le Maj-clic
+// (étendre à un intervalle réclame de savoir depuis où).
+const ancreSelection = {};
+
 function rendreTable(nom) {
   const table = $("#t-" + nom);
   const lignes = etat[nom];
@@ -453,7 +457,25 @@ function rendreTable(nom) {
   table.append(el("thead", {}, entete));
   const corps = el("tbody");
   lignes.forEach((ligne, i) => {
-    const tr = el("tr", { "data-ligne": i, onclick: (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") { tr.classList.toggle("choisie", !(e.ctrlKey || e.metaKey) ? true : !tr.classList.contains("choisie")); if (!(e.ctrlKey || e.metaKey)) for (const autre of corps.children) if (autre !== tr) autre.classList.remove("choisie"); } } });
+    // Choisir sur TOUT clic dans la ligne, champ de saisie compris : sur
+    // une table dense, presque chaque cellule EST un input ou un select
+    // (seul le mince interstice entre eux y échappait), ce qui rendait
+    // une ligne presque impossible à choisir (signalé le 14/09/2026). Ne
+    // rien empêcher par défaut (pas de preventDefault) laisse le clic
+    // faire aussi son office normal : focus, curseur, case à cocher.
+    const tr = el("tr", { "data-ligne": i, onclick: (e) => {
+      if (e.shiftKey && ancreSelection[nom] != null) {
+        const [debut, fin] = [ancreSelection[nom], i].sort((a, b) => a - b);
+        [...corps.children].forEach((autre, j) => autre.classList.toggle("choisie", j >= debut && j <= fin));
+      } else if (e.ctrlKey || e.metaKey) {
+        tr.classList.toggle("choisie");
+        ancreSelection[nom] = i;
+      } else {
+        for (const autre of corps.children) autre.classList.remove("choisie");
+        tr.classList.add("choisie");
+        ancreSelection[nom] = i;
+      }
+    } });
     for (const c of colonnes) tr.append(cellule(nom, ligne, c, i));
     corps.append(tr);
   });
@@ -544,6 +566,20 @@ function lignesChoisies(nom) { return [...$("#t-" + nom).querySelectorAll("tr.ch
 function ajouterLigne(nom) { etat[nom].push({ ...DEFAUTS_LIGNE[nom] }); etat.aJour = false; rendreTable(nom); rafraichirEtat(); marquerChangement(); const dern = $("#t-" + nom).querySelector("tbody tr:last-child input[type=text]"); dern && dern.focus(); }
 function dupliquerLignes(nom) { const choisies = lignesChoisies(nom); if (!choisies.length) return; const copies = choisies.map(i => JSON.parse(JSON.stringify(etat[nom][i]))); etat[nom].splice(choisies[choisies.length - 1] + 1, 0, ...copies); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement(); }
 function supprimerLignes(nom, lignes = lignesChoisies(nom)) { for (const i of [...lignes].sort((a, b) => b - a)) etat[nom].splice(i, 1); etat.aJour = false; rendreTable(nom); rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement(); }
+function appliquerMatiereEnLot(nom) {
+  const lignes = lignesChoisies(nom);
+  if (!lignes.length) { alerter(t("Choisissez d'abord une ou plusieurs lignes (clic, Ctrl-clic ou Maj-clic pour en ajouter).")); return; }
+  const connues = matieres();
+  const matiere = window.prompt(
+    t`Matière à appliquer à ${lignes.length} ligne(s) choisie(s) :` + (connues.length ? t`\n\nDéjà utilisées : ${connues.join(", ")}` : ""),
+    etat[nom][lignes[0]].matiere || "");
+  if (matiere === null || !matiere.trim()) return;
+  for (const i of lignes) etat[nom][i].matiere = matiere.trim();
+  etat.aJour = false; rendreTable(nom);
+  const corps = $("#t-" + nom + " tbody");
+  for (const i of lignes) corps.children[i]?.classList.add("choisie");
+  rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement();
+}
 
 function rafraichirResumes() {
   const pieces = etat.pieces.filter(p => (p.reference || "").trim());
@@ -1174,7 +1210,7 @@ async function demarrer() {
 function aide() {
   alerter(t`Le geste : les pièces à débiter, le stock où les tailler, les réglages de scie, puis Calculer (F5). Le plan se lit à droite, toutes planches empilées.
 
-Saisie : Ctrl+V colle un bloc venu d'un tableur (colonnes séparées par une tabulation ou un point-virgule) ; Entrée passe à la ligne suivante ; Ctrl+Suppr ôte la ligne ; clic sur une ligne pour la choisir, Ctrl-clic pour en ajouter.
+Saisie : Ctrl+V colle un bloc venu d'un tableur (colonnes séparées par une tabulation ou un point-virgule) ; Entrée passe à la ligne suivante ; Ctrl+Suppr ôte la ligne ; clic sur une ligne pour la choisir, Ctrl-clic pour en ajouter une, Maj-clic pour tout choisir entre deux lignes ; « Matière… » applique la même matière à toutes les lignes choisies.
 
 L'atelier : les lignes de stock cochées « Atelier » restent dans ce navigateur d'un projet à l'autre. « Ranger les chutes au stock » y écrit aussitôt.
 
@@ -1209,7 +1245,7 @@ function brancher() {
   $("#b-desepingler").onclick = () => { etat.epingles = []; calculer(); };
   $("#b-aide").onclick = aide;
   $("#b-ranger").onclick = rangerChutes;
-  for (const b of document.querySelectorAll("[data-acte]")) b.onclick = () => ({ ligne: ajouterLigne, dupliquer: dupliquerLignes, supprimer: supprimerLignes })[b.dataset.acte](b.dataset.table);
+  for (const b of document.querySelectorAll("[data-acte]")) b.onclick = () => ({ ligne: ajouterLigne, dupliquer: dupliquerLignes, supprimer: supprimerLignes, matiere: appliquerMatiereEnLot })[b.dataset.acte](b.dataset.table);
   $("#c-avancees").onchange = (e) => { etat.avancees = e.target.checked; stockage.ecrire("avancees", etat.avancees); rendreTable("pieces"); rendreTable("stock"); };
   $("#c-traits").onchange = (e) => { etat.traits = e.target.checked; stockage.ecrire("traits", etat.traits); dessinerPlan(); };
   $("#b-moins").onclick = () => { etat.zoom = Math.max(0.25, etat.zoom / 1.25); ajusterZoom(); };
