@@ -18,7 +18,6 @@ import os
 import sys
 import threading
 import unicodedata
-from xml.etree.ElementTree import ParseError as ET_ParseError
 
 from PySide6.QtCore import (
     QEvent, QObject, QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal,
@@ -1880,7 +1879,7 @@ class FenetrePrincipale(QMainWindow):
         """Le stock commun, tel que le fichier le dit."""
         try:
             return projet_io.lire_atelier(self._chemin_atelier)
-        except (OSError, ValueError) as erreur:
+        except Exception as erreur:
             QMessageBox.warning(
                 self, "Stock de l'atelier illisible",
                 "%s\n\nLe débit se fera sans lui." % erreur)
@@ -2051,7 +2050,7 @@ class FenetrePrincipale(QMainWindow):
         try:
             pieces, stock, parametres = projet_io.lire(chemin)
             epingles = projet_io.lire_epingles(chemin)
-        except (OSError, ValueError) as erreur:
+        except Exception as erreur:
             QMessageBox.warning(self, "Ouverture impossible", str(erreur))
             return
         # Le projet ne porte que SES planches ; l'atelier vient du fichier
@@ -2112,7 +2111,7 @@ class FenetrePrincipale(QMainWindow):
             return
         try:
             pieces = csv_io.lire_pieces(chemin)
-        except (OSError, ValueError) as erreur:
+        except Exception as erreur:
             QMessageBox.warning(self, "Import impossible", str(erreur))
             return
         self._chargement = True
@@ -2153,7 +2152,14 @@ class FenetrePrincipale(QMainWindow):
             return
         try:
             formes, avertissements = contours_svg.formes_depuis_svg(chemin)
-        except (OSError, ValueError, ET_ParseError) as erreur:
+        except Exception as erreur:
+            # Volontairement large (pas seulement OSError/ValueError/
+            # ParseError) : un SVG réel peut heurter le lecteur d'une
+            # façon qui lève un AUTRE type d'exception (un attribut
+            # inattendu, une forme dégénérée...), et une exception non
+            # captée dans un slot Qt ne remonte nulle part à l'écran —
+            # ni boîte de dialogue, ni pièce, rien (signalé le
+            # 14/09/2026 : import totalement silencieux).
             QMessageBox.warning(self, "Import impossible", str(erreur))
             return
         if not formes:
@@ -2261,7 +2267,7 @@ class FenetrePrincipale(QMainWindow):
                 "Un caractère de « %s » n'existe pas dans l'alphabet du"
                 " DXF (Windows-1252) : %s" % (titre, erreur))
             return
-        except (OSError, ValueError) as erreur:
+        except Exception as erreur:
             QMessageBox.warning(self, "Export impossible", str(erreur))
             return
         if avertissements:
@@ -2299,7 +2305,7 @@ class FenetrePrincipale(QMainWindow):
             return
         try:
             pieces = fcstd_io.lire_fichier(chemin)
-        except (OSError, ValueError) as erreur:
+        except Exception as erreur:
             QMessageBox.warning(self, "Import impossible", str(erreur))
             return
         self._chargement = True

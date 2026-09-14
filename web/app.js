@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.1";
+export const VERSION = "1.4.2";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -870,7 +870,10 @@ function telecharger(nom, texte, type = "text/plain") {
   const a = el("a", { href: URL.createObjectURL(new Blob([texte], { type })), download: nom });
   document.body.append(a); a.click(); a.remove();
 }
-function lireFichier(input, binaire = false) { return new Promise((resolve) => { input.onchange = () => { const f = input.files[0]; input.value = ""; if (!f) return resolve(null); const lecteur = new FileReader(); lecteur.onload = () => resolve({ nom: f.name, texte: binaire ? lecteur.result.split(",")[1] : lecteur.result }); binaire ? lecteur.readAsDataURL(f) : lecteur.readAsText(f); }; input.click(); }); }
+// lecteur.onerror manquait : un fichier illisible (droits, disque externe
+// débranché…) laissait la promesse sans réponse — le bouton semblait ne
+// rien faire, sans le moindre message (signalé le 14/09/2026).
+function lireFichier(input, binaire = false) { return new Promise((resolve) => { input.onchange = () => { const f = input.files[0]; input.value = ""; if (!f) return resolve(null); const lecteur = new FileReader(); lecteur.onload = () => resolve({ nom: f.name, texte: binaire ? lecteur.result.split(",")[1] : lecteur.result }); lecteur.onerror = () => { alerter(t`Impossible de lire « ${f.name} »`); resolve(null); }; binaire ? lecteur.readAsDataURL(f) : lecteur.readAsText(f); }; input.click(); }); }
 
 async function ouvrirProjet() {
   const f = await lireFichier($("#f-projet")); if (!f) return;
