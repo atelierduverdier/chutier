@@ -360,6 +360,7 @@ const ANGLAIS = {
   "Les planches NEUVES réellement entamées — les chutes, déjà en atelier, n'y figurent jamais. Renseignez le prix d'une planche dans le stock pour obtenir le coût.": "The NEW boards actually used — offcuts, already in the workshop, never appear here. Give a board's price in the stock to get the cost.",
   "Les restes assez grands pour resservir — la raison d'être du chutier. « Ranger les chutes au stock » met l'atelier à jour comme si le débit était fait.": "The leftovers big enough to serve again — the whole point of the chutier. “Put the offcuts into stock” updates the workshop as though the cutting were done.",
   "Python se charge…": "Python is loading…",
+  "☕ Soutenir sur Ko-fi": "☕ Support on Ko-fi",
   "Code source, LGPL-2.1": "Source code, LGPL-2.1",
   "· Atelier du Verdier": "· Atelier du Verdier",
 
