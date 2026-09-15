@@ -53,7 +53,8 @@ const ANGLAIS = {
   "Prix": "Price",
   "Coût d'UNE planche, pas au mètre. 0 pour ne pas en tenir compte.": "Cost of ONE board, not per metre. 0 to ignore it.",
   "Défauts": "Defects",
-  "bouts 30 ; rives 8 ; 1200-1280 ; 600,140,60,40 — recoupes de bout et de rive, nœud traversant, zone x,y,longueur,largeur.": "bouts 30 ; rives 8 ; 1200-1280 ; 600,140,60,40 — trim off each end, trim off each edge, a through knot, an area x,y,length,width.",
+  "Ce que la planche a de moins que son rectangle, termes séparés par « ; » :\nbouts 30 — 30 mm à ôter à chaque bout (fendu)\nrives 8 — 8 mm à ôter sur chaque rive (flache)\n1200-1280 — un nœud traversant, de 1200 à 1280 mm\n600,140,60,40 — une zone x, y, longueur, largeur\n(x depuis le bout gauche, y depuis la rive basse).":
+    "What the board has less than its rectangle, terms separated by “;”:\nbouts 30 — 30 mm to trim off each end (split)\nrives 8 — 8 mm to trim off each edge (bark edge)\n1200-1280 — a through knot, from 1200 to 1280 mm\n600,140,60,40 — an area x, y, length, width\n(x from the left end, y from the bottom edge). Keep “bouts” and “rives” exactly as shown — the words themselves are read by the program.",
   "Une chute BISCORNUE, reste d'une planche imbriquée rangé au stock avec sa forme. Ne sert qu'à l'imbrication de contours.": "An ODD-SHAPED offcut: what is left of a nested board, put back into stock with its shape. Only ever used for nesting outlines.",
 
   // -- réglages

@@ -33,7 +33,12 @@ const COLONNES = {
     { cle: "fil", titre: "Fil", genre: "bool", avancee: true, info: "Décocher pour un panneau (contreplaqué, MDF) : rotation libre." },
     { cle: "illimite", titre: "Catalogue", genre: "bool", avancee: true, info: "Une section qu'on peut ACHETER : la quantité ne borne plus rien." },
     { cle: "prix", titre: "Prix", genre: "nombre", avancee: true, info: "Coût d'UNE planche, pas au mètre. 0 pour ne pas en tenir compte." },
-    { cle: "defauts_texte", titre: "Défauts", genre: "texte", info: "bouts 30 ; rives 8 ; 1200-1280 ; 600,140,60,40 — recoupes de bout et de rive, nœud traversant, zone x,y,longueur,largeur." },
+    { cle: "defauts_texte", titre: "Défauts", genre: "texte", info: `Ce que la planche a de moins que son rectangle, termes séparés par « ; » :
+bouts 30 — 30 mm à ôter à chaque bout (fendu)
+rives 8 — 8 mm à ôter sur chaque rive (flache)
+1200-1280 — un nœud traversant, de 1200 à 1280 mm
+600,140,60,40 — une zone x, y, longueur, largeur
+(x depuis le bout gauche, y depuis la rive basse).` },
     { cle: "contour", titre: "Contour", genre: "contour", avancee: true, info: "Une chute BISCORNUE, reste d'une planche imbriquée rangé au stock avec sa forme. Ne sert qu'à l'imbrication de contours." },
   ],
 };
@@ -133,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.7";
+export const VERSION = "1.4.8";
 
 function controlerVersion() {
   const b = $("#b-version");
