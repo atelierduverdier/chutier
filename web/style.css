@@ -123,8 +123,10 @@ td input[data-colonne=reference] { min-width: 9em; }
 .legende .pastille { display: inline-block; width: 13px; height: 13px; border: 1px solid var(--ardoise); vertical-align: -2px; margin-right: 4px; }
 ul { margin: 4px 0; padding-left: 20px; }
 .rouge { color: var(--scie); }
-footer { display: flex; gap: 10px; padding: 4px 12px; border-top: 1px solid var(--bord); background: var(--carte); }
+footer { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-top: 1px solid var(--bord); background: var(--carte); }
 footer a { color: inherit; }
+footer .kofi { background: var(--orange); color: #1a1e23; font-weight: bold; padding: 3px 10px; border-radius: 6px; text-decoration: none; }
+footer .kofi:hover { filter: brightness(1.08); }
 .menu-contextuel { position: fixed; background: var(--carte); border: 1px solid var(--bord); border-radius: 6px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.2); z-index: 30; display: flex; flex-direction: column; min-width: 220px; }
 .menu-contextuel[hidden] { display: none; }
 .menu-contextuel button { border: none; text-align: left; padding: 6px 10px; }
