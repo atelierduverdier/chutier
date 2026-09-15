@@ -1,0 +1,62 @@
+name: Bureau Windows
+
+# Construit chutier.exe (PyInstaller --onefile) sur un vrai runner
+# Windows — indispensable : PyInstaller ne fabrique pas de binaire
+# Windows depuis Linux, il fige l'interpréteur ET les bibliothèques
+# natives (PySide6, la GEOS de shapely) de la machine où il tourne.
+#
+# --onefile plutôt que --onedir (choix du script Linux) : sous Windows,
+# un simple .exe qu'on double-clique compte plus qu'un dossier à garder
+# entier — l'extraction à chaque lancement (un ou deux secondes) est le
+# prix d'un seul fichier à distribuer.
+#
+# Déclenchement manuel (bouton « Run workflow » sur GitHub, ou
+# `gh workflow run windows.yml`) : pas de .exe reconstruit à chaque
+# commit, seulement quand une publication le demande.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  construire:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PySide6 "shapely>=2.1" numpy
+
+      - name: PyInstaller
+        run: >
+          pyinstaller --name chutier --onefile --windowed
+          --add-data "resources/icone.svg;resources"
+          interface.py
+
+      - name: Vérification (calcul en tâche de fond, sans écran)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CHUTIER_ATELIER: ${{ runner.temp }}\essai\atelier.json
+          XDG_CONFIG_HOME: ${{ runner.temp }}\essai
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:XDG_CONFIG_HOME" | Out-Null
+          $p = Start-Process -FilePath "dist\chutier.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) {
+            Write-Error "ARRÊTÉ TOUT SEUL — quelque chose a raté (code $($p.ExitCode))"
+            exit 1
+          }
+          Write-Host "lancé et vivant"
+          Stop-Process -Id $p.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chutier-windows
+          path: dist/chutier.exe
+          retention-days: 30
