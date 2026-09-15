@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 
 import optimiseur as opt
 from saisie import (  # noqa: F401 — réexportés, l'interface les prend ici
-    SYNTAXE_DEFAUTS, ErreurSaisie, lire_defauts, texte_contour,
-    texte_defauts, texte_nombre,
+    SYNTAXE_DEFAUTS, ErreurSaisie, analyser_termes_defauts, lire_defauts,
+    texte_contour, texte_defauts, texte_depuis_termes, texte_nombre,
 )
 
 TEXTE, NOMBRE, ENTIER, CHOIX, BOOLEEN, MATIERE, DEFAUTS, PLANCHE, CONTOUR = (

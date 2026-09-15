@@ -244,6 +244,154 @@ class DialogueGcode(QDialog):
         )
 
 
+class DialogueDefauts(QDialog):
+    """Les défauts d'UNE planche, un par un — au lieu de taper de
+    mémoire « bouts 30 ; rives 8 ; 1200-1280 ; 600,140,60,40 ». Lit et
+    réécrit EXACTEMENT le même texte (saisie.analyser_termes_defauts /
+    texte_depuis_termes, communs au bureau et à la page web) : rien ne
+    change pour qui préfère taper directement, ni pour le CSV."""
+
+    _LIBELLES = (
+        ("bouts", "Recoupe de bout"),
+        ("rives", "Recoupe de rive"),
+        ("bande", "Nœud traversant"),
+        ("zone", "Zone rectangulaire"),
+    )
+
+    def __init__(self, parent, texte: str):
+        super().__init__(parent)
+        self.setWindowTitle("Défauts de la planche")
+        self._termes = tsa.analyser_termes_defauts(texte)
+
+        colonne = QVBoxLayout(self)
+        self.liste = QListWidget()
+        self.liste.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        colonne.addWidget(self.liste, 1)
+        bouton_retirer = QPushButton("Retirer")
+        bouton_retirer.clicked.connect(self._retirer)
+        colonne.addWidget(bouton_retirer)
+
+        ligne_ajout = QHBoxLayout()
+        self.choix_type = QComboBox()
+        for genre, libelle in self._LIBELLES:
+            self.choix_type.addItem(libelle, genre)
+        self.choix_type.currentIndexChanged.connect(self._rebatir_champs)
+        ligne_ajout.addWidget(self.choix_type)
+        colonne.addLayout(ligne_ajout)
+
+        self.zone_champs = QWidget()
+        self._formulaire_champs = QFormLayout(self.zone_champs)
+        self._champs = {}
+        colonne.addWidget(self.zone_champs)
+        self._rebatir_champs()
+
+        bouton_ajouter = QPushButton("+ Ajouter")
+        bouton_ajouter.clicked.connect(self._ajouter)
+        colonne.addWidget(bouton_ajouter)
+
+        boutons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel, self)
+        boutons.accepted.connect(self.accept)
+        boutons.rejected.connect(self.reject)
+        colonne.addWidget(boutons)
+        self.resize(420, 480)
+
+        self._rafraichir_liste()
+
+    @staticmethod
+    def _description(terme) -> str:
+        genre = terme["genre"]
+        if genre == "bouts":
+            return ("Recoupe de bout : %s mm à chaque bout"
+                    % tsa.texte_nombre(terme["valeur"]))
+        if genre == "rives":
+            return ("Recoupe de rive : %s mm à chaque rive"
+                    % tsa.texte_nombre(terme["valeur"]))
+        if genre == "bande":
+            return ("Nœud traversant de %s à %s mm"
+                    % (tsa.texte_nombre(terme["de"]),
+                       tsa.texte_nombre(terme["a"])))
+        if genre == "zone":
+            return ("Zone à (%s, %s) : %s × %s mm"
+                    % tuple(tsa.texte_nombre(terme[c]) for c in
+                           ("x", "y", "longueur", "largeur")))
+        return terme["texte"]  # non reconnu : montré tel quel
+
+    def _rafraichir_liste(self):
+        self.liste.clear()
+        for terme in self._termes:
+            self.liste.addItem(self._description(terme))
+
+    def _retirer(self):
+        ligne = self.liste.currentRow()
+        if ligne >= 0:
+            del self._termes[ligne]
+            self._rafraichir_liste()
+
+    def _rebatir_champs(self):
+        while self._formulaire_champs.rowCount():
+            self._formulaire_champs.removeRow(0)
+        self._champs = {}
+
+        def champ(cle, libelle):
+            spin = QDoubleSpinBox()
+            spin.setRange(-100000, 100000)
+            spin.setDecimals(1)
+            spin.setSuffix(" mm")
+            self._formulaire_champs.addRow(libelle, spin)
+            self._champs[cle] = spin
+
+        genre = self.choix_type.currentData()
+        if genre == "bouts":
+            champ("valeur", "Longueur à retirer à chaque bout")
+        elif genre == "rives":
+            champ("valeur", "Largeur à retirer à chaque rive")
+        elif genre == "bande":
+            champ("de", "De")
+            champ("a", "à")
+        elif genre == "zone":
+            champ("x", "x depuis le bout gauche")
+            champ("y", "y depuis la rive basse")
+            champ("longueur", "Longueur")
+            champ("largeur", "Largeur")
+
+    def _ajouter(self):
+        genre = self.choix_type.currentData()
+        valeurs = {cle: spin.value() for cle, spin in self._champs.items()}
+        if genre in ("bouts", "rives"):
+            if valeurs["valeur"] <= 0:
+                QMessageBox.warning(self, "Valeur manquante",
+                                    "Indiquez une longueur positive.")
+                return
+            # Un seul par planche : Python en fait une AFFECTATION, pas
+            # une liste — le second écraserait le premier en silence à
+            # la lecture (saisie.lire_defauts). On le remplace ici plutôt
+            # que d'écrire un texte que lire_defauts relirait autrement.
+            self._termes = [t for t in self._termes if t["genre"] != genre]
+            nouveau = {"genre": genre, "valeur": valeurs["valeur"]}
+        elif genre == "bande":
+            if valeurs["de"] == valeurs["a"]:
+                QMessageBox.warning(self, "Valeurs identiques",
+                                    "« De » et « à » doivent différer.")
+                return
+            de, a = sorted((valeurs["de"], valeurs["a"]))
+            nouveau = {"genre": "bande", "de": de, "a": a}
+        else:
+            if valeurs["longueur"] <= 0 or valeurs["largeur"] <= 0:
+                QMessageBox.warning(
+                    self, "Valeurs invalides",
+                    "La longueur et la largeur doivent être positives.")
+                return
+            nouveau = {"genre": "zone", **valeurs}
+        self._termes.append(nouveau)
+        self._rafraichir_liste()
+
+    def texte(self) -> str:
+        return tsa.texte_depuis_termes(self._termes)
+
+
 class _Messager(QObject):
     """Porte la réponse du fil de vérification de version au fil de Qt."""
     version = Signal(str)
@@ -549,6 +697,10 @@ class FenetrePrincipale(QMainWindow):
         self.a_matiere = self._acte(
             "&Matière → lignes sélectionnées", self._matiere_en_lot, None,
             None, "Appliquer une même matière à toutes les lignes choisies")
+        self.a_defauts = self._acte(
+            "&Défauts de la planche…", self._assistant_defauts, None,
+            None, "Construire les défauts (recoupes, nœuds, zones) sans"
+            " retenir la syntaxe")
 
         self.a_calculer = self._acte(
             "&Calculer le débit", self._calculer, "F5",
@@ -619,6 +771,7 @@ class FenetrePrincipale(QMainWindow):
             edition.addAction(action)
         edition.addSeparator()
         edition.addAction(self.a_matiere)
+        edition.addAction(self.a_defauts)
         edition.addSeparator()
         edition.addAction(self.a_avancees)
 
@@ -765,7 +918,8 @@ class FenetrePrincipale(QMainWindow):
             self.table_stock, self.titre_stock, self.resume_stock,
             [self._bouton(self.a_ligne, "+ ligne", self.table_stock),
              self._bouton(self.a_dupliquer, "Dupliquer", self.table_stock),
-             self._bouton(self.a_supprimer, "Supprimer", self.table_stock)])
+             self._bouton(self.a_supprimer, "Supprimer", self.table_stock),
+             self._bouton(self.a_defauts, "Défauts…", self.table_stock)])
 
     def _page_reglages(self) -> QWidget:
         defauts = opt.Parametres()
@@ -1337,6 +1491,28 @@ class FenetrePrincipale(QMainWindow):
             return
         for ligne in lignes:
             table.item(ligne, 4).setText(matiere.strip())
+
+    def _assistant_defauts(self):
+        """Une seule planche à la fois : contrairement à la matière, les
+        défauts n'ont aucun sens recopiés tels quels sur plusieurs
+        lignes — chaque planche a les siens."""
+        table = self._table_courante()
+        if table is not self.table_stock:
+            QMessageBox.information(
+                self, "Choisissez une planche",
+                "Cliquez d'abord une cellule de la table Stock.")
+            return
+        lignes = table.lignes_selectionnees()
+        if len(lignes) != 1:
+            QMessageBox.information(
+                self, "Choisissez une planche",
+                "Sélectionnez exactement une ligne de stock (clic).")
+            return
+        ligne = lignes[0]
+        dialogue = DialogueDefauts(self, table.texte(ligne, 11))
+        if dialogue.exec() != QDialog.DialogCode.Accepted:
+            return
+        table.item(ligne, 11).setText(dialogue.texte())
 
     def _basculer_avancees(self, montrer):
         self._reglages.setValue("colonnes_avancees", montrer)

@@ -95,6 +95,64 @@ def texte_defauts(planche) -> str:
     return " ; ".join(termes)
 
 
+def analyser_termes_defauts(texte: str) -> list:
+    """La colonne « Défauts », terme à terme : chacun devient un petit
+    dict typé (``bouts``, ``rives``, ``bande``, ``zone``), au lieu des
+    trois champs regroupés de :func:`lire_defauts` — pour un assistant
+    qui les montre et les retire un par un, pas pour valider. Un terme
+    qu'aucune des quatre formes ne reconnaît devient ``{"genre": "brut",
+    "texte": ...}`` : gardé tel quel, jamais perdu, jamais une erreur —
+    contrairement à :func:`lire_defauts`, qui refuse la ligne entière."""
+    termes = []
+    for terme in re.split(r"[;\n]", texte or ""):
+        terme = terme.strip()
+        if not terme:
+            continue
+        m = _RE_BOUTS.match(terme)
+        if m:
+            termes.append({"genre": "bouts",
+                          "valeur": float(m.group(1).replace(",", "."))})
+            continue
+        m = _RE_RIVES.match(terme)
+        if m:
+            termes.append({"genre": "rives",
+                          "valeur": float(m.group(1).replace(",", "."))})
+            continue
+        m = _RE_BANDE.match(terme)
+        if m:
+            de, a = sorted(float(v.replace(",", ".")) for v in m.groups())
+            termes.append({"genre": "bande", "de": de, "a": a})
+            continue
+        m = _RE_ZONE.match(terme)
+        if m:
+            x, y, longueur, largeur = (float(v) for v in m.groups())
+            termes.append({"genre": "zone", "x": x, "y": y,
+                          "longueur": longueur, "largeur": largeur})
+            continue
+        termes.append({"genre": "brut", "texte": terme})
+    return termes
+
+
+def texte_depuis_termes(termes) -> str:
+    """L'inverse d':func:`analyser_termes_defauts`."""
+    morceaux = []
+    for t in termes:
+        genre = t["genre"]
+        if genre == "bouts":
+            morceaux.append("bouts %s" % texte_nombre(t["valeur"]))
+        elif genre == "rives":
+            morceaux.append("rives %s" % texte_nombre(t["valeur"]))
+        elif genre == "bande":
+            morceaux.append("%s-%s" % (texte_nombre(t["de"]),
+                                       texte_nombre(t["a"])))
+        elif genre == "zone":
+            morceaux.append(",".join(texte_nombre(t[c])
+                                     for c in ("x", "y", "longueur", "largeur")))
+        else:
+            morceaux.append(t["texte"])
+    return " ; ".join(morceaux)
+
+
 def texte_contour(contour, trous=()) -> str:
     """« ◇ 24 pts · 1 trou » : la cellule dit qu'il y a une forme, pas
     laquelle — c'est le plan qui la montre."""
