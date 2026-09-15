@@ -138,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.9";
+export const VERSION = "1.4.10";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -513,6 +513,19 @@ function utilisee(c, l) {
   return Boolean(v);
 }
 
+function garnirDatalisteMatiere(nom) {
+  const id = "l-" + nom + "-matiere";
+  let dl = document.getElementById(id);
+  if (!dl) { dl = el("datalist", { id }); document.body.append(dl); }
+  dl.replaceChildren(...matieres().map(v => el("option", { value: v })));
+}
+function garnirDatalistePlanche(nom) {
+  const id = "l-" + nom + "-planche";
+  let dl = document.getElementById(id);
+  if (!dl) { dl = el("datalist", { id }); document.body.append(dl); }
+  dl.replaceChildren(...references().map(v => el("option", { value: v })));
+}
+
 function cellule(nom, ligne, c, i) {
   const td = el("td", { class: c.genre === "nombre" || c.genre === "entier" ? "num" : c.genre === "bool" ? "bool"
     : c.cle === "defauts_texte" ? "texte defauts" : c.genre });
@@ -532,20 +545,22 @@ function cellule(nom, ligne, c, i) {
     td.title = t(c.info);
   } else {
     const input = el("input", { type: "text", title: t(c.info), value: ligne[c.cle] ?? "", "data-colonne": c.cle,
-      oninput: (e) => { ligne[c.cle] = e.target.value; e.target.classList.toggle("faux", (c.genre === "nombre" || c.genre === "entier") && e.target.value.trim() !== "" && Number.isNaN(Number(e.target.value.replace(",", ".")))); changer(); if (nom === "stock") enregistrerAtelier(); },
+      oninput: (e) => {
+        ligne[c.cle] = e.target.value;
+        e.target.classList.toggle("faux", (c.genre === "nombre" || c.genre === "entier") && e.target.value.trim() !== "" && Number.isNaN(Number(e.target.value.replace(",", "."))));
+        changer(); if (nom === "stock") enregistrerAtelier();
+        // Une matière tapée ici doit se proposer TOUT DE SUITE dans
+        // l'autre table, même si son champ y est déjà ouvert : compter
+        // seulement sur le focus laissait la liste figée tant qu'on n'y
+        // recliquait pas (signalé le 15/09/2026, un « pin » ajouté au
+        // stock resté invisible pièces ouvertes).
+        if (c.genre === "matiere") { garnirDatalisteMatiere("pieces"); garnirDatalisteMatiere("stock"); }
+        else if (c.genre === "planche") garnirDatalistePlanche(nom);
+      },
       onpaste: (e) => coller(nom, i, c, e), onkeydown: (e) => touche(nom, i, e) });
     if (c.genre === "matiere" || c.genre === "planche") {
-      const liste = "l-" + nom + "-" + c.cle;
-      input.setAttribute("list", liste);
-      // Relue À CHAQUE OUVERTURE, comme le menu du bureau : garnie une
-      // fois pour toutes au dessin de la table, elle datait de l'état
-      // d'alors — après un import en douglas, la table du stock n'étant
-      // pas redessinée, sa liste ne proposait toujours que l'ancien bois.
-      const garnir = () => {
-        let dl = document.getElementById(liste);
-        if (!dl) { dl = el("datalist", { id: liste }); document.body.append(dl); }
-        dl.replaceChildren(...(c.genre === "matiere" ? matieres() : references()).map(v => el("option", { value: v })));
-      };
+      input.setAttribute("list", "l-" + nom + "-" + c.cle);
+      const garnir = () => c.genre === "matiere" ? garnirDatalisteMatiere(nom) : garnirDatalistePlanche(nom);
       garnir();
       input.addEventListener("focus", garnir);
     }
