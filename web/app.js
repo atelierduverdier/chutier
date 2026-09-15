@@ -133,7 +133,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.6";
+export const VERSION = "1.4.7";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -584,16 +584,25 @@ function supprimerLignes(nom, lignes = lignesChoisies(nom)) { for (const i of [.
 function appliquerMatiereEnLot(nom) {
   const lignes = lignesChoisies(nom);
   if (!lignes.length) { alerter(t("Choisissez d'abord une ou plusieurs lignes (clic, Ctrl-clic ou Maj-clic pour en ajouter).")); return; }
-  const connues = matieres();
-  const matiere = window.prompt(
-    t`Matière à appliquer à ${lignes.length} ligne(s) choisie(s) :` + (connues.length ? t`\n\nDéjà utilisées : ${connues.join(", ")}` : ""),
-    etat[nom][lignes[0]].matiere || "");
-  if (matiere === null || !matiere.trim()) return;
-  for (const i of lignes) etat[nom][i].matiere = matiere.trim();
-  etat.aJour = false; rendreTable(nom);
-  const corps = $("#t-" + nom + " tbody");
-  for (const i of lignes) corps.children[i]?.classList.add("choisie");
-  rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement();
+  // Un <dialog>, pas window.prompt() : l'invite native ne peut proposer
+  // aucune liste, la matière à taper à la main au lieu de la choisir
+  // dans celles déjà en stock (signalé le 15/09/2026).
+  $("#l-matiere-lot").replaceChildren(...matieres().map(v => el("option", { value: v })));
+  $("#d-matiere-titre").textContent = t`Matière à appliquer à ${lignes.length} ligne(s) choisie(s) :`;
+  const champ = $("#d-matiere-champ");
+  champ.value = etat[nom][lignes[0]].matiere || "";
+  const dial = $("#d-matiere");
+  dial.onclose = () => {
+    const matiere = champ.value.trim();
+    if (dial.returnValue !== "ok" || !matiere) return;
+    for (const i of lignes) etat[nom][i].matiere = matiere;
+    etat.aJour = false; rendreTable(nom);
+    const corps = $("#t-" + nom + " tbody");
+    for (const i of lignes) corps.children[i]?.classList.add("choisie");
+    rafraichirEtat(); if (nom === "stock") enregistrerAtelier(); marquerChangement();
+  };
+  dial.showModal();
+  champ.focus(); champ.select();
 }
 
 function rafraichirResumes() {
@@ -1033,10 +1042,18 @@ async function exporterDecoupe(format) {
     }
     await new Promise(r => setTimeout(r, 300));
   }
+  const nombre = etat.resultat.debits.length;
   if (avertissements.length) {
     alerter(t("Le programme est écrit, mais :\n\n• ") + avertissements.slice(0, 12).join("\n• "));
   } else if (remarques.length) {
     $("#etat").textContent = t`${remarques.length} remarque(s) en tête des programmes : ` + remarques[0];
+  } else {
+    // Sans ça, un export sans réserve ni remarque ne changeait rien à
+    // l'écran : les fichiers partaient bien vers le dossier de
+    // téléchargement du navigateur, mais rien ne le disait — on dirait
+    // que le clic n'a rien fait (signalé le 15/09/2026, fichiers
+    // pourtant bien arrivés). Le bureau, lui, l'affiche déjà.
+    $("#etat").textContent = t`${nombre} fichier(s) téléchargé(s)`;
   }
 }
 function exporterFiche() { if (!etat.resultat) { alerter(t("Calculez d'abord le débit.")); return; } telecharger((etat.nomProjet || "fiche-atelier") + ".txt", (etat.nomProjet || t("Feuille de débit")) + "\n\n" + etat.resultat.fiche + "\n"); }

@@ -117,6 +117,17 @@
 
 <section id="impression" class="impression"></section>
 <div id="menu-contextuel" class="menu-contextuel" hidden></div>
+<dialog id="d-matiere">
+  <form method="dialog">
+    <p id="d-matiere-titre"></p>
+    <input id="d-matiere-champ" list="l-matiere-lot" autocomplete="off">
+    <datalist id="l-matiere-lot"></datalist>
+    <div class="actions">
+      <button value="annuler" type="submit">Annuler</button>
+      <button value="ok" type="submit" class="accent">Appliquer</button>
+    </div>
+  </form>
+</dialog>
 <footer class="discret"><span id="etat">Python se charge…</span><span class="etire"></span><a href="https://github.com/atelierduverdier/chutier">Code source, LGPL-2.1</a> · Atelier du Verdier</footer>
 <script type="module" src="web/app.js"></script>
 </body>

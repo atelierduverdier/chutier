@@ -131,6 +131,11 @@ footer a { color: inherit; }
 .menu-contextuel button:hover { background: rgba(255,138,0,.15); }
 .menu-contextuel .titre { padding: 4px 10px; color: var(--mid); font-size: 12px; }
 .menu-contextuel .sep { border-top: 1px solid var(--bord); margin: 3px 0; }
+#d-matiere { border: 1px solid var(--bord); border-radius: 8px; padding: 16px; min-width: 280px; background: var(--carte); color: var(--texte); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+#d-matiere::backdrop { background: rgba(0,0,0,.35); }
+#d-matiere form { display: flex; flex-direction: column; gap: 10px; }
+#d-matiere input { width: 100%; padding: 6px 8px; }
+#d-matiere .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .impression { display: none; }
 /* Tablette et téléphone : les deux moitiés l'une SOUS l'autre, et la page
    défile. Côte à côte sur 800 px, la saisie tombait bien en dessous de sa
