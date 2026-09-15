@@ -128,6 +128,26 @@
     </div>
   </form>
 </dialog>
+<dialog id="d-defauts">
+  <form method="dialog">
+    <p>Défauts de la planche</p>
+    <ul id="d-defauts-liste"></ul>
+    <div class="d-defauts-ajout">
+      <select id="d-defauts-type">
+        <option value="bouts">Recoupe de bout</option>
+        <option value="rives">Recoupe de rive</option>
+        <option value="bande">Nœud traversant</option>
+        <option value="zone">Zone rectangulaire</option>
+      </select>
+      <div id="d-defauts-champs"></div>
+      <button type="button" id="d-defauts-ajouter">+ Ajouter</button>
+    </div>
+    <div class="actions">
+      <button value="annuler" type="submit">Annuler</button>
+      <button value="ok" type="submit" class="accent">Appliquer</button>
+    </div>
+  </form>
+</dialog>
 <footer class="discret"><span id="etat">Python se charge…</span><span class="etire"></span><a href="https://github.com/atelierduverdier/chutier">Code source, LGPL-2.1</a> · Atelier du Verdier</footer>
 <script type="module" src="web/app.js"></script>
 </body>

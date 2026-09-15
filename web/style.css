@@ -136,6 +136,19 @@ footer a { color: inherit; }
 #d-matiere form { display: flex; flex-direction: column; gap: 10px; }
 #d-matiere input { width: 100%; padding: 6px 8px; }
 #d-matiere .actions { display: flex; justify-content: flex-end; gap: 8px; }
+#d-defauts { border: 1px solid var(--bord); border-radius: 8px; padding: 16px; width: 360px; background: var(--carte); color: var(--texte); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+#d-defauts::backdrop { background: rgba(0,0,0,.35); }
+#d-defauts form { display: flex; flex-direction: column; gap: 10px; }
+#d-defauts-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; }
+#d-defauts-liste li { display: flex; align-items: center; gap: 6px; background: var(--fond); border-radius: 4px; padding: 4px 6px; font-size: 12.5px; }
+#d-defauts-liste li span { flex: 1; }
+#d-defauts-liste li button { padding: 0 6px; line-height: 1.6; }
+#d-defauts-liste:empty::before { content: "Aucun défaut."; color: var(--mid); font-size: 12.5px; }
+.d-defauts-ajout { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--bord); padding-top: 10px; }
+.d-defauts-champs-lignes { display: flex; gap: 6px; flex-wrap: wrap; }
+.d-defauts-champs-lignes label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--mid); flex: 1; min-width: 7em; }
+#d-defauts .actions { display: flex; justify-content: flex-end; gap: 8px; }
+button.icone { padding: 2px 5px; font-size: 12px; line-height: 1; }
 .impression { display: none; }
 /* Tablette et téléphone : les deux moitiés l'une SOUS l'autre, et la page
    défile. Côte à côte sur 800 px, la saisie tombait bien en dessous de sa

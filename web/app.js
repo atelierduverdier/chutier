@@ -138,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.8";
+export const VERSION = "1.4.9";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -514,7 +514,8 @@ function utilisee(c, l) {
 }
 
 function cellule(nom, ligne, c, i) {
-  const td = el("td", { class: c.genre === "nombre" || c.genre === "entier" ? "num" : c.genre === "bool" ? "bool" : c.genre });
+  const td = el("td", { class: c.genre === "nombre" || c.genre === "entier" ? "num" : c.genre === "bool" ? "bool"
+    : c.cle === "defauts_texte" ? "texte defauts" : c.genre });
   const changer = () => { etat.aJour = false; rafraichirEtat(); marquerChangement(); };
   if (c.genre === "bool") {
     td.append(el("input", { type: "checkbox", title: t(c.info), onchange: (e) => { ligne[c.cle] = e.target.checked; changer(); if (c.cle === "atelier" || nom === "stock") enregistrerAtelier(); } }));
@@ -549,6 +550,10 @@ function cellule(nom, ligne, c, i) {
       input.addEventListener("focus", garnir);
     }
     td.append(input);
+    if (c.cle === "defauts_texte") {
+      td.append(el("button", { type: "button", class: "icone", title: t("Assistant défauts — construire la liste sans retenir la syntaxe"),
+        text: "⚙", onclick: () => ouvrirAssistantDefauts(ligne, input) }));
+    }
   }
   return td;
 }
@@ -608,6 +613,122 @@ function appliquerMatiereEnLot(nom) {
   };
   dial.showModal();
   champ.focus(); champ.select();
+}
+
+// -- l'assistant « défauts » -----------------------------------------------
+//
+// La colonne Défauts porte une petite syntaxe texte (bouts 30 ; rives 8 ;
+// 1200-1280 ; 600,140,60,40) — commode une fois connue, mais rien ne la
+// rappelle qu'une info-bulle (signalé le 15/09/2026). L'assistant lit et
+// réécrit EXACTEMENT ce texte : rien ne change pour qui tape directement,
+// ni pour le CSV, ni pour le bureau — juste une autre façon de l'écrire.
+// « bouts »/« rives » restent en français dans le texte produit : c'est
+// la syntaxe que Python relit, pas une étiquette d'écran.
+
+const RE_DEF_BOUTS = /^(?:bouts?|b)\s*[:=]?\s*(\d+(?:[.,]\d+)?)$/i;
+const RE_DEF_RIVES = /^(?:rives?|r)\s*[:=]?\s*(\d+(?:[.,]\d+)?)$/i;
+const RE_DEF_BANDE = /^(\d+(?:[.,]\d+)?)\s*(?:-|–|à|a)\s*(\d+(?:[.,]\d+)?)$/i;
+const RE_DEF_ZONE = /^(\d+(?:\.\d+)?)\s*[,x×\s]\s*(\d+(?:\.\d+)?)\s*[,x×\s]\s*(\d+(?:\.\d+)?)\s*[,x×\s]\s*(\d+(?:\.\d+)?)$/i;
+
+function analyserDefauts(texte) {
+  const items = [];
+  for (let terme of (texte || "").split(/[;\n]/)) {
+    terme = terme.trim();
+    if (!terme) continue;
+    let m;
+    if ((m = RE_DEF_BOUTS.exec(terme))) { items.push({ type: "bouts", valeur: Number(m[1].replace(",", ".")) }); continue; }
+    if ((m = RE_DEF_RIVES.exec(terme))) { items.push({ type: "rives", valeur: Number(m[1].replace(",", ".")) }); continue; }
+    if ((m = RE_DEF_BANDE.exec(terme))) {
+      const [de, a] = [Number(m[1].replace(",", ".")), Number(m[2].replace(",", "."))].sort((p, q) => p - q);
+      items.push({ type: "bande", de, a });
+      continue;
+    }
+    if ((m = RE_DEF_ZONE.exec(terme))) { items.push({ type: "zone", x: Number(m[1]), y: Number(m[2]), longueur: Number(m[3]), largeur: Number(m[4]) }); continue; }
+    // Non reconnu : gardé tel quel, jamais perdu — l'assistant ne juge
+    // que ce qu'il sait lire, le reste continue d'être un texte libre.
+    items.push({ type: "brut", texte: terme });
+  }
+  return items;
+}
+function texteNombreDefaut(v) {
+  return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+function texteDefauts(items) {
+  return items.map(it => {
+    if (it.type === "bouts") return "bouts " + texteNombreDefaut(it.valeur);
+    if (it.type === "rives") return "rives " + texteNombreDefaut(it.valeur);
+    if (it.type === "bande") return texteNombreDefaut(it.de) + "-" + texteNombreDefaut(it.a);
+    if (it.type === "zone") return [it.x, it.y, it.longueur, it.largeur].map(texteNombreDefaut).join(",");
+    return it.texte;
+  }).join(" ; ");
+}
+function descriptionDefaut(it) {
+  if (it.type === "bouts") return t`Recoupe de bout : ${texteNombreDefaut(it.valeur)} mm à chaque bout`;
+  if (it.type === "rives") return t`Recoupe de rive : ${texteNombreDefaut(it.valeur)} mm à chaque rive`;
+  if (it.type === "bande") return t`Nœud traversant de ${texteNombreDefaut(it.de)} à ${texteNombreDefaut(it.a)} mm`;
+  if (it.type === "zone") return t`Zone à (${texteNombreDefaut(it.x)}, ${texteNombreDefaut(it.y)}) : ${texteNombreDefaut(it.longueur)} × ${texteNombreDefaut(it.largeur)} mm`;
+  return it.texte;
+}
+function rendreListeDefauts(items) {
+  $("#d-defauts-liste").replaceChildren(...items.map((it, idx) => {
+    const li = el("li", {});
+    li.append(el("span", { text: descriptionDefaut(it) }));
+    li.append(el("button", { type: "button", class: "icone", title: t("Retirer"), text: "✕",
+      onclick: () => { items.splice(idx, 1); rendreListeDefauts(items); } }));
+    return li;
+  }));
+}
+function champsAjoutDefaut(type) {
+  const ligneChamps = el("div", { class: "d-defauts-champs-lignes" });
+  const champ = (id, libelle) => ligneChamps.append(el("label", {}, t(libelle), el("input", { type: "number", step: "any", id })));
+  if (type === "bouts") champ("dc-valeur", "Longueur à retirer à chaque bout (mm)");
+  else if (type === "rives") champ("dc-valeur", "Largeur à retirer à chaque rive (mm)");
+  else if (type === "bande") { champ("dc-de", "De (mm)"); champ("dc-a", "à (mm)"); }
+  else if (type === "zone") { champ("dc-x", "x depuis le bout gauche (mm)"); champ("dc-y", "y depuis la rive basse (mm)"); champ("dc-longueur", "Longueur (mm)"); champ("dc-largeur", "Largeur (mm)"); }
+  $("#d-defauts-champs").replaceChildren(ligneChamps);
+}
+function ouvrirAssistantDefauts(ligne, input) {
+  const items = analyserDefauts(ligne.defauts_texte);
+  rendreListeDefauts(items);
+  const typeSel = $("#d-defauts-type");
+  typeSel.value = "bouts";
+  champsAjoutDefaut(typeSel.value);
+  typeSel.onchange = () => champsAjoutDefaut(typeSel.value);
+  $("#d-defauts-ajouter").onclick = () => {
+    const type = typeSel.value;
+    const val = (id) => { const v = $("#" + id).value.trim(); return v === "" ? NaN : Number(v); };
+    let nouveau = null;
+    if (type === "bouts" || type === "rives") {
+      const v = val("dc-valeur");
+      if (v > 0) nouveau = { type, valeur: v };
+    } else if (type === "bande") {
+      const de = val("dc-de"), a = val("dc-a");
+      if (Number.isFinite(de) && Number.isFinite(a) && de !== a) nouveau = { type, de: Math.min(de, a), a: Math.max(de, a) };
+    } else if (type === "zone") {
+      const x = val("dc-x"), y = val("dc-y"), longueur = val("dc-longueur"), largeur = val("dc-largeur");
+      if ([x, y, longueur, largeur].every(Number.isFinite) && longueur > 0 && largeur > 0) nouveau = { type, x, y, longueur, largeur };
+    }
+    if (!nouveau) { alerter(t("Renseignez des nombres valides.")); return; }
+    if (nouveau.type === "bouts" || nouveau.type === "rives") {
+      // Un seul par planche : Python en fait une AFFECTATION, pas une
+      // liste — le second écraserait le premier en silence à la lecture.
+      const idx = items.findIndex(it => it.type === nouveau.type);
+      if (idx >= 0) items.splice(idx, 1, nouveau); else items.push(nouveau);
+    } else {
+      items.push(nouveau);
+    }
+    rendreListeDefauts(items);
+    champsAjoutDefaut(type);
+  };
+  const dial = $("#d-defauts");
+  dial.onclose = () => {
+    if (dial.returnValue !== "ok") return;
+    const texte = texteDefauts(items);
+    ligne.defauts_texte = texte;
+    input.value = texte;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  dial.showModal();
 }
 
 function rafraichirResumes() {
