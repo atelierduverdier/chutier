@@ -113,9 +113,16 @@ class DelegateChoix(QStyledItemDelegate):
         editeur.setCurrentIndex(max(0, position))
 
     def setModelData(self, editeur, modele, index):
+        # ROLE_VALEUR avant le texte affiché : écrire le texte en premier
+        # émet un dataChanged qui, l'éditeur étant encore ouvert, rappelle
+        # aussitôt setEditorData — celui-ci relit alors ROLE_VALEUR pas
+        # encore à jour et remet le menu sur l'ANCIENNE valeur avant que
+        # cette méthode n'ait fini d'écrire la nouvelle. Choisir « Fil :
+        # Longueur » retombait ainsi en silence sur l'ancien choix
+        # (reproduit et daté du 16/09/2026).
+        modele.setData(index, editeur.currentData(), ROLE_VALEUR)
         modele.setData(index, editeur.currentText(),
                        Qt.ItemDataRole.DisplayRole)
-        modele.setData(index, editeur.currentData(), ROLE_VALEUR)
 
 
 class DelegateListe(QStyledItemDelegate):
