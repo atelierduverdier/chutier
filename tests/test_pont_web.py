@@ -13,6 +13,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import couleurs  # noqa: E402
+import exemples  # noqa: E402
 import optimiseur as opt  # noqa: E402
 import pont_web  # noqa: E402
 
@@ -38,7 +39,8 @@ class Calcul(unittest.TestCase):
 
     def test_l_exemple_des_formes_se_calcule(self):
         entree = json.loads(pont_web.exemple_formes())
-        self.assertEqual(entree["parametres"]["pas_rotation"], 180)
+        self.assertEqual(entree["parametres"]["pas_rotation"],
+                         exemples.formes_biscornues()[2].pas_rotation)
         entree["parametres"]["processus"] = 0
         sortie = json.loads(pont_web.calculer(json.dumps(entree)))
         self.assertTrue(sortie["ok"], sortie)

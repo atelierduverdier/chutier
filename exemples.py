@@ -108,18 +108,22 @@ def formes_biscornues():
     stock = [
         opt.Planche("contreplaqué 1200×600", 1200, 600, 15, "contreplaqué",
                     quantite=1, fil=False),
-        opt.Planche("chute contreplaqué", 400, 300, 15, "contreplaqué",
+        opt.Planche("chute contreplaqué", 400, 400, 15, "contreplaqué",
                     chute=True, fil=False),
     ]
-    # Deux orientations : avec quatre, huit formes font cinq cents NFP à
-    # précalculer — trop long pour un exemple d'accueil, surtout dans le
-    # navigateur.
+    # 400 × 400 plutôt que 400 × 300 : à deux orientations, les quatorze
+    # pièces débordaient sur le grand panneau neuf — mauvaise première
+    # impression pour un exemple d'accueil. Quatre orientations (le
+    # défaut de Parametres) tiennent tout dans la seule chute, mesuré
+    # (audit du 16/09/2026) ; le calcul y coûte alors ~3 s de plus, sans
+    # processus, dans le pire cas (navigateur) — jugé préférable à deux
+    # planches entamées au premier essai.
     # Marge au bord de 8 : au moins le DIAMÈTRE de la fraise, sans quoi
     # l'export G-code signale à juste titre que le flanc de l'outil
     # dépasse l'arête de la planche. Le plan est le même à trois
     # millimètres près — les pièces se décalent, rien d'autre.
     return pieces, stock, opt.Parametres(ecart_contours=6.0, marge_bord=8.0,
-                                        pas_rotation=180)
+                                        pas_rotation=90)
 
 
 def volets_battants():
