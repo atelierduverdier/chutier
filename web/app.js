@@ -138,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.19";
+export const VERSION = "1.4.20";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -397,7 +397,13 @@ const stockage = {
 
 let atelierConnu = [];   // les lignes Atelier telles que LUES par CET onglet
 function enregistrerAtelier() {
-  const courante = etat.stock.filter(s => s.atelier && (s.reference || "").trim());
+  // Même règle que optimiseur.stock_atelier_valide, redite ici : un
+  // aller-retour Pyodide à chaque frappe serait plus cher que le risque
+  // de divergence sur une règle aussi simple. Une quantité à 0 (finie,
+  // pas catalogue) ne s'écrit plus dans l'atelier PARTAGÉ — elle
+  // empoisonnait ensuite tout calcul qui le relit (audit du 16/09/2026).
+  const courante = etat.stock.filter(s => s.atelier && (s.reference || "").trim()
+    && (s.illimite || Number(s.quantite) >= 1));
   // Chaque frappe dans le stock rappelait cette fonction, qui réécrivait
   // TOUT l'atelier du navigateur — partagé entre onglets — même quand
   // rien n'y touchait : un onglet A qui venait d'y ranger une chute se
@@ -416,7 +422,14 @@ function memeAtelier(a, b) {
 }
 function atelier() {
   atelierConnu = stockage.lire("atelier", []).map(s => ({ ...DEFAUTS_LIGNE.stock, ...s, atelier: true }));
-  return atelierConnu;
+  // Une COPIE de chaque ligne, pas les mêmes objets que atelierConnu :
+  // etat.stock reçoit ce tableau tel quel (chargerExemple, demarrer…), et
+  // éditer une case mutait alors atelierConnu EN MÊME TEMPS — le
+  // comparer à lui-même dans enregistrerAtelier() ne voyait jamais rien
+  // de changé, et aucune modification d'une ligne atelier déjà chargée
+  // ne s'enregistrait plus jamais (bug plus large que la seule quantité
+  // à 0, trouvé en creusant l'audit du 16/09/2026).
+  return atelierConnu.map(s => ({ ...s }));
 }
 
 // -- tables ---------------------------------------------------------------------
@@ -854,7 +867,19 @@ async function calculer() {
     await precalculerNfp(entree);
     $("#etat").textContent = t("Calcul…");
     const sortie = JSON.parse(await appeler("calculer", entree));
-    if (!sortie.ok) { alerter(t("Saisie invalide : ") + sortie.erreur); $("#etat").textContent = t("Saisie invalide"); return; }
+    if (!sortie.ok) {
+      alerter(t("Saisie invalide : ") + sortie.erreur);
+      $("#etat").textContent = t("Saisie invalide");
+      // Sans ça, le message d'accueil statique de #plan (« Chargement de
+      // Python… ») restait affiché pour toujours — le calcul automatique
+      // au démarrage échouait en silence derrière l'alerte, et tout
+      // rechargement retombait dessus : on aurait dit que Python ne
+      // finissait jamais de charger (audit du 16/09/2026).
+      $("#plan").replaceChildren(el("p", { class: "vide", id: "plan-vide",
+        text: t("Saisie invalide — corrigez le stock ou les pièces ci-contre, puis recalculez.") }));
+      $("#legende").replaceChildren();
+      return;
+    }
     if (sortie.epingles_relachees) { etat.epingles = []; $("#etat").textContent = t("Épingles relâchées : une planche ou une pièce a changé."); }
     else $("#etat").textContent = t("Plan à jour");
     etat.resultat = sortie.resultat;

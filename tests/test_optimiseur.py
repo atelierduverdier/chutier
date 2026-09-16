@@ -25,7 +25,8 @@ from optimiseur import (  # noqa: E402
     RAISON_INCOMPATIBLE, RAISON_PLUS_DE_PLACE, RAISON_TROP_EPAISSE,
     RAISON_TROP_GRANDE, RAISON_PLANCHE_IMPOSEE, RAISON_PLANCHE_INCONNUE,
     RAISON_PLANCHE_PLEINE, PRIORITE_BOIS, PRIORITE_SCIE, Achat, Parametres,
-    Piece, Planche, optimiser, _nombre_de_lames, _plus_large_compatible,
+    Piece, Planche, optimiser, stock_atelier_valide, _nombre_de_lames,
+    _plus_large_compatible,
 )
 
 RAPIDE = Parametres(essais_melanges=0)
@@ -839,6 +840,20 @@ class Divers(unittest.TestCase):
         exemplaires = sorted(p.exemplaire
                              for d in r.debits for p in d.poses)
         self.assertEqual(exemplaires, [1, 2, 3])
+
+    def test_stock_atelier_valide(self):
+        # Une quantité tombée à 0 (finie, pas catalogue) ne doit jamais
+        # s'écrire dans le fichier atelier PARTAGÉ — elle empoisonnerait
+        # tout calcul qui le relit ensuite (audit du 16/09/2026).
+        self.assertFalse(stock_atelier_valide(
+            Planche("b", 400, 400, 15, "x", quantite=0, atelier=True)))
+        self.assertTrue(stock_atelier_valide(
+            Planche("b", 400, 400, 15, "x", quantite=1, atelier=True)))
+        # illimite : quantite ne borne rien, 0 est un état normal
+        # (« je n'en ai pas encore »).
+        self.assertTrue(stock_atelier_valide(
+            Planche("b", 400, 400, 15, "x", quantite=0, illimite=True,
+                    atelier=True)))
 
     def test_deterministe(self):
         pieces, stock = _instance(5)

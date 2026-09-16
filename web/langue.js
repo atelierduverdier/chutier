@@ -121,6 +121,8 @@ const ANGLAIS = {
   "Calcul des contours sur {} cœurs…": "Computing the outlines on {} cores…",
   "Saisie invalide : ": "Invalid input: ",
   "Saisie invalide": "Invalid input",
+  "Saisie invalide — corrigez le stock ou les pièces ci-contre, puis recalculez.":
+    "Invalid input — fix the stock or the parts on the left, then recompute.",
   "Épingles relâchées : une planche ou une pièce a changé.": "Pins released: a board or a part has changed.",
   "Plan à jour": "Plan up to date",
   "Calcul interrompu — le plan précédent reste affiché": "Computation interrupted — the previous plan is still shown",

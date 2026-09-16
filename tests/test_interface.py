@@ -359,6 +359,23 @@ class Atelier(unittest.TestCase):
         self.assertEqual([s.reference for s in projet_io.lire_atelier(_ATELIER)],
                          ["rayon chêne"])
 
+    def test_atelier_ecarte_une_quantite_invalide(self):
+        # Une ligne à quantité 0 (finie, pas catalogue) empoisonnait tout
+        # calcul qui relisait ensuite le fichier atelier — jusqu'à un
+        # exemple d'accueil, fusionné avec lui dès qu'on le charge (audit
+        # du 16/09/2026).
+        f = _fenetre()
+        f.table_stock.ajouter_ligne(reference="bonne", longueur=2000,
+                                    largeur=150, epaisseur=27,
+                                    matiere="chêne", atelier=True, quantite=1)
+        f.table_stock.ajouter_ligne(reference="quantite a zero",
+                                    longueur=2000, largeur=150, epaisseur=27,
+                                    matiere="chêne", atelier=True, quantite=0)
+        self.assertTrue(f._enregistrer_atelier())
+        self.assertEqual(
+            [s.reference for s in projet_io.lire_atelier(_ATELIER)],
+            ["bonne"])
+
     def test_ouvrir_un_projet_reprend_l_atelier_du_jour(self):
         projet_io.enregistrer_atelier(_ATELIER, [
             opt.Planche("chute du jour", 600, 120, 18, "sapin", chute=True)])

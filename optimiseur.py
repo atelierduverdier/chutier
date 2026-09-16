@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.4.19"
+VERSION = "1.4.20"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -1747,6 +1747,19 @@ def _valider_piece(p: "Piece") -> None:
         raise ValueError(
             "pièce « %s » : fil inconnu « %s » (attendu : %s)"
             % (p.reference, p.fil, ", ".join(_FILS_VALIDES)))
+
+
+def stock_atelier_valide(s: "Planche") -> bool:
+    """Une ligne ATELIER mérite d'être écrite au fichier commun — même
+    règle de quantité que :func:`_valider_planche`, exposée ici pour que
+    l'écriture au fichier puisse écarter une ligne invalide plutôt que de
+    la persister telle quelle. Sans ce tri, une quantité tombée à 0 (une
+    frappe distraite) s'écrivait dans le stock PARTAGÉ, et empoisonnait
+    ensuite tout calcul qui le relit — jusqu'à un exemple d'accueil,
+    fusionné avec l'atelier dès qu'on le charge, au point de donner
+    l'impression que Python ne se charge plus (bug trouvé à l'usage,
+    daté du 16/09/2026)."""
+    return bool(s.illimite) or (s.quantite == int(s.quantite) and s.quantite >= 1)
 
 
 def _valider_planche(s: "Planche") -> None:

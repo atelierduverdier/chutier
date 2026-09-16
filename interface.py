@@ -2105,7 +2105,9 @@ class FenetrePrincipale(QMainWindow):
             return False
         try:
             projet_io.enregistrer_atelier(
-                self._chemin_atelier, [s for s in stock if s.atelier])
+                self._chemin_atelier,
+                [s for s in stock
+                 if s.atelier and opt.stock_atelier_valide(s)])
         except OSError as erreur:
             QMessageBox.warning(self, "Atelier non enregistré", str(erreur))
             return False
