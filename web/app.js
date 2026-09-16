@@ -27,11 +27,11 @@ const COLONNES = {
     { cle: "largeur", titre: "Larg.", genre: "nombre", info: "Largeur en mm, en travers du fil." },
     { cle: "epaisseur", titre: "Ép.", genre: "nombre", info: "Épaisseur BRUTE disponible, en mm." },
     { cle: "matiere", titre: "Matière", genre: "matiere", info: "Le même mot que dans les pièces." },
-    { cle: "quantite", titre: "Qté", genre: "entier", info: "Combien de morceaux identiques." },
+    { cle: "quantite", titre: "Qté", genre: "entier", info: "Combien de morceaux identiques. Ne borne pas un profil de catalogue — mais si « Atelier » est AUSSI cochée, c'est ce que vous en possédez déjà : seul le dépassement sera compté à l'achat." },
     { cle: "chute", titre: "Chute", genre: "bool", info: "Déjà en atelier, à écouler EN PRIORITÉ. Jamais compté à l'achat." },
-    { cle: "atelier", titre: "Atelier", genre: "bool", info: "Vit dans le stock commun de ce navigateur, retrouvé d'un projet à l'autre." },
+    { cle: "atelier", titre: "Atelier", genre: "bool", info: "Vit dans le stock commun de ce navigateur, retrouvé d'un projet à l'autre. Sur une ligne Catalogue, c'est aussi ce qui dit que sa Qté est réellement possédée." },
     { cle: "fil", titre: "Fil", genre: "bool", avancee: true, info: "Décocher pour un panneau (contreplaqué, MDF) : rotation libre." },
-    { cle: "illimite", titre: "Catalogue", genre: "bool", avancee: true, info: "Une section qu'on peut ACHETER : la quantité ne borne plus rien." },
+    { cle: "illimite", titre: "Catalogue", genre: "bool", avancee: true, info: "Une section qu'on peut ACHETER : la quantité ne borne plus le solveur. Pour dire que vous en possédez déjà quelques-unes, cochez AUSSI « Atelier » et indiquez la Qté possédée." },
     { cle: "prix", titre: "Prix", genre: "nombre", avancee: true, info: "Coût d'UNE planche, pas au mètre. 0 pour ne pas en tenir compte." },
     { cle: "defauts_texte", titre: "Défauts", genre: "texte", info: `Ce que la planche a de moins que son rectangle, termes séparés par « ; » :
 bouts 30 — 30 mm à ôter à chaque bout (fendu)

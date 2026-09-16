@@ -42,14 +42,17 @@ const ANGLAIS = {
   "Nom du morceau de stock, tel qu'il est repéré à l'atelier.": "The name of this piece of stock, as it is marked in the workshop.",
   "Épaisseur BRUTE disponible, en mm.": "ROUGH thickness available, in mm.",
   "Le même mot que dans les pièces.": "The same word as in the parts.",
-  "Combien de morceaux identiques.": "How many identical pieces.",
+  "Combien de morceaux identiques. Ne borne pas un profil de catalogue — mais si « Atelier » est AUSSI cochée, c'est ce que vous en possédez déjà : seul le dépassement sera compté à l'achat.":
+    "How many identical pieces. Doesn't cap a catalogue profile — but if “Workshop” is ALSO checked, this is how many you already own: only the shortfall gets counted as a purchase.",
   "Chute": "Offcut",
   "Déjà en atelier, à écouler EN PRIORITÉ. Jamais compté à l'achat.": "Already in the workshop, used up FIRST. Never counted as a purchase.",
   "Atelier": "Workshop",
-  "Vit dans le stock commun de ce navigateur, retrouvé d'un projet à l'autre.": "Lives in this browser's shared stock, kept from one project to the next.",
+  "Vit dans le stock commun de ce navigateur, retrouvé d'un projet à l'autre. Sur une ligne Catalogue, c'est aussi ce qui dit que sa Qté est réellement possédée.":
+    "Lives in this browser's shared stock, kept from one project to the next. On a Catalogue row, this is also what says its Qty is genuinely owned.",
   "Décocher pour un panneau (contreplaqué, MDF) : rotation libre.": "Uncheck for a sheet good (plywood, MDF): free rotation.",
   "Catalogue": "Catalogue",
-  "Une section qu'on peut ACHETER : la quantité ne borne plus rien.": "A size you can BUY: the quantity no longer limits anything.",
+  "Une section qu'on peut ACHETER : la quantité ne borne plus le solveur. Pour dire que vous en possédez déjà quelques-unes, cochez AUSSI « Atelier » et indiquez la Qté possédée.":
+    "A size you can BUY: the quantity no longer caps the solver. To say you already own some of it, ALSO check “Workshop” and enter the Qty you own.",
   "Prix": "Price",
   "Coût d'UNE planche, pas au mètre. 0 pour ne pas en tenir compte.": "Cost of ONE board, not per metre. 0 to ignore it.",
   "Défauts": "Defects",

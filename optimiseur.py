@@ -648,7 +648,13 @@ class Resultat:
         possédées, en voyait 2 comptées à l'achat alors qu'aucune ne
         manquait). Un catalogue pur (``atelier`` décoché) n'a rien de
         possédé d'avance : sa quantité, ignorée par le solveur, l'est
-        aussi ici — tout ce qui est pris s'achète, comme avant."""
+        aussi ici — tout ce qui est pris s'achète, comme avant.
+
+        ``quantite`` seule (sans ``atelier``) ne peut PAS servir de
+        signal : sa valeur par défaut est 1, indiscernable d'un « un »
+        tapé exprès — la retrancher aveuglément romprait tout profil de
+        catalogue jamais touché (7 tests existants le confirment,
+        vérifié le 16/09/2026 avant de s'y risquer)."""
         compte, ordre = {}, []
         for d in self.debits:
             pl = d.planche

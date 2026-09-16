@@ -818,22 +818,32 @@ class TableStock(TableEditable):
                 "Le même mot que dans les pièces, sinon rien ne s'apparie.",
                 ""),
         Colonne("Qté", "quantite", ENTIER,
-                "Combien de morceaux identiques. Sans effet sur un profil"
-                " de catalogue, qui n'est pas borné.", 1),
+                "Combien de morceaux identiques. Ne borne pas un profil de"
+                " catalogue (le chutier en prend autant qu'il faut) — mais"
+                " si « Atelier » est AUSSI cochée, c'est ce que vous en"
+                " possédez déjà : seul le dépassement sera compté à"
+                " l'achat.", 1),
         Colonne("Chute", "chute", BOOLEEN,
                 "Un morceau déjà en atelier, à écouler EN PRIORITÉ sur"
                 " les planches neuves. Jamais compté à l'achat.", False),
         Colonne("Atelier", "atelier", BOOLEEN,
                 "Cette ligne vit dans le stock COMMUN de l'atelier,"
                 " retrouvé d'un projet à l'autre — pas dans ce projet."
-                " Les chutes rangées y vont d'elles-mêmes.", False),
+                " Les chutes rangées y vont d'elles-mêmes. Sur une ligne"
+                " Catalogue, c'est aussi ce qui dit que sa Qté est"
+                " réellement possédée (sans elle, une ligne Catalogue"
+                " jamais touchée reste à Qté 1 par défaut, sans rien"
+                " vouloir dire).", False),
         Colonne("Fil", "fil", BOOLEEN,
                 "Décocher pour un panneau (contreplaqué, MDF) : le"
                 " chutier peut alors pivoter librement les pièces.", True),
         Colonne("Catalogue", "illimite", BOOLEEN,
-                "Une section qu'on peut ACHETER, pas des planches déjà"
-                " là : la quantité ne borne plus rien, le chutier en"
-                " prend autant qu'il faut et compte l'achat.", False),
+                "Une section qu'on peut ACHETER : la quantité ne borne"
+                " plus le solveur, il en prend autant qu'il faut. Pour"
+                " dire que vous en possédez déjà quelques-unes (un stock"
+                " à réassortir), cochez AUSSI « Atelier » et indiquez la"
+                " Qté possédée — seul le dépassement sera compté à"
+                " l'achat.", False),
         Colonne("Prix", "prix", NOMBRE,
                 "Coût d'UNE planche à ces cotes, pas un prix au mètre."
                 " Départage plusieurs profils de catalogue par le coût"
