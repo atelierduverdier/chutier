@@ -821,6 +821,8 @@ class FenetrePrincipale(QMainWindow):
         vide, pendant que le stock — dont le débit a besoin en même
         temps — se cachait derrière un clic."""
         self.table_stock = tsa.TableStock(self._matieres_connues)
+        self.table_stock.demande_assistant_defauts.connect(
+            self._assistant_defauts_ligne)
         self.table_pieces = tsa.TablePieces(self._matieres_connues,
                                             self.table_stock.references)
         self._table_active = self.table_pieces
@@ -1524,11 +1526,17 @@ class FenetrePrincipale(QMainWindow):
                 self, "Choisissez une planche",
                 "Sélectionnez exactement une ligne de stock (clic).")
             return
-        ligne = lignes[0]
-        dialogue = DialogueDefauts(self, table.texte(ligne, 11))
+        self._assistant_defauts_ligne(lignes[0])
+
+    def _assistant_defauts_ligne(self, ligne: int):
+        """Même assistant, ouvert directement sur une ligne connue — le
+        bouton ⚙ de la cellule Défauts (DelegateDefauts) n'a pas besoin
+        d'une sélection préalable, contrairement au menu Édition."""
+        colonne = tsa.TableStock.COLONNE_DEFAUTS
+        dialogue = DialogueDefauts(self, self.table_stock.texte(ligne, colonne))
         if dialogue.exec() != QDialog.DialogCode.Accepted:
             return
-        table.item(ligne, 11).setText(dialogue.texte())
+        self.table_stock.item(ligne, colonne).setText(dialogue.texte())
 
     def _basculer_avancees(self, montrer):
         self._reglages.setValue("colonnes_avancees", montrer)

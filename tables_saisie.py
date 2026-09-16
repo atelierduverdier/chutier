@@ -15,8 +15,8 @@ peupler, et une forêt de menus déroulants là où l'œil attend un tableur.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QKeySequence
+from PySide6.QtCore import QEvent, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemDelegate, QAbstractItemView, QApplication, QComboBox, QHeaderView, QLineEdit,
     QStyle, QStyleOptionButton, QStyleOptionViewItem, QStyledItemDelegate,
@@ -222,6 +222,48 @@ class DelegateBooleen(QStyledItemDelegate):
         if bascule:
             modele.setData(index, not bool(index.data(ROLE_VALEUR)),
                            ROLE_VALEUR)
+            return True
+        return False
+
+
+class DelegateDefauts(QStyledItemDelegate):
+    """Un bouton ⚙ dans la cellule ouvre l'assistant Défauts pour CETTE
+    ligne — sans lui, il faut taper la syntaxe de mémoire, comme au tout
+    début. La page web l'a depuis le 15/09/2026 ; le bureau, jusqu'ici,
+    n'avait qu'un bouton à part sous la table, à sélectionner la ligne
+    d'abord (signalé par Christophe le 16/09/2026). Le texte de la
+    cellule reste modifiable directement à côté du bouton, pour qui
+    préfère taper — rien n'y a changé."""
+
+    LARGEUR_BOUTON = 22
+
+    demande_assistant = Signal(int)   # numéro de ligne
+
+    def _rect_bouton(self, option) -> QRect:
+        return QRect(option.rect.right() - self.LARGEUR_BOUTON,
+                    option.rect.top(), self.LARGEUR_BOUTON,
+                    option.rect.height())
+
+    def paint(self, peintre, option, index):
+        option_texte = QStyleOptionViewItem(option)
+        option_texte.rect = QRect(
+            option.rect.left(), option.rect.top(),
+            max(0, option.rect.width() - self.LARGEUR_BOUTON),
+            option.rect.height())
+        super().paint(peintre, option_texte, index)
+
+        peintre.save()
+        peintre.setPen(option.palette.color(
+            option.palette.currentColorGroup(), QPalette.ColorRole.PlaceholderText))
+        peintre.drawText(self._rect_bouton(option),
+                         Qt.AlignmentFlag.AlignCenter, "⚙")
+        peintre.restore()
+
+    def editorEvent(self, evenement, modele, option, index):
+        if (evenement.type() == QEvent.Type.MouseButtonRelease
+                and self._rect_bouton(option).contains(
+                    evenement.position().toPoint())):
+            self.demande_assistant.emit(index.row())
             return True
         return False
 
@@ -818,6 +860,9 @@ class TableStock(TableEditable):
     )
 
     AVANCEES = (8, 9, 10, 12)        # Fil, Catalogue, Prix, Contour
+    COLONNE_DEFAUTS = 11
+
+    demande_assistant_defauts = Signal(int)   # numéro de ligne
 
     def __init__(self, matieres_connues=None):
         super().__init__()
@@ -828,6 +873,9 @@ class TableStock(TableEditable):
         # besoin, absent de la seule liste où on le cherche.
         self.setItemDelegateForColumn(
             4, DelegateListe(matieres_connues or self.matieres, self))
+        delegue_defauts = DelegateDefauts(self)
+        delegue_defauts.demande_assistant.connect(self.demande_assistant_defauts)
+        self.setItemDelegateForColumn(self.COLONNE_DEFAUTS, delegue_defauts)
 
     def stock(self) -> list:
         return [opt.Planche(**self.valeurs_ligne(l))
