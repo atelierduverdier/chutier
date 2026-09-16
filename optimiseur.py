@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.4.15"
+VERSION = "1.4.16"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le

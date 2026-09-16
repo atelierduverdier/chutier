@@ -58,7 +58,9 @@ const REGLAGES = [
     ["priorite", "Privilégier", "choix", "Entre deux plans dans le même bois neuf : moins de pertes, ou moins de coupes.",
       [["bois", "le bois — moins de pertes"], ["scie", "le temps de scie — moins de coupes"]]],
     ["essais_melanges", "Essais de mélange", "entier", "Ordres tirés au hasard en plus des stratégies réglées. Graine fixe : même plan."],
-    ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."]]],
+    ["passes_amelioration", "Passes d'amélioration", "entier", "Vider une planche, replacer ses pièces ailleurs. 0 pour s'en passer."],
+    ["pas_rotation", "Orientations", "choix", "Les angles essayés pour une pièce à fil indifférent.",
+      [[180, "2 orientations (180°) — rapide"], [90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
   ["Ce qui mérite d'être gardé", [
     ["chute_mini_longueur", "Chute mini — longueur (mm)", "nombre", "En dessous, le reste part aux pertes."],
     ["chute_mini_largeur", "Chute mini — largeur (mm)", "nombre", "Le petit côté du reste."]]],
@@ -68,9 +70,7 @@ const REGLAGES = [
   ["La CNC — imbrication des contours", [
     ["ecart_contours", "Écart entre contours (mm)", "nombre", "Diamètre de fraise plus un jeu."],
     ["marge_bord", "Marge au bord (mm)", "nombre", "Distance entre un contour et le bord de la planche."],
-    ["vitesse_fraisage", "Vitesse de fraisage (mm/min)", "nombre", "Pour estimer le temps de découpe d'une planche imbriquée."],
-    ["pas_rotation", "Orientations", "choix", "Les angles essayés pour une pièce à fil indifférent.",
-      [[180, "2 orientations (180°) — rapide"], [90, "4 orientations (90°)"], [45, "8 orientations (45°)"], [30, "12 orientations (30°)"], [15, "24 orientations (15°) — lent"]]]]],
+    ["vitesse_fraisage", "Vitesse de fraisage (mm/min)", "nombre", "Pour estimer le temps de découpe d'une planche imbriquée."]]],
 ];
 
 // Les réglages du G-code ne touchent pas au plan : les changer ne périme
@@ -138,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.15";
+export const VERSION = "1.4.16";
 
 function controlerVersion() {
   const b = $("#b-version");
