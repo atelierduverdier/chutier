@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.4.17"
+VERSION = "1.4.18"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -639,7 +639,16 @@ class Resultat:
         choisi lui-même combien en prendre, ceci compte ce qu'il en a
         réellement pris. Une planche à quantité finie qui suffisait —
         même entamée — n'a jamais figuré dans une liste de courses
-        (bug trouvé à l'usage, jamais testé : audit du 16/09/2026)."""
+        (bug trouvé à l'usage, jamais testé : audit du 16/09/2026).
+
+        Un profil ``illimite`` ET ``atelier`` à la fois — un stock qu'on
+        peut réassortir — retranche sa ``quantite`` : c'est ce qu'on
+        possède déjà gratuitement, seul le dépassement s'achète (même
+        audit : Christophe, en cochant les deux cases sur 4 planches
+        possédées, en voyait 2 comptées à l'achat alors qu'aucune ne
+        manquait). Un catalogue pur (``atelier`` décoché) n'a rien de
+        possédé d'avance : sa quantité, ignorée par le solveur, l'est
+        aussi ici — tout ce qui est pris s'achète, comme avant."""
         compte, ordre = {}, []
         for d in self.debits:
             pl = d.planche
@@ -656,9 +665,15 @@ class Resultat:
                 compte[cle] = 0
                 ordre.append(pl)
             compte[cle] += 1
-        return [Achat(pl.reference, pl.longueur, pl.largeur, pl.epaisseur,
-                      pl.matiere, compte[_meme(pl)], pl.prix)
-                for pl in ordre]
+        achats = []
+        for pl in ordre:
+            possede = pl.quantite if pl.atelier else 0
+            a_acheter = compte[_meme(pl)] - possede
+            if a_acheter > 0:
+                achats.append(Achat(pl.reference, pl.longueur, pl.largeur,
+                                    pl.epaisseur, pl.matiere, a_acheter,
+                                    pl.prix))
+        return achats
 
     def texte(self) -> str:
         """Résumé lisible, pour la démo et le débogage."""

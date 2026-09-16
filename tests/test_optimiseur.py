@@ -917,6 +917,26 @@ class ProfilsDeCatalogue(unittest.TestCase):
         r = optimiser(pieces, stock, RAPIDE)
         self.assertEqual(len(r.achats), 0)   # la chute a suffi, rien a acheter
 
+    def test_catalogue_reassorti_retranche_ce_qui_est_possede(self):
+        # illimite ET atelier ensemble : un stock qu'on peut réassortir —
+        # 4 planches possédées, 2 entamées, ne doivent rien à acheter ;
+        # 6 entamées, seules les 2 au-delà des 4 possédées. Signalé par
+        # Christophe le 16/09/2026 : cocher les deux cases comptait quand
+        # même les planches possédées comme à acheter.
+        stock = Planche("sapin 2400x200", 2400, 200, 18, "sapin",
+                        quantite=4, illimite=True, atelier=True)
+
+        pieces_2 = [Piece("lame", 2000, 150, 18, "sapin", quantite=2)]
+        r = optimiser(pieces_2, [stock], RAPIDE)
+        self.assertEqual(len(r.debits), 2)
+        self.assertEqual(r.achats, [])
+
+        pieces_6 = [Piece("lame", 2000, 150, 18, "sapin", quantite=6)]
+        r = optimiser(pieces_6, [stock], RAPIDE)
+        self.assertEqual(len(r.debits), 6)
+        self.assertEqual(r.achats, [
+            Achat("sapin 2400x200", 2400, 200, 18, "sapin", 2)])
+
     def test_achats_ignore_une_quantite_finie_suffisante(self):
         # Une planche à quantité FINIE (pas illimite) est déjà possédée,
         # même entamée — atelier ou pas : reproduit et daté du 16/09/2026,
