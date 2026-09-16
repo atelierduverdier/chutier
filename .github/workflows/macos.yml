@@ -1,0 +1,74 @@
+name: Bureau macOS
+
+# Construit chutier.app (PyInstaller --windowed) sur deux runners macOS —
+# Apple Silicon et Intel : les deux architectures depuis la même source,
+# comme windows.yml le fait pour Windows. Un .app bundle est déjà un
+# dossier ; actions/upload-artifact le compresse tout seul au
+# téléchargement, pas besoin d'un .dmg pour ce premier jet.
+#
+# PAS de signature ni de notarisation Apple (compte développeur à 99
+# $/an, absent ici) : Gatekeeper affichera « application endommagée »
+# au premier lancement — contournable par clic droit → Ouvrir. Un choix
+# assumé, pas un oubli.
+#
+# Icône NON incluse pour l'instant : PyInstaller veut un .icns sur
+# macOS, et le convertir depuis resources/icone.svg demande un outil de
+# rendu SVG absent des runners par défaut. L'app tourne avec l'icône
+# générique de PyInstaller ; à ajouter plus tard si voulu.
+#
+# Déclenchement manuel (workflow_dispatch), comme windows.yml.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  construire:
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-latest
+          - arch: x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PySide6 "shapely>=2.1" numpy
+
+      - name: PyInstaller
+        run: >
+          pyinstaller --name chutier --windowed
+          --add-data "resources/icone.svg:resources"
+          interface.py
+
+      - name: Vérification (calcul en tâche de fond, sans écran)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          mkdir -p /tmp/essai
+          export CHUTIER_ATELIER=/tmp/essai/atelier.json
+          export XDG_CONFIG_HOME=/tmp/essai
+          ./dist/chutier.app/Contents/MacOS/chutier &
+          pid=$!
+          sleep 8
+          if kill -0 $pid 2>/dev/null; then
+            echo "lancé et vivant"
+            kill $pid
+          else
+            echo "ARRÊTÉ TOUT SEUL — quelque chose a raté" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chutier-macos-${{ matrix.arch }}
+          path: dist/chutier.app
+          retention-days: 30
