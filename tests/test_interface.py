@@ -1082,6 +1082,17 @@ class Fenetre(unittest.TestCase):
         ses pastilles. Un projet neuf s'ouvrait avec le bilan du
         précédent."""
         f = _fenetre()
+        # Le stock par défaut (fini, jamais catalogue) suffit tout seul —
+        # achats() l'ignore désormais à raison (audit du 16/09/2026) : il
+        # faut un profil illimite pour qu'une ligne d'achat existe ici.
+        f.table_pieces.ajouter_ligne(
+            reference="longue", longueur=3000, largeur=100, epaisseur=18,
+            matiere="sapin", quantite=1, fil=opt.FIL_LONGUEUR)
+        f.table_stock.ajouter_ligne(
+            reference="grande planche", longueur=3200, largeur=250,
+            epaisseur=18, matiere="sapin", illimite=True)
+        f._calculer()
+        APP.processEvents()
         self.assertGreater(f.liste_achats.count(), 0)
         self.assertGreater(f.legende.count(), 0)
         f._modifie = False

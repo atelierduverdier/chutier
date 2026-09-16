@@ -917,6 +917,19 @@ class ProfilsDeCatalogue(unittest.TestCase):
         r = optimiser(pieces, stock, RAPIDE)
         self.assertEqual(len(r.achats), 0)   # la chute a suffi, rien a acheter
 
+    def test_achats_ignore_une_quantite_finie_suffisante(self):
+        # Une planche à quantité FINIE (pas illimite) est déjà possédée,
+        # même entamée — atelier ou pas : reproduit et daté du 16/09/2026,
+        # signalé par Christophe (« À acheter » comptait des planches
+        # cochées Atelier, en plein dans leur quantité déclarée).
+        pieces = [Piece("lame", 2000, 150, 18, "sapin", quantite=2)]
+        stock = [Planche("sapin 2400x200", 2400, 200, 18, "sapin",
+                         quantite=4, atelier=True)]
+        r = optimiser(pieces, stock, RAPIDE)
+        self.assertEqual(len(r.non_placees), 0)
+        self.assertEqual(len(r.debits), 2)          # deux planches entamées
+        self.assertEqual(r.achats, [])               # dans les 4 possédées
+
     def test_illimite_sans_effet_sur_une_chute(self):
         # illimite ne veut rien dire pour une chute : deja possedee, on
         # n'en achete jamais davantage qu'il n'en existe reellement

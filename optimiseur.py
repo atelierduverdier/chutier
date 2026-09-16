@@ -48,7 +48,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 
-VERSION = "1.4.16"
+VERSION = "1.4.17"
 
 # Interrompre un calcul : l'interface arme cet événement, les boucles de
 # stratégies le consultent entre deux essais et lèvent Annulation. Le
@@ -629,14 +629,21 @@ class Resultat:
     @property
     def achats(self) -> list:
         """Un :class:`Achat` par planche NEUVE réellement entamée — les
-        chutes n'y figurent jamais (déjà en atelier, jamais à acheter).
-        Utile surtout avec des ``Planche(illimite=True)`` : le solveur a
-        choisi lui-même dans quel profil tailler chaque pièce, ceci
-        compte ce qu'il en a réellement pris."""
+        chutes n'y figurent jamais (déjà en atelier, jamais à acheter),
+        ni une planche à quantité FINIE : sa seule présence dans le stock,
+        avec un nombre précis, dit qu'elle est déjà possédée — ``atelier``
+        ne fait QUE choisir où la sauvegarder, ce n'est pas ce qui décide
+        si elle est à acheter (une ligne tapée pour ce seul projet, sans
+        cocher « Atelier », est tout aussi possédée). Seul un profil
+        ``illimite`` représente du bois pas encore acheté : le solveur a
+        choisi lui-même combien en prendre, ceci compte ce qu'il en a
+        réellement pris. Une planche à quantité finie qui suffisait —
+        même entamée — n'a jamais figuré dans une liste de courses
+        (bug trouvé à l'usage, jamais testé : audit du 16/09/2026)."""
         compte, ordre = {}, []
         for d in self.debits:
             pl = d.planche
-            if pl.chute:
+            if pl.chute or not pl.illimite:
                 continue
             # Regroupées par RÉFÉRENCE SEULE jusqu'au 05/09/2026 : deux
             # profils de catalogue homonymes mais de cotes différentes
