@@ -280,6 +280,9 @@ const ANGLAIS = {
   "Appliquer": "Apply",
   "Assistant défauts — construire la liste sans retenir la syntaxe": "Defect assistant — build the list without learning the syntax",
   "Défauts de la planche": "Board defects",
+  "Isoler cette planche…": "Isolate this board…",
+  "Cette ligne compte {} planches identiques : ce que vous décrivez ici s'appliquera aux {}. Pour une seule, isolez-la d'abord.":
+    "This row holds {} identical boards: what you describe here will apply to all {}. For just one, isolate it first.",
   "Recoupe de bout": "End trim",
   "Recoupe de rive": "Edge trim",
   "Nœud traversant": "Through knot",

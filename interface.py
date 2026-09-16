@@ -258,12 +258,26 @@ class DialogueDefauts(QDialog):
         ("zone", "Zone rectangulaire"),
     )
 
-    def __init__(self, parent, texte: str):
+    def __init__(self, parent, texte: str, quantite: int = 1):
         super().__init__(parent)
         self.setWindowTitle("Défauts de la planche")
         self._termes = tsa.analyser_termes_defauts(texte)
+        self.veut_isoler = False
 
         colonne = QVBoxLayout(self)
+        if quantite > 1:
+            # Un nœud sur UNE planche parmi trois ne doit pas se reporter
+            # aux deux autres : la ligne le fait, tant que les trois
+            # partagent une seule ligne (signalé par Christophe le
+            # 16/09/2026).
+            avertissement = apparence.discret(
+                "Cette ligne compte %d planches identiques : ce que vous"
+                " décrivez ici s'appliquera aux %d. Pour une seule,"
+                " isolez-la d'abord." % (quantite, quantite))
+            colonne.addWidget(avertissement)
+            bouton_isoler = QPushButton("Isoler cette planche…")
+            bouton_isoler.clicked.connect(self._isoler)
+            colonne.addWidget(bouton_isoler)
         self.liste = QListWidget()
         self.liste.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
@@ -329,6 +343,13 @@ class DialogueDefauts(QDialog):
         if ligne >= 0:
             del self._termes[ligne]
             self._rafraichir_liste()
+
+    def _isoler(self):
+        # Ce qui est en train de se taper ici décrirait la MAUVAISE
+        # planche une fois isolée : on l'abandonne, l'appelant rouvre
+        # l'assistant sur la ligne neuve, vierge.
+        self.veut_isoler = True
+        self.reject()
 
     def _rebatir_champs(self):
         while self._formulaire_champs.rowCount():
@@ -1533,8 +1554,19 @@ class FenetrePrincipale(QMainWindow):
         bouton ⚙ de la cellule Défauts (DelegateDefauts) n'a pas besoin
         d'une sélection préalable, contrairement au menu Édition."""
         colonne = tsa.TableStock.COLONNE_DEFAUTS
-        dialogue = DialogueDefauts(self, self.table_stock.texte(ligne, colonne))
-        if dialogue.exec() != QDialog.DialogCode.Accepted:
+        try:
+            quantite = int(self.table_stock.texte(
+                ligne, tsa.TableStock.COLONNE_QTE) or "1")
+        except ValueError:
+            quantite = 1
+        dialogue = DialogueDefauts(
+            self, self.table_stock.texte(ligne, colonne), quantite)
+        resultat = dialogue.exec()
+        if dialogue.veut_isoler:
+            nouvelle = self.table_stock.isoler_ligne(ligne)
+            self._assistant_defauts_ligne(nouvelle)
+            return
+        if resultat != QDialog.DialogCode.Accepted:
             return
         self.table_stock.item(ligne, colonne).setText(dialogue.texte())
 

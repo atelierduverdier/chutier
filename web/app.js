@@ -138,7 +138,7 @@ let compteur = 0;
 // tests/test_version.py y veille. version.json, lui, est lu au réseau à
 // chaque visite (jamais du cache) : c'est lui qui dit ce qui est en ligne.
 
-export const VERSION = "1.4.20";
+export const VERSION = "1.4.21";
 
 function controlerVersion() {
   const b = $("#b-version");
@@ -715,6 +715,21 @@ function champsAjoutDefaut(type) {
   else if (type === "zone") { champ("dc-x", "x depuis le bout gauche (mm)"); champ("dc-y", "y depuis la rive basse (mm)"); champ("dc-longueur", "Longueur (mm)"); champ("dc-largeur", "Largeur (mm)"); }
   $("#d-defauts-champs").replaceChildren(ligneChamps);
 }
+function isolerLigne(ligne) {
+  // Sépare une planche d'une ligne à plusieurs exemplaires : la ligne
+  // d'origine perd un exemplaire, une copie (Qté 1, sans défaut propre)
+  // le reprend juste en dessous — chaque planche réelle mérite sa
+  // propre ligne dès qu'elle a quelque chose d'unique à dire (signalé
+  // par Christophe, 16/09/2026).
+  const qte = Number(ligne.quantite) || 1;
+  const idx = etat.stock.indexOf(ligne);
+  const copie = { ...ligne, quantite: 1, defauts_texte: "" };
+  ligne.quantite = String(Math.max(1, qte - 1));
+  etat.stock.splice(idx + 1, 0, copie);
+  etat.aJour = false;
+  rendreTable("stock"); rafraichirEtat(); enregistrerAtelier(); marquerChangement();
+  return copie;
+}
 function ouvrirAssistantDefauts(ligne, input) {
   const items = analyserDefauts(ligne.defauts_texte);
   rendreListeDefauts(items);
@@ -722,6 +737,16 @@ function ouvrirAssistantDefauts(ligne, input) {
   typeSel.value = "bouts";
   champsAjoutDefaut(typeSel.value);
   typeSel.onchange = () => champsAjoutDefaut(typeSel.value);
+
+  const qte = Number(ligne.quantite) || 1;
+  const avert = $("#d-defauts-avertissement");
+  const boutonIsoler = $("#d-defauts-isoler");
+  avert.hidden = boutonIsoler.hidden = qte <= 1;
+  if (qte > 1) avert.textContent = t`Cette ligne compte ${qte} planches identiques : ce que vous décrivez ici s'appliquera aux ${qte}. Pour une seule, isolez-la d'abord.`;
+  const dial = $("#d-defauts");
+  let veutIsoler = false;
+  boutonIsoler.onclick = () => { veutIsoler = true; dial.close(); };
+
   $("#d-defauts-ajouter").onclick = () => {
     const type = typeSel.value;
     const val = (id) => { const v = $("#" + id).value.trim(); return v === "" ? NaN : Number(v); };
@@ -748,8 +773,14 @@ function ouvrirAssistantDefauts(ligne, input) {
     rendreListeDefauts(items);
     champsAjoutDefaut(type);
   };
-  const dial = $("#d-defauts");
   dial.onclose = () => {
+    if (veutIsoler) {
+      const copie = isolerLigne(ligne);
+      const nouvelInput = document.querySelector(
+        `#t-stock tr[data-ligne="${etat.stock.indexOf(copie)}"] input[data-colonne="defauts_texte"]`);
+      ouvrirAssistantDefauts(copie, nouvelInput);
+      return;
+    }
     if (dial.returnValue !== "ok") return;
     const texte = texteDefauts(items);
     ligne.defauts_texte = texte;

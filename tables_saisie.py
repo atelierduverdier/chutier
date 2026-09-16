@@ -860,6 +860,7 @@ class TableStock(TableEditable):
     )
 
     AVANCEES = (8, 9, 10, 12)        # Fil, Catalogue, Prix, Contour
+    COLONNE_QTE = 5
     COLONNE_DEFAUTS = 11
 
     demande_assistant_defauts = Signal(int)   # numéro de ligne
@@ -880,6 +881,34 @@ class TableStock(TableEditable):
     def stock(self) -> list:
         return [opt.Planche(**self.valeurs_ligne(l))
                 for l in self.lignes_utiles()]
+
+    def isoler_ligne(self, ligne: int) -> int:
+        """Sépare une planche d'une ligne à plusieurs exemplaires : la
+        ligne d'origine perd un exemplaire, une nouvelle ligne identique
+        (Qté 1, sans défaut propre) le reprend juste en dessous — chaque
+        planche réelle mérite sa propre ligne dès qu'elle a quelque
+        chose d'unique à dire, un nœud sur l'une ne doit pas se reporter
+        aux deux autres (signalé par Christophe, 16/09/2026). Rend le
+        numéro de la nouvelle ligne."""
+        qte = _lire_entier(self.texte(ligne, self.COLONNE_QTE) or "1",
+                           "Qté") if self.texte(ligne, self.COLONNE_QTE) else 1
+        copie = {}
+        for i, colonne in enumerate(self.COLONNES):
+            item = self.item(ligne, i)
+            if item is None:
+                continue
+            copie[colonne.cle] = (item.data(ROLE_VALEUR)
+                                  if colonne.genre in (BOOLEEN, CHOIX, CONTOUR)
+                                  else item.text())
+            if colonne.genre == CONTOUR:
+                copie["trous"] = item.data(ROLE_TROUS)
+        self.item(ligne, self.COLONNE_QTE).setText(str(max(1, qte - 1)))
+        copie["quantite"] = "1"
+        copie["defauts"] = ""
+        cible = ligne + 1
+        self.insertRow(cible)
+        self.poser_ligne(cible, copie)
+        return cible
 
     def matieres(self) -> list:
         return sorted({self.texte(l, 4) for l in range(self.rowCount())
