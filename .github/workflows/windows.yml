@@ -35,6 +35,7 @@ jobs:
       - name: PyInstaller
         run: >
           pyinstaller --name chutier --onefile --windowed
+          --icon resources/icone.ico
           --add-data "resources/icone.svg;resources"
           interface.py
 
