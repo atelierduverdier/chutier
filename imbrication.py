@@ -165,10 +165,12 @@ def _minkowski(a, b_retournee):
 _VARIANTES = {}        # (cle forme, angle) -> (exact, simplifié élargi, w, h)
 _NFPS = {}             # (ecart, cle_a, cle_b) -> NFP, cle_a <= cle_b
 _CADRES = {}           # (wkb du bord utile, cle_b) -> NFP du bord
+_ORIENTATIONS = {}     # (cle forme, fil pièce, fil planche, pas) -> angles utiles
 
 
 def vider_caches() -> None:
-    """Oublie tout ce qui a été précalculé (formes, NFP, cadres).
+    """Oublie tout ce qui a été précalculé (formes, NFP, cadres, angles
+    utiles).
 
     Rien ne les vidait jusqu'au 05/09/2026 — sur une longue séance à
     imbriquer des formes variées, ils ne font que croître (124 cadres
@@ -179,6 +181,7 @@ def vider_caches() -> None:
     _VARIANTES.clear()
     _NFPS.clear()
     _CADRES.clear()
+    _ORIENTATIONS.clear()
 
 
 def _variante(piece: opt.Piece, angle: float):
@@ -266,6 +269,31 @@ def _calculer_cadre(utile, forme_b):
     return _robuste(shapely.union_all(morceaux, grid_size=_PRECISION))
 
 
+# Une différence de surface sous ce seuil, entre deux formes alignées,
+# ne se voit pas au fraisage — un rond ou un L parfaitement symétrique
+# tourné puis réaligné n'y retombe jamais EXACTEMENT (bruit flottant de
+# cos/sin), mais à plusieurs ordres de grandeur en dessous de ce seuil.
+_SEUIL_SYMETRIE = 1e-3
+
+
+def _sans_symetrie(piece, angles):
+    """Écarte les orientations qui donnent EXACTEMENT la même forme
+    alignée qu'une déjà gardée : une pièce ronde, ou symétrique par
+    rotation, n'a besoin d'aucun essai au-delà de sa période. Chaque
+    angle écarté ici évite une variante, et le nombre de NFP à calculer
+    croît comme le CARRÉ du nombre de variantes (audit du 16/09/2026 :
+    1224 calculs à 24 orientations contre 44 à 4, sur un jeu de deux
+    formes — le calcul en pâtit bien plus qu'un simple ×6)."""
+    gardees, formes = [], []
+    for a in angles:
+        _, exact, *_ = _variante(piece, a)
+        if not any(exact.symmetric_difference(g).area < _SEUIL_SYMETRIE
+                   for g in formes):
+            formes.append(exact)
+            gardees.append(a)
+    return gardees
+
+
 def _orientations(piece: opt.Piece, planche: opt.Planche,
                   params: opt.Parametres) -> list:
     if not planche.fil or piece.fil == opt.FIL_INDIFFERENT:
@@ -281,8 +309,13 @@ def _orientations(piece: opt.Piece, planche: opt.Planche,
             if a % 180 not in vues:
                 vues.add(a % 180)
                 garde.append(a)
-        angles = garde
-    return angles
+        return garde
+    if len(angles) <= 1:
+        return angles
+    cle = (_cle_forme(piece), piece.fil, bool(planche.fil), params.pas_rotation)
+    if cle not in _ORIENTATIONS:
+        _ORIENTATIONS[cle] = _sans_symetrie(piece, angles)
+    return _ORIENTATIONS[cle]
 
 
 # ---------------------------------------------------------------------------
