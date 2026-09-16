@@ -11,10 +11,10 @@ name: Bureau macOS
 # au premier lancement — contournable par clic droit → Ouvrir. Un choix
 # assumé, pas un oubli.
 #
-# Icône NON incluse pour l'instant : PyInstaller veut un .icns sur
-# macOS, et le convertir depuis resources/icone.svg demande un outil de
-# rendu SVG absent des runners par défaut. L'app tourne avec l'icône
-# générique de PyInstaller ; à ajouter plus tard si voulu.
+# Icône : resources/icone.icns, généré une fois en local (rsvg-convert
+# + Pillow, qui sait écrire du .icns sans iconutil) plutôt que sur le
+# runner — même raison que resources/icone.ico pour Windows, pas
+# d'outil de rendu SVG là-bas par défaut.
 #
 # Déclenchement manuel (workflow_dispatch), comme windows.yml.
 
@@ -46,6 +46,7 @@ jobs:
       - name: PyInstaller
         run: >
           pyinstaller --name chutier --windowed
+          --icon resources/icone.icns
           --add-data "resources/icone.svg:resources"
           interface.py
 
