@@ -27,8 +27,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
-    QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox,
+    QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMenu,
     QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSpinBox,
@@ -450,6 +450,10 @@ class FenetrePrincipale(QMainWindow):
         super().__init__()
         self.setWindowTitle(TITRE)
         self.resize(1500, 900)
+        # Sans ça, la molette change la valeur de la case survolée au
+        # lieu de faire défiler la page des réglages — signalé par
+        # Christophe le 16/09/2026.
+        QApplication.instance().installEventFilter(self)
         self._resultat = None
         self._epingles = []        # Debit repris tels quels au calcul
         self._historique = []      # instantanés passés, pour Annuler
@@ -511,7 +515,7 @@ class FenetrePrincipale(QMainWindow):
     def _construire(self):
         self._actions()
         central = QSplitter(Qt.Orientation.Horizontal)
-        central.setHandleWidth(9)
+        central.setHandleWidth(6)
         central.setStyleSheet(apparence.STYLE_POIGNEE)
         central.addWidget(self._panneau_saisie())
         central.addWidget(self._panneau_resultats())
@@ -822,7 +826,7 @@ class FenetrePrincipale(QMainWindow):
         self._table_active = self.table_pieces
 
         self.saisie = QSplitter(Qt.Orientation.Vertical)
-        self.saisie.setHandleWidth(9)
+        self.saisie.setHandleWidth(6)
         self.saisie.setStyleSheet(apparence.STYLE_POIGNEE)
         self.saisie.addWidget(self._page_pieces())
         self.saisie.addWidget(self._page_stock())
@@ -845,6 +849,18 @@ class FenetrePrincipale(QMainWindow):
         if evenement.type() == QEvent.Type.FocusIn and objet in (
                 self.table_pieces, self.table_stock):
             self._table_active = objet
+        # Une case numérique ou une liste déroulante qui n'a pas le focus
+        # laisse la molette défiler la page des réglages au lieu de
+        # changer sa valeur — on la renvoie à l'ascenseur qui la contient.
+        if (evenement.type() == QEvent.Type.Wheel
+                and isinstance(objet, (QAbstractSpinBox, QComboBox))
+                and not objet.hasFocus()):
+            cible = objet.parentWidget()
+            while cible is not None and not isinstance(cible, QScrollArea):
+                cible = cible.parentWidget()
+            if cible is not None:
+                QApplication.sendEvent(cible.viewport(), evenement)
+            return True
         return super().eventFilter(objet, evenement)
 
     def _page_table(self, table, titre, resume, actions) -> QWidget:
@@ -1026,6 +1042,14 @@ class FenetrePrincipale(QMainWindow):
              " de la vider et de replacer ses pièces dans les trous des"
              " autres — c'est ainsi qu'une planche de trop disparaît."
              " 0 pour s'en passer."),
+            ("Orientations", self.choix_rotation,
+             "Les angles essayés pour une pièce à fil indifférent (ou sur"
+             " un panneau sans fil). Plus d'orientations imbriquent parfois"
+             " mieux, et calculent d'autant plus longtemps."),
+            ("Processus", self.spin_processus,
+             "Les stratégies d'imbrication se répartissent sur les cœurs"
+             " de la machine. Le résultat ne dépend pas de ce nombre ;"
+             " seule la durée change. 1 pour calculer sans parallélisme."),
         ]))
         colonne.addWidget(self._groupe_reglage("Ce qui mérite d'être gardé", [
             ("Chute mini — longueur (mm)", self.spin_chute_longueur,
@@ -1052,18 +1076,10 @@ class FenetrePrincipale(QMainWindow):
             ("Marge au bord (mm)", self.spin_marge_bord,
              "Distance entre un contour et le bord de la planche — pour"
              " la bride, ou une rive douteuse."),
-            ("Orientations", self.choix_rotation,
-             "Les angles essayés pour une pièce à fil indifférent (ou sur"
-             " un panneau sans fil). Plus d'orientations imbriquent parfois"
-             " mieux, et calculent d'autant plus longtemps."),
             ("Vitesse de fraisage", self.spin_vitesse,
              "Pour estimer le temps de découpe d'une planche imbriquée à"
              " partir de la longueur de ses contours — l'avance de la"
              " fraise dans le bois, sans les déplacements à vide."),
-            ("Processus", self.spin_processus,
-             "Les stratégies d'imbrication se répartissent sur les cœurs"
-             " de la machine. Le résultat ne dépend pas de ce nombre ;"
-             " seule la durée change. 1 pour calculer sans parallélisme."),
         ]))
         colonne.addStretch()
 
@@ -1209,7 +1225,7 @@ class FenetrePrincipale(QMainWindow):
         colonne.addLayout(barre)
 
         scission = QSplitter(Qt.Orientation.Horizontal)
-        scission.setHandleWidth(9)
+        scission.setHandleWidth(6)
         scission.setStyleSheet(apparence.STYLE_POIGNEE)
         self.liste_planches = QListWidget()
         self.liste_planches.setMinimumWidth(150)

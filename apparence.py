@@ -117,7 +117,7 @@ def icone(*noms: str) -> QIcon:
 
 STYLE_POIGNEE = """
     QSplitter::handle { background: palette(mid); }
-    QSplitter::handle:hover { background: palette(highlight); }
+    QSplitter::handle:hover { background: palette(dark); }
 """
 
 # Le geste principal de la barre d'outils, dans l'orange de l'atelier —
