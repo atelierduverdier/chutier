@@ -15,7 +15,7 @@ peupler, et une forêt de menus déroulants là où l'œil attend un tableur.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, Qt
+from PySide6.QtCore import QEvent, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemDelegate, QAbstractItemView, QApplication, QComboBox, QHeaderView, QLineEdit,
@@ -106,6 +106,32 @@ class DelegateChoix(QStyledItemDelegate):
         for cle, libelle in self._choix:
             combo.addItem(libelle, cle)
         return combo
+
+    def editorEvent(self, evenement, modele, option, index):
+        # Un clic simple ouvre directement le menu — comme la case à
+        # cocher voisine réagit déjà au premier clic. Sans ça, un premier
+        # clic ne fait que sélectionner la cellule (elle devient
+        # orange), et il en faut un second pour voir le menu : deux
+        # clics pour ouvrir une liste, aucun risque de frappe accidentelle
+        # à protéger ici (signalé par Christophe le 16/09/2026).
+        if (evenement.type() == QEvent.Type.MouseButtonRelease
+                and option.rect.contains(evenement.position().toPoint())):
+            vue = self.parent()
+            if vue is not None:
+                # En différé : appeler edit() ICI, pendant que la vue
+                # traite encore ce même clic, la laissait ensuite remettre
+                # l'état à NoState par-dessus — l'éditeur s'ouvrait bien,
+                # mais valider_edition() ne le voyait plus (reproduit et
+                # daté du 16/09/2026).
+                QTimer.singleShot(0, lambda i=index: self._ouvrir(vue, i))
+            return True
+        return False
+
+    def _ouvrir(self, vue, index):
+        vue.edit(index)
+        combo = QApplication.focusWidget()
+        if isinstance(combo, QComboBox):
+            combo.showPopup()
 
     def setEditorData(self, editeur, index):
         cle = index.data(ROLE_VALEUR)
